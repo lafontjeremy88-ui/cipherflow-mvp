@@ -11,8 +11,8 @@ const EmailHistory = ({ token }) => {
   const fetchHistory = async () => {
     setLoading(true);
     try {
-      // 2. On ajoute le header Authorization
-      const response = await fetch('http://127.0.0.1:8000/email/history', {
+      // 2. CORRECTION DE L'URL : ajout de /email/history à la fin
+      const response = await fetch("https://cipherflow-mvp-production.up.railway.app/email/history", {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}` // <--- LA CLÉ D'ENTRÉE

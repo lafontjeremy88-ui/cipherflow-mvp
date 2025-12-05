@@ -10,8 +10,7 @@ import StatCard from "./components/StatCard";
 import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login"; // <--- Import du Login
 
-const API_BASE = "http://127.0.0.1:8000";
-
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 function App() {
   // --- GESTION DU TOKEN (Login) ---
   const [token, setToken] = useState(localStorage.getItem('cipherflow_token'));

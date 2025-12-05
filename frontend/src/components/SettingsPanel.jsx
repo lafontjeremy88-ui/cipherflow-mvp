@@ -15,8 +15,8 @@ const SettingsPanel = ({ token }) => {
   useEffect(() => {
     if (!token) return;
 
-    // 2. Authorization pour le chargement
-    fetch('http://127.0.0.1:8000/settings', {
+    // 2. Authorization pour le chargement (MISE À JOUR URL)
+    fetch('https://cipherflow-mvp-production.up.railway.app/settings', {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -37,8 +37,8 @@ const SettingsPanel = ({ token }) => {
     setLoading(true);
     setMessage(null);
     try {
-      // 3. Authorization pour la sauvegarde
-      const res = await fetch('http://127.0.0.1:8000/settings', {
+      // 3. Authorization pour la sauvegarde (MISE À JOUR URL)
+      const res = await fetch('https://cipherflow-mvp-production.up.railway.app/settings', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
