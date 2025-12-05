@@ -1,0 +1,19 @@
+# Ignorer le dossier virtuel Python
+.venv/
+venv/
+
+# Ignorer les fichiers temporaires/système
+__pycache__/
+*.pyc
+.DS_Store
+
+# Ignorer les données sensibles et locales
+.env
+backend/cipherflow.db
+backend/.env
+frontend/.env
+
+# Ignorer les dépendances Node (Frontend)
+node_modules/
+frontend/node_modules/
+frontend/dist/
