@@ -2,15 +2,18 @@
 import React, { useState, useEffect } from "react";
 import { 
   LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
-  Activity, AlertTriangle, Euro, Settings, LogOut
-} from "lucide-react";
+  Activity, AlertTriangle, Euro, Settings, LogOut, FileText
+} from "lucide-react"; // Ajout de FileText pour l'icône facture
 
 import EmailHistory from "./components/EmailHistory";
 import StatCard from "./components/StatCard";
 import SettingsPanel from "./components/SettingsPanel";
-import Login from "./components/Login"; // <--- Import du Login
+import Login from "./components/Login";
+import InvoiceGenerator from "./components/InvoiceGenerator"; // <--- NOUVEL IMPORT
 
+// Ton URL Railway (Production)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+
 function App() {
   // --- GESTION DU TOKEN (Login) ---
   const [token, setToken] = useState(localStorage.getItem('cipherflow_token'));
@@ -54,7 +57,6 @@ function Dashboard({ token, onLogout }) {
   const [stats, setStats] = useState({ total_processed: 0, high_urgency: 0, devis_requests: 0 });
 
   // --- HELPER FETCH AUTHENTIFIÉ ---
-  // Cette fonction ajoute automatiquement le token à chaque requête !
   const authFetch = async (url, options = {}) => {
     const headers = {
       'Content-Type': 'application/json',
@@ -65,7 +67,6 @@ function Dashboard({ token, onLogout }) {
     const res = await fetch(url, { ...options, headers });
     
     if (res.status === 401) {
-      // Si le token est expiré ou invalide, on déconnecte
       onLogout();
       throw new Error("Session expirée");
     }
@@ -139,6 +140,12 @@ function Dashboard({ token, onLogout }) {
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <LayoutDashboard size={20} /> <span>Traitement</span>
           </div>
+          
+          {/* --- NOUVEL ONGLET FACTURATION --- */}
+          <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}>
+            <FileText size={20} /> <span>Facturation</span>
+          </div>
+          
           <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
             <History size={20} /> <span>Historique</span>
           </div>
@@ -156,6 +163,7 @@ function Dashboard({ token, onLogout }) {
         <header style={{ marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '1.8rem', fontWeight: 'bold' }}>
             {activeTab === 'dashboard' && 'Traitement Intelligent'}
+            {activeTab === 'invoices' && 'Générateur de Factures'}
             {activeTab === 'history' && 'Historique des Activités'}
             {activeTab === 'settings' && 'Paramètres du SaaS'}
           </h1>
@@ -172,6 +180,7 @@ function Dashboard({ token, onLogout }) {
           </div>
         )}
 
+        {/* CONTENU DASHBOARD */}
         {activeTab === 'dashboard' && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
@@ -218,6 +227,13 @@ function Dashboard({ token, onLogout }) {
               )}
             </div>
           </>
+        )}
+
+        {/* --- CONTENU FACTURATION --- */}
+        {activeTab === 'invoices' && (
+           <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+              <InvoiceGenerator />
+           </div>
         )}
 
         {activeTab === 'history' && <EmailHistory token={token} />}

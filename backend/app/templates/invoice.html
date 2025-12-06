@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page { size: A4; margin: 2cm; }
+        body { font-family: Helvetica, sans-serif; color: #333; line-height: 1.5; }
+        
+        .header { display: flex; justify-content: space-between; margin-bottom: 50px; border-bottom: 2px solid #6366f1; padding-bottom: 20px; }
+        .company-name { font-size: 28px; font-weight: bold; color: #6366f1; }
+        .invoice-details { text-align: right; }
+        .invoice-title { font-size: 20px; font-weight: bold; text-transform: uppercase; color: #555; }
+
+        .client-box { background-color: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 40px; }
+        .client-box h3 { margin-top: 0; font-size: 14px; text-transform: uppercase; color: #888; }
+
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        th { text-align: left; padding: 12px; background-color: #6366f1; color: white; font-size: 12px; text-transform: uppercase; }
+        td { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+        
+        .total-box { text-align: right; margin-top: 20px; }
+        .total-line { font-size: 16px; margin-bottom: 5px; }
+        .total-final { font-size: 24px; font-weight: bold; color: #6366f1; }
+
+        .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 10px; color: #999; border-top: 1px solid #eee; padding-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <div class="company-name">{{ company_name }}</div>
+            <div>{{ company_email }}</div>
+        </div>
+        <div class="invoice-details">
+            <div class="invoice-title">Devis</div>
+            <div>N° {{ invoice_number }}</div>
+            <div>Date : {{ date }}</div>
+        </div>
+    </div>
+
+    <div class="client-box">
+        <h3>Destinataire</h3>
+        <strong>Client Email :</strong> {{ client_email }}<br>
+        <em>Ce devis est valable 30 jours.</em>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 50%">Description</th>
+                <th style="width: 15%; text-align: center">Quantité</th>
+                <th style="width: 15%; text-align: right">Prix Unit.</th>
+                <th style="width: 20%; text-align: right">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.description }}</td>
+                <td style="text-align: center">{{ item.quantity }}</td>
+                <td style="text-align: right">{{ item.unit_price }} €</td>
+                <td style="text-align: right"><strong>{{ item.total }} €</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="total-box">
+        <div class="total-line">Total HT : {{ total_amount }} €</div>
+        <div class="total-line">TVA (20%) : {{ tva_amount }} €</div>
+        <div class="total-final">Net à payer : {{ total_ttc }} €</div>
+    </div>
+
+    <div class="footer">
+        Document généré automatiquement par CipherFlow IA - {{ company_name }}
+    </div>
+
+</body>
+</html>
