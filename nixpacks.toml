@@ -1,0 +1,13 @@
+# backend/nixpacks.toml
+
+[phases.setup]
+# On installe les librairies graphiques système (INDISPENSABLE pour le PDF)
+nixPkgs = ["python311", "gcc", "pkg-config", "cairo", "pango", "gdk-pixbuf", "libffi", "gobject-introspection"]
+
+[phases.install]
+dependsOn = ["setup"]
+# Notez qu'on ne met plus 'backend/' car le fichier est déjà dedans
+cmds = ["python -m venv .venv", ". .venv/bin/activate", "pip install -r requirements.txt"]
+
+[start]
+cmd = ". .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
