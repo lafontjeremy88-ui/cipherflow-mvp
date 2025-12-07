@@ -7,6 +7,8 @@ import {
 
 import EmailHistory from "./components/EmailHistory";
 import StatCard from "./components/StatCard";
+
+
 import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login";
 import InvoiceGenerator from "./components/InvoiceGenerator"; // <--- NOUVEL IMPORT
