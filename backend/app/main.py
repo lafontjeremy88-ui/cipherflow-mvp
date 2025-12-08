@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 import smtplib
 from email.message import EmailMessage
 
@@ -14,7 +14,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-# --- NOUVEL IMPORT : La bibliothèque officielle Google ---
+# --- BIBLIOTHÈQUE OFFICIELLE GOOGLE ---
 import google.generativeai as genai
 
 # Imports locaux
@@ -24,7 +24,7 @@ from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes 
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURATION INITIALE
+# 1. CONFIGURATION
 # -----------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -34,30 +34,29 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# Configuration de l'IA (Nettoyage de la clé)
+# Configuration GEMINI (IA)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# On configure la bibliothèque officielle
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur config Gemini: {e}")
 
-# On force le modèle stable
-MODEL_NAME = "gemini-1.5-flash"
+# --- CHANGEMENT ICI : On utilise le modèle universel ---
+MODEL_NAME = "gemini-pro"
 
+# Configuration EMAIL
 SMTP_HOST = os.getenv("SMTP_HOST")
 try:
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 except ValueError:
     SMTP_PORT = 587
-    
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
 
 # -----------------------------------------------------------------------------
-# 2. SÉCURITÉ (DEPENDENCIES)
+# 2. SÉCURITÉ
 # -----------------------------------------------------------------------------
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -65,13 +64,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide ou manquant",
+            detail="Token invalide",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return token
 
 # -----------------------------------------------------------------------------
-# 3. MODÈLES DE DONNÉES
+# 3. MODÈLES
 # -----------------------------------------------------------------------------
 class LoginRequest(BaseModel):
     email: str
@@ -170,46 +169,29 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("Initialisation de la base de données...")
+    print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
-    admin_email = "admin@cipherflow.com"
-    existing_user = db.query(User).filter(User.email == admin_email).first()
-    if not existing_user:
+    if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
-        admin_user = User(email=admin_email, hashed_password=hashed)
-        db.add(admin_user)
+        db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
-        print(f"✅ Compte Admin créé : {admin_email}")
-    else:
-        print("👤 Compte administrateur déjà présent.")
+        print("✅ Admin créé.")
 
 # -----------------------------------------------------------------------------
-# 5. HELPERS (NOUVELLE VERSION VIA SDK GOOGLE)
+# 5. LOGIQUE MÉTIER
 # -----------------------------------------------------------------------------
 async def call_gemini(prompt: str) -> str:
-    """Appelle Gemini via le SDK officiel (Plus robuste)."""
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY non configurée")
-    
+    """Appel IA via SDK Officiel"""
+    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        # On instancie le modèle
         model = genai.GenerativeModel(MODEL_NAME)
-        # On lance la génération (en asynchrone pour ne pas bloquer le serveur)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"ERREUR SDK GEMINI: {e}")
-        # En cas d'erreur de modèle introuvable, on tente le modèle générique
-        if "404" in str(e):
-            print("Tentative de repli sur 'gemini-pro'...")
-            try:
-                fallback_model = genai.GenerativeModel("gemini-pro")
-                response = await fallback_model.generate_content_async(prompt)
-                return response.text
-            except Exception as e2:
-                raise HTTPException(status_code=500, detail=f"Gemini Error (Repli échoué): {e2}")
-        raise HTTPException(status_code=500, detail=f"Gemini Error: {e}")
+        print(f"ERREUR GEMINI: {e}")
+        # En dernier recours, si gemini-pro échoue, on renvoie une erreur claire
+        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
     raw = text.strip()
@@ -242,8 +224,8 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
 
 def send_email_smtp(to_email: str, subject: str, body: str):
     if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
-        print("Erreur: Configuration SMTP incomplète.")
-        raise RuntimeError("SMTP incomplet")
+        print("Erreur: SMTP incomplet")
+        return # On ne plante pas l'app si le mail ne part pas
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
     msg.set_content(body)
@@ -251,7 +233,7 @@ def send_email_smtp(to_email: str, subject: str, body: str):
         server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
 
 # -----------------------------------------------------------------------------
-# 6. ROUTES PRINCIPALES
+# 6. ROUTES
 # -----------------------------------------------------------------------------
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
@@ -260,10 +242,7 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     tone = settings.tone if settings else "pro"
     sign = settings.signature if settings else "Team"
     
-    # 1. Analyse
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
-    
-    # 2. Réponse
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
     
     try:
@@ -274,9 +253,7 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     sent, err = "not_sent", None
     if req.send_email:
         try: send_email_smtp(req.from_email, reponse.subject, reponse.reply); sent = "sent"
-        except Exception as e: 
-            print(f"Erreur Envoi Email: {e}")
-            sent = "error"; err = str(e)
+        except Exception as e: sent = "error"; err = str(e)
             
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
