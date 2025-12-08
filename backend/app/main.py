@@ -169,7 +169,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE FINAL AVEC LOGIN ET ROUTES 🚀")
+    print("🚀 VERSION VICTORIEUSE !!! 🚀")
     print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
