@@ -22,7 +22,7 @@ from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes 
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURATION INITIALE (CORRIGÉE ET BLINDÉE)
+# 1. CONFIGURATION INITIALE
 # -----------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -32,14 +32,13 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# 1. Nettoyage automatique des espaces invisibles (.strip())
-# 2. Utilisation d'une chaine vide "" par défaut pour éviter les erreurs NoneType
+# --- MODIFICATION "FORCE BRUTE" ---
+# 1. La clé API reste dans les variables (Sécurité), mais on la nettoie (.strip())
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
 
-# 3. Sécurité : Si le modèle est vide, on force le modèle stable par défaut
-if not GEMINI_MODEL:
-    GEMINI_MODEL = "gemini-1.5-flash"
+# 2. Le modèle est désormais GRAVÉ DANS LE MARBRE (Code)
+# On ignore la variable Railway pour éviter les erreurs "404 Not Found" dues aux espaces
+GEMINI_MODEL = "gemini-1.5-flash"
 
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
@@ -198,11 +197,10 @@ async def call_gemini(prompt: str) -> str:
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     params = {"key": GEMINI_API_KEY}
     async with httpx.AsyncClient(timeout=30) as client:
-        # Le .strip() appliqué au début garantit que l'URL est propre ici
         resp = await client.post(GEMINI_ENDPOINT, params=params, json=payload)
         
         if resp.status_code != 200:
-            # On log l'erreur pour comprendre (403, 404, etc.)
+            # On log l'erreur exacte pour le debug
             print(f"ERREUR GEMINI {resp.status_code}: {resp.text}")
             raise HTTPException(status_code=500, detail=f"Gemini Error ({resp.status_code}): {resp.text}")
             
