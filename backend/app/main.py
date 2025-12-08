@@ -14,7 +14,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-# --- BIBLIOTHÈQUE OFFICIELLE GOOGLE ---
+# --- LIBRAIRIE OFFICIELLE GOOGLE ---
 import google.generativeai as genai
 
 # Imports locaux
@@ -34,18 +34,18 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# Configuration GEMINI (IA)
+# --- CONFIGURATION IA BLINDÉE ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
-    print(f"Erreur config Gemini: {e}")
+    print(f"Erreur Config Gemini: {e}")
 
-# --- CHANGEMENT ICI : On utilise le modèle universel ---
+# ON FORCE LE MODÈLE UNIVERSEL (Pas de Flash, pas de Beta)
 MODEL_NAME = "gemini-pro"
 
-# Configuration EMAIL
+# Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
 try:
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -155,7 +155,7 @@ class InvoiceRequest(BaseModel):
     items: List[InvoiceItem]
 
 # -----------------------------------------------------------------------------
-# 4. APP & STARTUP
+# 4. STARTUP
 # -----------------------------------------------------------------------------
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
@@ -179,18 +179,18 @@ def on_startup():
         print("✅ Admin créé.")
 
 # -----------------------------------------------------------------------------
-# 5. LOGIQUE MÉTIER
+# 5. LOGIQUE IA (NOUVELLE MÉTHODE)
 # -----------------------------------------------------------------------------
 async def call_gemini(prompt: str) -> str:
-    """Appel IA via SDK Officiel"""
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
+        # On utilise le modèle PRO via le SDK
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI: {e}")
-        # En dernier recours, si gemini-pro échoue, on renvoie une erreur claire
+        # En cas de plantage total, on renvoie une erreur propre
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -225,7 +225,7 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
 def send_email_smtp(to_email: str, subject: str, body: str):
     if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
         print("Erreur: SMTP incomplet")
-        return # On ne plante pas l'app si le mail ne part pas
+        return
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
     msg.set_content(body)
