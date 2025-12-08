@@ -42,7 +42,7 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# ON FORCE LE MODÈLE UNIVERSEL (Pas de Flash, pas de Beta)
+# ON FORCE LE MODÈLE UNIVERSEL
 MODEL_NAME = "gemini-pro"
 
 # Config Email
@@ -169,7 +169,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE VERSION GEMINI PRO SDK 🚀")
+    print("🚀 DÉMARRAGE VERSION GEMINI PRO SDK (AVEC LOGIN) 🚀")
     print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
@@ -180,18 +180,23 @@ def on_startup():
         print("✅ Admin créé.")
 
 # -----------------------------------------------------------------------------
-# 5. LOGIQUE IA (NOUVELLE MÉTHODE)
+# 5. LOGIQUE MÉTIER
 # -----------------------------------------------------------------------------
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        # On utilise le modèle PRO via le SDK
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI: {e}")
-        # En cas de plantage total, on renvoie une erreur propre
+        # Fallback de secours
+        if "404" in str(e):
+             try:
+                fallback = genai.GenerativeModel("gemini-1.5-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except: pass
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -225,7 +230,6 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
 
 def send_email_smtp(to_email: str, subject: str, body: str):
     if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
-        print("Erreur: SMTP incomplet")
         return
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
@@ -234,8 +238,50 @@ def send_email_smtp(to_email: str, subject: str, body: str):
         server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
 
 # -----------------------------------------------------------------------------
-# 6. ROUTES
+# 6. ROUTES (TOUTES LES ROUTES RESTAURÉES)
 # -----------------------------------------------------------------------------
+
+# --- Route de connexion (Celle qui manquait !) ---
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or not verify_password(req.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
+    access_token = create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --- Routes Dashboard et Historique ---
+@app.get("/dashboard/stats")
+async def get_dashboard_stats(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    total = db.query(EmailAnalysis).count()
+    high = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
+    devis = db.query(EmailAnalysis).filter(EmailAnalysis.category == "demande_devis").count()
+    return {"total_processed": total, "high_urgency": high, "devis_requests": devis, "last_update": datetime.now().strftime("%H:%M")}
+
+@app.get("/email/history", response_model=List[EmailHistoryItem])
+async def get_history(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    return db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).all()
+
+@app.get("/settings")
+async def get_settings(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    settings = db.query(AppSettings).first()
+    if not settings:
+        settings = AppSettings(company_name="CipherFlow", agent_name="Bot", tone="pro", signature="Team")
+        db.add(settings); db.commit(); db.refresh(settings)
+    return settings
+
+@app.post("/settings")
+async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    settings = db.query(AppSettings).first() or AppSettings()
+    if not settings.id: db.add(settings)
+    settings.company_name = req.company_name
+    settings.agent_name = req.agent_name
+    settings.tone = req.tone
+    settings.signature = req.signature
+    db.commit()
+    return {"status": "updated"}
+
+# --- Routes Process IA ---
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
