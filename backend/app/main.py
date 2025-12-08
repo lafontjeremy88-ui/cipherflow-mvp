@@ -169,7 +169,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 VERSION VICTORIEUSE !!! 🚀")
+    print("--- JE SUIS LA NOUVELLE VERSION ---")
     print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
