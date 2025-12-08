@@ -8,7 +8,6 @@ import smtplib
 from email.message import EmailMessage
 
 # Framework & BDD
-# J'ai ajouté 'Response' ici pour pouvoir renvoyer le PDF
 from fastapi import FastAPI, HTTPException, Depends, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -23,7 +22,7 @@ from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes 
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURATION INITIALE
+# 1. CONFIGURATION INITIALE (CORRIGÉE ET BLINDÉE)
 # -----------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -33,12 +32,24 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# 1. Nettoyage automatique des espaces invisibles (.strip())
+# 2. Utilisation d'une chaine vide "" par défaut pour éviter les erreurs NoneType
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
+
+# 3. Sécurité : Si le modèle est vide, on force le modèle stable par défaut
+if not GEMINI_MODEL:
+    GEMINI_MODEL = "gemini-1.5-flash"
+
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+# Gestion robuste du port SMTP (défaut 587 si non défini ou erreur)
+try:
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+except ValueError:
+    SMTP_PORT = 587
+    
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
@@ -134,7 +145,7 @@ class EmailHistoryItem(BaseModel):
     class Config:
         from_attributes = True
 
-# --- NOUVEAUX MODÈLES POUR LA FACTURE ---
+# --- MODÈLES POUR LA FACTURE ---
 class InvoiceItem(BaseModel):
     desc: str
     price: str
@@ -187,8 +198,14 @@ async def call_gemini(prompt: str) -> str:
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     params = {"key": GEMINI_API_KEY}
     async with httpx.AsyncClient(timeout=30) as client:
+        # Le .strip() appliqué au début garantit que l'URL est propre ici
         resp = await client.post(GEMINI_ENDPOINT, params=params, json=payload)
-        if resp.status_code != 200: raise HTTPException(status_code=500, detail=f"Gemini Error: {resp.text}")
+        
+        if resp.status_code != 200:
+            # On log l'erreur pour comprendre (403, 404, etc.)
+            print(f"ERREUR GEMINI {resp.status_code}: {resp.text}")
+            raise HTTPException(status_code=500, detail=f"Gemini Error ({resp.status_code}): {resp.text}")
+            
         try: return "".join([p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"]])
         except: raise HTTPException(status_code=500, detail="Gemini invalid structure")
 
@@ -222,7 +239,9 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
 def send_email_smtp(to_email: str, subject: str, body: str):
-    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): raise RuntimeError("SMTP incomplet")
+    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
+        print("Erreur: Configuration SMTP incomplète.")
+        raise RuntimeError("SMTP incomplet")
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
     msg.set_content(body)
@@ -279,16 +298,25 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"
     sign = settings.signature if settings else "Team"
+    
+    # 1. Analyse avec Gemini
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+    
+    # 2. Réponse avec Gemini
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
+    
     try:
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit(); db.refresh(new)
     except Exception as e: print(f"BDD Error: {e}")
+    
     sent, err = "not_sent", None
     if req.send_email:
         try: send_email_smtp(req.from_email, reponse.subject, reponse.reply); sent = "sent"
-        except Exception: sent = "error"; err = "SMTP Error"
+        except Exception as e: 
+            print(f"Erreur Envoi Email: {e}")
+            sent = "error"; err = str(e)
+            
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
 @app.post("/email/send")
@@ -296,7 +324,7 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends
     try: send_email_smtp(req.to_email, req.subject, req.body); return {"status": "sent"}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
-# --- NOUVELLE ROUTE POUR GÉNÉRER LA FACTURE ---
+# --- ROUTE GÉNÉRATION PDF (Via FPDF2) ---
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Depends(get_current_user)):
     try:
@@ -309,4 +337,5 @@ async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Dep
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
+        print(f"Erreur PDF: {e}")
         raise HTTPException(status_code=500, detail=str(e))
