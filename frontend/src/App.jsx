@@ -242,5 +242,5 @@ function Dashboard({ token, onLogout }) {
     </div>
   );
 }
-// MISE    A JOUR BOUTON - TENTATIVE FINALE
+// FORCAGE VERCEL - VERSION DEFINITIVE 3
 export default App;

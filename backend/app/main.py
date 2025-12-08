@@ -37,7 +37,7 @@ except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
 # ON TENTE GEMINI 1.5 PRO (Souvent plus dispo que Flash)
-MODEL_NAME = "gemini-1.5-pro"
+MODEL_NAME = "gemini-2.0-flash"
 
 # Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
