@@ -36,10 +36,9 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# ON TENTE GEMINI 1.5 PRO (Souvent plus dispo que Flash)
-MODEL_NAME = "gemini-2.0-flash"
+# ON UTILISE "gemini-flash-latest" (Présent dans votre liste et stable)
+MODEL_NAME = "gemini-flash-latest"
 
-# Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
 try:
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -53,7 +52,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
-        raise HTTPException(status_code=401, detail="Token invalide")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return token
 
 # --- MODÈLES ---
@@ -152,7 +155,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE MODE DEBUG IA 🚀")
+    print("🚀 DÉMARRAGE VICTOIRE - LOGIN PRÉSENT 🚀")
+    print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -161,7 +165,7 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- HELPERS ---
+# --- LOGIQUE ---
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
@@ -170,6 +174,15 @@ async def call_gemini(prompt: str) -> str:
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        # Si le modèle flash échoue, on tente le pro classique en secours
+        if "404" in str(e) or "429" in str(e):
+             try:
+                print("Tentative fallback sur gemini-pro...")
+                fallback = genai.GenerativeModel("gemini-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except Exception as e2:
+                 print(f"Echec fallback: {e2}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -210,20 +223,6 @@ def send_email_smtp(to_email: str, subject: str, body: str):
         server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
 
 # --- ROUTES ---
-
-# 🛑 ROUTE DE DEBUG (NOUVEAU) 🛑
-@app.get("/api/debug/models")
-def list_available_models():
-    """Liste tous les modèles disponibles pour votre clé API."""
-    try:
-        models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                models.append(m.name)
-        return {"available_models": models, "current_model": MODEL_NAME}
-    except Exception as e:
-        return {"error": str(e)}
-
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
