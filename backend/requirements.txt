@@ -6,7 +6,7 @@ python-dotenv
 httpx
 jinja2
 python-multipart
-xhtml2pdf
+fpdf2
 email-validator
 passlib[bcrypt]
 python-jose[cryptography]
