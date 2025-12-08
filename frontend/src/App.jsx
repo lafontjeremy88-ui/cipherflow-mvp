@@ -135,7 +135,7 @@ function Dashboard({ token, onLogout }) {
       <aside className="sidebar">
         <div className="logo">
           <Zap size={28} color="#6366f1" />
-          <span>CipherFlow</span>
+          <span>CipherFlow V2</span>
         </div>
         <nav>
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
