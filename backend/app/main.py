@@ -2,19 +2,16 @@ import os
 import json
 import logging
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 import smtplib
 from email.message import EmailMessage
 
-# Framework & BDD
 from fastapi import FastAPI, HTTPException, Depends, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-
-# --- LIBRAIRIE OFFICIELLE GOOGLE ---
 import google.generativeai as genai
 
 # Imports locaux
@@ -23,9 +20,6 @@ from app.database.models import EmailAnalysis, AppSettings, User
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes 
 
-# -----------------------------------------------------------------------------
-# 1. CONFIGURATION
-# -----------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
@@ -34,7 +28,7 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION IA BLINDÉE ---
+# --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 try:
@@ -42,8 +36,8 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# ON FORCE LE MODÈLE UNIVERSEL
-MODEL_NAME = "gemini-1.5-flash-001"
+# ON TENTE GEMINI 1.5 PRO (Souvent plus dispo que Flash)
+MODEL_NAME = "gemini-1.5-pro"
 
 # Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
@@ -55,23 +49,14 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
 
-# --------------------------------------------------------------------------------
-# 2. SÉCURITÉ
-# --------------------------------------------------------------------------------
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(status_code=401, detail="Token invalide")
     return token
 
-# -----------------------------------------------------------------------------
-# 3. MODÈLES DE DONNÉES
-# -----------------------------------------------------------------------------
+# --- MODÈLES ---
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -154,9 +139,7 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
-# -----------------------------------------------------------------------------
-# 4. STARTUP
-# -----------------------------------------------------------------------------
+# --- APP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
 app.add_middleware(
@@ -169,8 +152,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE VICTOIRE - LOGIN PRÉSENT 🚀")
-    print("Initialisation BDD...")
+    print("🚀 DÉMARRAGE MODE DEBUG IA 🚀")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -179,9 +161,7 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# -----------------------------------------------------------------------------
-# 5. LOGIQUE MÉTIER
-# -----------------------------------------------------------------------------
+# --- HELPERS ---
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
@@ -189,14 +169,7 @@ async def call_gemini(prompt: str) -> str:
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"ERREUR GEMINI: {e}")
-        # Fallback
-        if "404" in str(e):
-             try:
-                fallback = genai.GenerativeModel("gemini-1.5-pro")
-                resp = await fallback.generate_content_async(prompt)
-                return resp.text
-             except: pass
+        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -229,19 +202,28 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
 def send_email_smtp(to_email: str, subject: str, body: str):
-    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
-        return
+    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): return
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
     msg.set_content(body)
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
 
-# -----------------------------------------------------------------------------
-# 6. ROUTES RESTAURÉES
-# -----------------------------------------------------------------------------
+# --- ROUTES ---
 
-# --- C'EST CETTE ROUTE QUI MANQUAIT ---
+# 🛑 ROUTE DE DEBUG (NOUVEAU) 🛑
+@app.get("/api/debug/models")
+def list_available_models():
+    """Liste tous les modèles disponibles pour votre clé API."""
+    try:
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                models.append(m.name)
+        return {"available_models": models, "current_model": MODEL_NAME}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()

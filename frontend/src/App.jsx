@@ -242,5 +242,5 @@ function Dashboard({ token, onLogout }) {
     </div>
   );
 }
-// MISE A JOUR BOUTON - TENTATIVE FINALE
+// MISE    A JOUR BOUTON - TENTATIVE FINALE
 export default App;
