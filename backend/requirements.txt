@@ -6,9 +6,10 @@ python-dotenv
 httpx
 jinja2
 python-multipart
-fpdf2
 email-validator
-passlib[bcrypt]
-python-jose[cryptography]
 google-generativeai
 psycopg2-binary
+python-jose[cryptography]
+fpdf2
+passlib
+bcrypt==4.0.1
