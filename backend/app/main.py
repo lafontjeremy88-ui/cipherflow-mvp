@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import smtplib
 from email.message import EmailMessage
 
@@ -70,7 +70,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     return token
 
 # -----------------------------------------------------------------------------
-# 3. MODÈLES
+# 3. MODÈLES DE DONNÉES
 # -----------------------------------------------------------------------------
 class LoginRequest(BaseModel):
     email: str
@@ -169,7 +169,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE VERSION GEMINI PRO SDK (AVEC LOGIN) 🚀")
+    print("🚀 DÉMARRAGE FINAL AVEC LOGIN ET ROUTES 🚀")
     print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
@@ -190,7 +190,7 @@ async def call_gemini(prompt: str) -> str:
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI: {e}")
-        # Fallback de secours
+        # Fallback
         if "404" in str(e):
              try:
                 fallback = genai.GenerativeModel("gemini-1.5-pro")
@@ -238,10 +238,10 @@ def send_email_smtp(to_email: str, subject: str, body: str):
         server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
 
 # -----------------------------------------------------------------------------
-# 6. ROUTES (TOUTES LES ROUTES RESTAURÉES)
+# 6. ROUTES RESTAURÉES
 # -----------------------------------------------------------------------------
 
-# --- Route de connexion (Celle qui manquait !) ---
+# --- C'EST CETTE ROUTE QUI MANQUAIT ---
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -250,7 +250,6 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Routes Dashboard et Historique ---
 @app.get("/dashboard/stats")
 async def get_dashboard_stats(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     total = db.query(EmailAnalysis).count()
@@ -281,7 +280,6 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
-# --- Routes Process IA ---
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
