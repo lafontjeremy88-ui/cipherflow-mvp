@@ -1,3 +1,4 @@
+// VERSION FINALE AVEC BOUTON FACTURE - REBUILD FORCÉ
 // frontend/src/App.jsx
 import React, { useState, useEffect } from "react";
 import { 
@@ -242,5 +243,5 @@ function Dashboard({ token, onLogout }) {
     </div>
   );
 }
-// FORCAGE VERCEL - VERSION DEFINITIVE 3
+
 export default App;
