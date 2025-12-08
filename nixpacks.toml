@@ -7,3 +7,10 @@ cmds = ["python -m venv .venv", ". .venv/bin/activate", "pip install -r backend/
 
 [start]
 cmd = ". .venv/bin/activate && cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+# C'EST ICI LA MAGIE : On dit au compilateur où chercher
+[variables]
+PKG_CONFIG_PATH = "/usr/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/share/pkgconfig"
+# On force l'utilisation des librairies Nix
+NIX_CFLAGS_COMPILE = "-I/nix/store/include"
+NIX_LDFLAGS = "-L/nix/store/lib"
