@@ -25,12 +25,10 @@ function App() {
     localStorage.removeItem('cipherflow_token');
     setToken(null);
   };
-
   // Si pas de token, on affiche l'écran de Login
   if (!token) {
     return <Login onLogin={(newToken) => setToken(newToken)} />;
   }
-
   // --- APPLICATION PRINCIPALE (Si connecté) ---
   return <Dashboard token={token} onLogout={handleLogout} />;
 }

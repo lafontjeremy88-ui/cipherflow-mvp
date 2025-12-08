@@ -43,7 +43,7 @@ except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
 # ON FORCE LE MODÈLE UNIVERSEL
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-2.0-flash-exp"
 
 # Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
