@@ -242,5 +242,5 @@ function Dashboard({ token, onLogout }) {
     </div>
   );
 }
-// MISE A JOUR BOUTON FACTURE - TENTATIVE 2
+// Force Update Vercel Final 2
 export default App;

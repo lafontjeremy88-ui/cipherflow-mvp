@@ -55,9 +55,9 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
 
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
 # 2. SÉCURITÉ
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
