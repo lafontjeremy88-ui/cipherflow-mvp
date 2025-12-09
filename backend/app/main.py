@@ -285,9 +285,16 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    try: send_email_smtp(req.to_email, req.subject, req.body); return {"status": "sent"}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
+    try:
+        # On ajoute des logs pour voir ce qu'il se passe
+        print(f"Tentative d'envoi d'email vers : {req.to_email}")
+        send_email_smtp(req.to_email, req.subject, req.body)
+        print("Envoi réussi !")
+        return {"status": "sent"}
+    except Exception as e:
+        # C'EST ICI QUE L'ON VA VOIR LA VRAIE ERREUR
+        print(f"❌ ERREUR SMTP CRITIQUE : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Depends(get_current_user)):
     try:
