@@ -215,12 +215,25 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
 def send_email_smtp(to_email: str, subject: str, body: str):
-    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): return
+    # Vérification des variables
+    if not all([SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
+        print("Erreur: Configuration SMTP incomplète.")
+        raise RuntimeError("Configuration SMTP incomplète")
+
     msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg["Subject"] = subject
     msg.set_content(body)
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls(); server.login(SMTP_USERNAME, SMTP_PASSWORD); server.send_message(msg)
+
+    # --- FIX CRITIQUE : PASSAGE EN SSL (PORT 465) ---
+    # On utilise SMTP_SSL au lieu de SMTP. C'est la méthode recommandée par Google
+    # pour éviter l'erreur [Errno 101] Network is unreachable.
+    print(f"Connexion SSL sécurisée vers {SMTP_HOST} sur le port 465...")
+    
+    with smtplib.SMTP_SSL(SMTP_HOST, 465) as server:
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(msg)
 
 # --- ROUTES ---
 @app.post("/auth/login", response_model=TokenResponse)
