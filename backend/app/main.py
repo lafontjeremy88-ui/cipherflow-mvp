@@ -38,7 +38,7 @@ except Exception as e:
 
 # STRATEGIE MULTI-MODÈLES
 # 1. On utilise le 2.0 Flash (Rapide et quota séparé du 2.5)
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-2.0-flash-lite"
 
 # Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
