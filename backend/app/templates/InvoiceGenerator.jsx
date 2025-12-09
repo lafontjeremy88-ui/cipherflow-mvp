@@ -17,8 +17,14 @@ const InvoiceGenerator = () => {
     setLoading(true);
     const token = localStorage.getItem('access_token'); // On récupère le token de connexion
 
+    // --- MODIFICATION ICI : Choix dynamique de l'URL ---
+    // Si on est sur Vercel, ça prend l'adresse Railway.
+    // Si on est sur ton PC, ça prend 127.0.0.1.
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/generate-invoice', {
+      // On utilise maintenant ${apiUrl} au début
+      const response = await fetch(`${apiUrl}/api/generate-invoice`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
