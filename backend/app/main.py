@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import sys
 from typing import Optional, List
 from datetime import datetime
 import smtplib
@@ -31,21 +32,16 @@ if not logger.handlers:
 # --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
+# Variable globale pour stocker le modèle VRAIMENT fonctionnel
+ACTIVE_MODEL_NAME = "gemini-1.5-flash" 
+
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# STRATEGIE MULTI-MODÈLES
-# 1. On utilise le 2.0 Flash (Rapide et quota séparé du 2.5)
-MODEL_NAME = "gemini-flash-latest"
-
 # Config Email
 SMTP_HOST = os.getenv("SMTP_HOST")
-try:
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-except ValueError:
-    SMTP_PORT = 587
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
@@ -153,7 +149,40 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE GEMINI 2.0 FLASH (QUOTA NEUF) 🚀")
+    global ACTIVE_MODEL_NAME
+    print(f"🛑 VERSION LIBRAIRIE : {genai.__version__}")
+    
+    # --- DIAGNOSTIC: TEST DE QUOTA EN DIRECT ---
+    print("🔍 TEST DES QUOTAS (TIR RÉEL)...")
+    
+    candidates = [
+        "gemini-2.0-flash-exp", 
+        "gemini-1.5-flash",     
+        "gemini-1.5-flash-8b",  
+        "gemini-2.0-flash",     
+        "gemini-pro"            
+    ]
+    
+    found_working = False
+    
+    for model_name in candidates:
+        print(f"   👉 Test de : {model_name} ...")
+        try:
+            m = genai.GenerativeModel(model_name)
+            response = m.generate_content("Test")
+            print(f"   ✅ SUCCÈS ! {model_name} répond (Quota OK).")
+            ACTIVE_MODEL_NAME = model_name
+            found_working = True
+            break 
+            
+        except Exception as e:
+            print(f"   ❌ Échec sur {model_name} : {e}")
+    
+    if found_working:
+        print(f"🚀 DÉMARRAGE SUR LE CHAMPION : {ACTIVE_MODEL_NAME} 🚀")
+    else:
+        print("⚠️ ATTENTION : Aucun modèle n'a répondu. Vérifiez la facturation Google Cloud.")
+
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -162,32 +191,19 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- LOGIQUE INTELLIGENTE AVEC FALLBACK ---
+# --- LOGIQUE INTELLIGENTE ---
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     
-    # Tentative 1 : Modèle Principal (2.0 Flash)
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
+        model = genai.GenerativeModel(ACTIVE_MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"⚠️ ERREUR PRINCIPALE ({MODEL_NAME}): {e}")
-        
-        # Tentative 2 : Fallback sur le modèle "Lite" (Souvent plus de quota)
-        # On utilise le nom exact de votre liste : models/gemini-2.0-flash-lite-preview-02-05
-        try:
-            fallback_model_name = "gemini-2.0-flash-lite-preview-02-05"
-            print(f"🔄 Tentative de secours sur {fallback_model_name}...")
-            fallback = genai.GenerativeModel(fallback_model_name)
-            resp = await fallback.generate_content_async(prompt)
-            return resp.text
-        except Exception as e2:
-            print(f"❌ ECHEC TOTAL: {e2}")
-            # Message d'erreur clair pour l'utilisateur
-            if "429" in str(e) or "429" in str(e2):
-                raise HTTPException(status_code=429, detail="Quota IA dépassé pour aujourd'hui. Réessayez demain ou changez de clé API.")
-            raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
+        print(f"❌ ERREUR IA ({ACTIVE_MODEL_NAME}): {e}")
+        if "429" in str(e):
+            raise HTTPException(status_code=429, detail="Quota dépassé momentanément.")
+        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
     raw = text.strip()
@@ -218,9 +234,10 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
+# --- FONCTION D'ENVOI D'EMAIL "BLINDÉE" ---
 def send_email_smtp(to_email: str, subject: str, body: str):
     if not all([SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
-        print("Erreur: Config SMTP incomplète")
+        print("❌ Erreur: Configuration SMTP incomplète dans Railway.")
         return
 
     msg = EmailMessage()
@@ -229,16 +246,31 @@ def send_email_smtp(to_email: str, subject: str, body: str):
     msg["Subject"] = subject
     msg.set_content(body)
 
-    # SSL Port 465 (Configuration validée)
-    print(f"Envoi email SSL vers {to_email}...")
-    try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as server:
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-        print("✅ Email envoyé !")
-    except Exception as e:
-        print(f"❌ Erreur SMTP : {e}")
-        # On ne raise pas d'erreur pour ne pas bloquer le retour API, juste un log
+    # Stratégie : On essaie le port 465 (SSL), et si ça rate, le port 587 (TLS)
+    ports = [(465, True), (587, False)]
+    
+    success = False
+    for port, use_ssl in ports:
+        try:
+            print(f"🔌 Tentative connexion SMTP sur le port {port} (SSL={use_ssl})...")
+            if use_ssl:
+                with smtplib.SMTP_SSL(SMTP_HOST, port, timeout=10) as server:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(SMTP_HOST, port, timeout=10) as server:
+                    server.starttls()
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                    server.send_message(msg)
+            
+            print(f"✅ SUCCÈS ! Email envoyé via le port {port}.")
+            success = True
+            break # On sort de la boucle si ça marche
+        except Exception as e:
+            print(f"⚠️ Échec sur le port {port}: {e}")
+
+    if not success:
+        print("❌ ECHEC TOTAL SMTP : Impossible d'envoyer l'email sur aucun port.")
 
 # --- ROUTES ---
 @app.post("/auth/login", response_model=TokenResponse)
@@ -297,7 +329,7 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     except Exception as e: print(f"BDD Error: {e}")
     
     if req.send_email:
-        # On ne plante pas si l'email échoue, on log juste l'erreur
+        # On ne lance pas d'exception pour ne pas casser la réponse API
         try: 
             send_email_smtp(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
@@ -309,11 +341,9 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    try:
-        send_email_smtp(req.to_email, req.subject, req.body)
-        return {"status": "sent"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Ici, on veut savoir si ça plante, donc on laisse send_email_smtp afficher les logs
+    send_email_smtp(req.to_email, req.subject, req.body)
+    return {"status": "attempted"}
 
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Depends(get_current_user)):

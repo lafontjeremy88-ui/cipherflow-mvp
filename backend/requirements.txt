@@ -7,7 +7,7 @@ httpx
 jinja2
 python-multipart
 email-validator
-google-generativeai
+google-generativeai==0.8.4
 psycopg2-binary
 python-jose[cryptography]
 fpdf2
