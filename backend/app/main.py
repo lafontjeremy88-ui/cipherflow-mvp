@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import socket  # <--- IMPORTANT
 from typing import Optional, List
 from datetime import datetime
 import smtplib
@@ -36,15 +37,13 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Modèle stable validé
 MODEL_NAME = "gemini-flash-latest"
 
-# --- 2. CONFIGURATION EMAIL (EN DUR - VALIDÉ PAR VOTRE TEST LOCAL) ---
-# On contourne les variables Railway pour être sûr à 100%
+# --- 2. CONFIGURATION EMAIL (EN DUR) ---
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = "cipherflow.services@gmail.com"
-SMTP_PASSWORD = "cdtg lyfo dtqw cxvw"  # Votre code valide
+SMTP_PASSWORD = "cdtg lyfo dtqw cxvw" # Votre code valide
 SMTP_FROM = SMTP_USERNAME
 
 # --- 3. SECURITE ---
@@ -151,7 +150,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE FINAL - CONFIG EN DUR 🚀")
+    print("🚀 DÉMARRAGE FIX RESEAU IPv4 🚀")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -207,13 +206,28 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
 def send_email_smtp(to_email: str, subject: str, body: str):
-    print(f"📧 ENVOI vers {to_email} via {SMTP_HOST} (Hardcoded)...")
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
-    msg.set_content(body)
+    print(f"📧 Préparation envoi vers {to_email}...")
+    
+    # --- RUSTINE RÉSEAU ---
+    # On force la résolution DNS en IPv4 pour éviter l'erreur [Errno 101] sur Railway
     try:
-        # Timeout augmenté à 30s
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+        real_ip = socket.gethostbyname(SMTP_HOST)
+        print(f"   🔍 Résolution DNS Force IPv4 : {SMTP_HOST} -> {real_ip}")
+        target_host = real_ip 
+    except Exception as e:
+        print(f"   ⚠️ Erreur DNS : {e}")
+        target_host = SMTP_HOST # Fallback
+    # ----------------------
+
+    msg = EmailMessage()
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        # On se connecte directement à l'IP trouvée
+        with smtplib.SMTP(target_host, SMTP_PORT, timeout=30) as server:
             server.set_debuglevel(1)
             server.ehlo()
             server.starttls()
