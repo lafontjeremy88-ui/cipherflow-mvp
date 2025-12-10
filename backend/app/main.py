@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-import socket  # <--- IMPORTANT
+import socket
 from typing import Optional, List
 from datetime import datetime
 import smtplib
@@ -29,9 +29,8 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- 1. CONFIGURATION IA ---
+# --- 1. CONFIGURATION ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
@@ -39,118 +38,109 @@ except Exception as e:
 
 MODEL_NAME = "gemini-flash-latest"
 
-# --- 2. CONFIGURATION EMAIL (EN DUR) ---
+# CONFIG EMAIL (EN DUR pour test)
 SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
 SMTP_USERNAME = "cipherflow.services@gmail.com"
 SMTP_PASSWORD = "cdtg lyfo dtqw cxvw" # Votre code valide
 SMTP_FROM = SMTP_USERNAME
 
-# --- 3. SECURITE ---
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# --- 2. FONCTION DE DIAGNOSTIC RÉSEAU ---
+def probe_smtp_ports():
+    print("\n🔍 --- DIAGNOSTIC RÉSEAU SMTP ---")
+    target = "smtp.gmail.com"
+    
+    # 1. Résolution DNS
+    try:
+        ip = socket.gethostbyname(target)
+        print(f"✅ DNS OK : {target} -> {ip}")
+    except Exception as e:
+        print(f"❌ ERREUR DNS : Impossible de résoudre {target} ({e})")
+        return
 
+    # 2. Test des Ports
+    ports = [587, 465, 25]
+    for port in ports:
+        print(f"👉 Test connexion vers {ip}:{port}...", end=" ")
+        try:
+            sock = socket.create_connection((ip, port), timeout=3)
+            sock.close()
+            print("✅ OUVERT")
+        except socket.timeout:
+            print("❌ TIMEOUT (Bloqué)")
+        except Exception as e:
+            print(f"❌ ERREUR ({e})")
+    print("----------------------------------\n")
+
+# --- 3. LOGIQUE EMAIL (NOUVELLE VERSION SSL 465) ---
+def send_email_smtp(to_email: str, subject: str, body: str):
+    print(f"📧 ENVOI vers {to_email} via Port 465 (SSL)...")
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
+    msg.set_content(body)
+
+    try:
+        # On utilise SMTP_SSL sur le port 465 (plus robuste que 587)
+        with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=20) as server:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+            print("✅ EMAIL ENVOYÉ (SSL SUCCESS) !")
+    except Exception as e:
+        print(f"❌ ECHEC SSL 465 : {e}")
+        # Si SSL échoue, on tente une dernière fois le 587 en mode dégradé
+        print("⚠️ Tentative de secours sur le port 587...")
+        try:
+            with smtplib.SMTP(SMTP_HOST, 587, timeout=20) as server:
+                server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+                print("✅ EMAIL ENVOYÉ (TLS SECOURS) !")
+        except Exception as e2:
+            print(f"❌ ECHEC TOTAL : {e2}")
+            raise HTTPException(status_code=500, detail=f"Erreur réseau : {e2}")
+
+# --- 4. CONFIG APP & ROUTES ---
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Token invalide")
+    if not token: raise HTTPException(status_code=401, detail="Token invalide")
     return token
 
-# --- 4. MODELES ---
 class LoginRequest(BaseModel):
-    email: str
-    password: str
-
+    email: str; password: str
 class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
-
+    access_token: str; token_type: str
 class EmailAnalyseRequest(BaseModel):
-    from_email: EmailStr
-    subject: str
-    content: str
-
+    from_email: EmailStr; subject: str; content: str
 class EmailAnalyseResponse(BaseModel):
-    is_devis: bool
-    category: str
-    urgency: str
-    summary: str
-    suggested_title: str
-    raw_ai_text: Optional[str] = None
-
+    is_devis: bool; category: str; urgency: str; summary: str; suggested_title: str; raw_ai_text: Optional[str] = None
 class EmailReplyRequest(BaseModel):
-    from_email: EmailStr
-    subject: str
-    content: str
-    summary: Optional[str] = None
-    category: Optional[str] = None
-    urgency: Optional[str] = None
-
+    from_email: EmailStr; subject: str; content: str; summary: Optional[str] = None; category: Optional[str] = None; urgency: Optional[str] = None
 class EmailReplyResponse(BaseModel):
-    reply: str
-    subject: str
-    raw_ai_text: Optional[str] = None
-
+    reply: str; subject: str; raw_ai_text: Optional[str] = None
 class EmailProcessRequest(BaseModel):
-    from_email: EmailStr
-    subject: str
-    content: str
-    send_email: bool = False
-
+    from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel):
-    analyse: EmailAnalyseResponse
-    reponse: EmailReplyResponse
-    send_status: str
-    error: Optional[str] = None
-
+    analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
 class SendEmailRequest(BaseModel):
-    to_email: str
-    subject: str
-    body: str
-
+    to_email: str; subject: str; body: str
 class SettingsRequest(BaseModel):
-    company_name: str
-    agent_name: str
-    tone: str
-    signature: str
-
+    company_name: str; agent_name: str; tone: str; signature: str
 class EmailHistoryItem(BaseModel):
-    id: int
-    created_at: Optional[datetime] = None
-    sender_email: str
-    subject: str
-    summary: str
-    category: str
-    urgency: str
-    is_devis: bool
-    raw_email_text: str
-    suggested_response_text: str
-    class Config:
-        from_attributes = True
-
+    id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
+    class Config: from_attributes = True
 class InvoiceItem(BaseModel):
-    desc: str
-    price: str
-
+    desc: str; price: str
 class InvoiceRequest(BaseModel):
-    client_name: str
-    invoice_number: str
-    amount: str
-    date: str
-    items: List[InvoiceItem]
+    client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
 
-# --- 5. INITIALISATION APP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE FIX RESEAU IPv4 🚀")
+    print("🚀 DÉMARRAGE + DIAGNOSTIC RÉSEAU 🚀")
+    # Lancement de la sonde
+    probe_smtp_ports()
+    
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -159,87 +149,7 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- 6. LOGIQUE METIER ---
-async def call_gemini(prompt: str) -> str:
-    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
-    try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = await model.generate_content_async(prompt)
-        return response.text
-    except Exception as e:
-        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
-        if "404" in str(e) or "429" in str(e):
-             try:
-                fallback = genai.GenerativeModel("gemini-pro")
-                resp = await fallback.generate_content_async(prompt)
-                return resp.text
-             except Exception as e2: print(f"Echec fallback: {e2}")
-        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
-
-def extract_json_from_text(text: str):
-    raw = text.strip()
-    if "```" in raw:
-        first, last = raw.find("```"), raw.rfind("```")
-        if first != -1 and last > first: raw = raw[first+3:last].strip()
-        if raw.lower().startswith("json"): raw = raw[4:].lstrip()
-    start, end = raw.find("{"), raw.rfind("}")
-    if start != -1 and end != -1: raw = raw[start:end+1]
-    try: return json.loads(raw)
-    except: return None
-
-async def analyze_email_logic(req: EmailAnalyseRequest, company_name: str) -> EmailAnalyseResponse:
-    prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
-    raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
-    return EmailAnalyseResponse(
-        is_devis=bool(data.get("is_devis", False)), category=str(data.get("category", "autre")),
-        urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
-        suggested_title=str(data.get("suggested_title", "Analyse")), raw_ai_text=raw
-    )
-
-async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: str, signature: str) -> EmailReplyResponse:
-    prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
-    raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
-    return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
-
-def send_email_smtp(to_email: str, subject: str, body: str):
-    print(f"📧 Préparation envoi vers {to_email}...")
-    
-    # --- RUSTINE RÉSEAU ---
-    # On force la résolution DNS en IPv4 pour éviter l'erreur [Errno 101] sur Railway
-    try:
-        real_ip = socket.gethostbyname(SMTP_HOST)
-        print(f"   🔍 Résolution DNS Force IPv4 : {SMTP_HOST} -> {real_ip}")
-        target_host = real_ip 
-    except Exception as e:
-        print(f"   ⚠️ Erreur DNS : {e}")
-        target_host = SMTP_HOST # Fallback
-    # ----------------------
-
-    msg = EmailMessage()
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(body)
-
-    try:
-        # On se connecte directement à l'IP trouvée
-        with smtplib.SMTP(target_host, SMTP_PORT, timeout=30) as server:
-            server.set_debuglevel(1)
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            print("✅ EMAIL ENVOYÉ !")
-    except Exception as e:
-        print(f"❌ ERREUR SMTP : {e}")
-        raise e
-
-# --- 7. ROUTES ---
+# --- ROUTES ---
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -278,6 +188,51 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
+async def call_gemini(prompt: str) -> str:
+    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = await model.generate_content_async(prompt)
+        return response.text
+    except Exception as e:
+        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        if "404" in str(e) or "429" in str(e):
+             try:
+                fallback = genai.GenerativeModel("gemini-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except: pass
+        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
+
+def extract_json_from_text(text: str):
+    raw = text.strip()
+    if "```" in raw:
+        first, last = raw.find("```"), raw.rfind("```")
+        if first != -1 and last > first: raw = raw[first+3:last].strip()
+        if raw.lower().startswith("json"): raw = raw[4:].lstrip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end != -1: raw = raw[start:end+1]
+    try: return json.loads(raw)
+    except: return None
+
+async def analyze_email_logic(req: EmailAnalyseRequest, company_name: str) -> EmailAnalyseResponse:
+    prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
+    raw = await call_gemini(prompt)
+    struct = extract_json_from_text(raw) or {}
+    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    return EmailAnalyseResponse(
+        is_devis=bool(data.get("is_devis", False)), category=str(data.get("category", "autre")),
+        urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
+        suggested_title=str(data.get("suggested_title", "Analyse")), raw_ai_text=raw
+    )
+
+async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: str, signature: str) -> EmailReplyResponse:
+    prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
+    raw = await call_gemini(prompt)
+    struct = extract_json_from_text(raw) or {}
+    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
+
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
@@ -299,8 +254,7 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
             send_email_smtp(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
         except Exception as e: 
-            sent = "error"
-            err = str(e)
+            sent = "error"; err = str(e)
             
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
