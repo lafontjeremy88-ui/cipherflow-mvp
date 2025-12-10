@@ -236,41 +236,33 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
 
 # --- FONCTION D'ENVOI D'EMAIL "BLINDÉE" ---
 def send_email_smtp(to_email: str, subject: str, body: str):
-    if not all([SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]): 
-        print("❌ Erreur: Configuration SMTP incomplète dans Railway.")
+    # Vérification de sécurité
+    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]):
+        print("❌ ERREUR CONFIG : Manque des variables SMTP")
         return
 
+    print(f"📧 TENTATIVE ENVOI vers {to_email} via {SMTP_HOST}:{SMTP_PORT}...")
+    
     msg = EmailMessage()
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.set_content(body)
 
-    # Stratégie : On essaie le port 465 (SSL), et si ça rate, le port 587 (TLS)
-    ports = [(465, True), (587, False)]
-    
-    success = False
-    for port, use_ssl in ports:
-        try:
-            print(f"🔌 Tentative connexion SMTP sur le port {port} (SSL={use_ssl})...")
-            if use_ssl:
-                with smtplib.SMTP_SSL(SMTP_HOST, port, timeout=10) as server:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(SMTP_HOST, port, timeout=10) as server:
-                    server.starttls()
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                    server.send_message(msg)
-            
-            print(f"✅ SUCCÈS ! Email envoyé via le port {port}.")
-            success = True
-            break # On sort de la boucle si ça marche
-        except Exception as e:
-            print(f"⚠️ Échec sur le port {port}: {e}")
-
-    if not success:
-        print("❌ ECHEC TOTAL SMTP : Impossible d'envoyer l'email sur aucun port.")
+    try:
+        # On force le port 587 standard pour Gmail
+        with smtplib.SMTP(SMTP_HOST, 587, timeout=10) as server:
+            server.set_debuglevel(1) # Affiche les détails techniques dans les logs
+            server.ehlo() # Salutation au serveur
+            server.starttls() # Sécurisation
+            server.ehlo()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+            print("✅ EMAIL ENVOYÉ AVEC SUCCÈS !")
+    except Exception as e:
+        print(f"❌ ERREUR CRITIQUE SMTP : {e}")
+        # On relance l'erreur pour que le Frontend sache que ça a raté
+        raise e
 
 # --- ROUTES ---
 @app.post("/auth/login", response_model=TokenResponse)
