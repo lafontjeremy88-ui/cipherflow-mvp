@@ -4,10 +4,9 @@ import logging
 from typing import Optional, List
 from datetime import datetime
 
-# --- MODIFICATION 1 : On remplace SMTP par Resend ---
-import resend
+import resend 
 
-from fastapi import FastAPI, HTTPException, Depends, status, Response
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Header # Ajout de Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
@@ -29,7 +28,7 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- 1. CONFIGURATION IA ---
+# --- 1. CONFIGURATION ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -38,41 +37,80 @@ except Exception as e:
 
 MODEL_NAME = "gemini-flash-latest"
 
-# --- MODIFICATION 2 : CONFIGURATION RESEND (API) ---
-# Plus besoin de SMTP_HOST, PORT, PASSWORD, etc. Juste la clé API.
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 else:
     print("⚠️ ATTENTION: Variable RESEND_API_KEY manquante sur Railway !")
 
-# --- 3. FONCTION D'ENVOI D'EMAIL (NOUVELLE) ---
+# --- MOT DE PASSE POUR LE WATCHER (Le secret partagé) ---
+WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
+
+# --- 2. FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     print(f"📧 ENVOI RESEND vers {to_email}...")
-    
     if not RESEND_API_KEY:
-        print("❌ ERREUR : Clé API Resend introuvable.")
-        raise HTTPException(status_code=500, detail="Configuration Email manquante (Resend).")
-
+        raise HTTPException(status_code=500, detail="Clé API Resend manquante.")
     try:
-        # Envoi via API Web (Port 443 -> Jamais bloqué par Railway)
         params = {
-            "from": "onboarding@resend.dev", # Expéditeur obligatoire pour le test gratuit
+            "from": "onboarding@resend.dev",
             "to": [to_email],
             "subject": subject,
-            "html": body.replace("\n", "<br>"), # Conversion simple des sauts de ligne
+            "html": body.replace("\n", "<br>"),
         }
-        
         email = resend.Emails.send(params)
         print(f"✅ EMAIL ENVOYÉ ! ID: {email}")
         return email
-
     except Exception as e:
         print(f"❌ ERREUR RESEND : {e}")
-        # Note : En gratuit, on ne peut envoyer qu'à l'email de votre compte Resend.
         raise HTTPException(status_code=500, detail=f"Erreur Resend: {str(e)}")
 
-# --- 4. SECURITE & MODELES (Inchangé) ---
+async def call_gemini(prompt: str) -> str:
+    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = await model.generate_content_async(prompt)
+        return response.text
+    except Exception as e:
+        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        if "404" in str(e) or "429" in str(e):
+             try:
+                fallback = genai.GenerativeModel("gemini-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except: pass
+        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
+
+def extract_json_from_text(text: str):
+    raw = text.strip()
+    if "```" in raw:
+        first, last = raw.find("```"), raw.rfind("```")
+        if first != -1 and last > first: raw = raw[first+3:last].strip()
+        if raw.lower().startswith("json"): raw = raw[4:].lstrip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end != -1: raw = raw[start:end+1]
+    try: return json.loads(raw)
+    except: return None
+
+async def analyze_email_logic(req: 'EmailAnalyseRequest', company_name: str) -> 'EmailAnalyseResponse':
+    prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
+    raw = await call_gemini(prompt)
+    struct = extract_json_from_text(raw) or {}
+    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    return EmailAnalyseResponse(
+        is_devis=bool(data.get("is_devis", False)), category=str(data.get("category", "autre")),
+        urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
+        suggested_title=str(data.get("suggested_title", "Analyse")), raw_ai_text=raw
+    )
+
+async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone: str, signature: str) -> 'EmailReplyResponse':
+    prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
+    raw = await call_gemini(prompt)
+    struct = extract_json_from_text(raw) or {}
+    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
+
+# --- 3. CONFIG APP & MODELES ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token: raise HTTPException(status_code=401, detail="Token invalide")
@@ -106,13 +144,12 @@ class InvoiceItem(BaseModel):
 class InvoiceRequest(BaseModel):
     client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
 
-# --- 5. INITIALISATION APP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE VERSION RESEND (API HTTP) 🚀")
+    print("🚀 DÉMARRAGE AVEC WEBHOOK WATCHER 🚀")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -121,7 +158,48 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- 6. ROUTES ---
+# --- 4. ROUTES ---
+
+# --- ROUTE SPECIALE POUR LE WATCHER (SANS USER LOGIN) ---
+@app.post("/webhook/email", response_model=EmailProcessResponse)
+async def webhook_process_email(
+    req: EmailProcessRequest, 
+    db: Session = Depends(get_db),
+    x_watcher_secret: str = Header(None) # On lit le secret dans l'en-tête
+):
+    # 1. Vérification Sécurité
+    if x_watcher_secret != WATCHER_SECRET:
+        print(f"⚠️ Tentative d'accès Webhook non autorisée. Reçu: {x_watcher_secret}")
+        raise HTTPException(status_code=401, detail="Clé Watcher invalide")
+
+    # 2. Récupération des réglages (Mode Robot)
+    settings = db.query(AppSettings).first()
+    comp = settings.company_name if settings else "CipherFlow"
+    tone = settings.tone if settings else "pro"
+    sign = settings.signature if settings else "Team"
+    
+    # 3. Traitement
+    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
+    
+    # 4. Sauvegarde
+    try:
+        new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
+        db.add(new); db.commit(); db.refresh(new)
+    except Exception as e: print(f"BDD Error: {e}")
+    
+    # 5. Envoi
+    sent, err = "not_sent", None
+    if req.send_email:
+        try: 
+            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
+            sent = "sent"
+        except Exception as e: 
+            sent = "error"; err = str(e)
+            
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+
+# --- ROUTES CLASSIQUES (AVEC LOGIN) ---
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -160,100 +238,39 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
-async def call_gemini(prompt: str) -> str:
-    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
-    try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = await model.generate_content_async(prompt)
-        return response.text
-    except Exception as e:
-        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
-        if "404" in str(e) or "429" in str(e):
-             try:
-                fallback = genai.GenerativeModel("gemini-pro")
-                resp = await fallback.generate_content_async(prompt)
-                return resp.text
-             except: pass
-        raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
-
-def extract_json_from_text(text: str):
-    raw = text.strip()
-    if "```" in raw:
-        first, last = raw.find("```"), raw.rfind("```")
-        if first != -1 and last > first: raw = raw[first+3:last].strip()
-        if raw.lower().startswith("json"): raw = raw[4:].lstrip()
-    start, end = raw.find("{"), raw.rfind("}")
-    if start != -1 and end != -1: raw = raw[start:end+1]
-    try: return json.loads(raw)
-    except: return None
-
-async def analyze_email_logic(req: EmailAnalyseRequest, company_name: str) -> EmailAnalyseResponse:
-    prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
-    raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
-    return EmailAnalyseResponse(
-        is_devis=bool(data.get("is_devis", False)), category=str(data.get("category", "autre")),
-        urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
-        suggested_title=str(data.get("suggested_title", "Analyse")), raw_ai_text=raw
-    )
-
-async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: str, signature: str) -> EmailReplyResponse:
-    prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
-    raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
-    return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
-
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"
     sign = settings.signature if settings else "Team"
-    
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
-    
     try:
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit(); db.refresh(new)
     except Exception as e: print(f"BDD Error: {e}")
-    
     sent, err = "not_sent", None
     if req.send_email:
         try: 
-            # --- MODIFICATION 3 : Appel de la fonction Resend ---
             send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
         except Exception as e: 
             sent = "error"; err = str(e)
-            
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    # --- MODIFICATION 4 : Appel de la fonction Resend ---
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     try:
-        # 1. On récupère les réglages du client connecté (SaaS)
         settings = db.query(AppSettings).first()
-        
-        # 2. On prépare les données pour le PDF
         data_dict = invoice_data.dict()
-        
-        # On injecte le nom de l'entreprise et le logo (S'il y en a un)
-        # Si pas de réglage, on met "Mon Entreprise" par défaut
         data_dict['company_name_header'] = settings.company_name if settings else "Mon Entreprise"
-        
-        # NOTE : Pour le logo, dans la version suivante, on ajoutera un champ 'logo_url' dans la BDD.
-        # Pour l'instant, on va mettre un lien placeholder ou le vôtre.
-        data_dict['logo_url'] = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # Exemple icône IA
-        
+        data_dict['logo_url'] = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
         return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
