@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import sys
 from typing import Optional, List
 from datetime import datetime
 import smtplib
@@ -29,31 +28,42 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION IA ---
+# --- 1. CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-
-# Variable globale pour stocker le modèle VRAIMENT fonctionnel
-ACTIVE_MODEL_NAME = "gemini-1.5-flash" 
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Config Email
+# Modèle stable et autorisé
+MODEL_NAME = "gemini-flash-latest"
+
+# --- 2. CONFIGURATION EMAIL (C'est ici que c'était effacé !) ---
 SMTP_HOST = os.getenv("SMTP_HOST")
+try:
+    # On force la conversion en entier, sinon ça plante
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+except ValueError:
+    SMTP_PORT = 587
+    
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM")
 
+# --- 3. SECURITE ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
-        raise HTTPException(status_code=401, detail="Token invalide")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return token
 
-# --- MODÈLES ---
+# --- 4. MODELES DE DONNEES ---
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -136,7 +146,7 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
-# --- APP ---
+# --- 5. INITIALISATION APP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
 app.add_middleware(
@@ -149,40 +159,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    global ACTIVE_MODEL_NAME
-    print(f"🛑 VERSION LIBRAIRIE : {genai.__version__}")
-    
-    # --- DIAGNOSTIC: TEST DE QUOTA EN DIRECT ---
-    print("🔍 TEST DES QUOTAS (TIR RÉEL)...")
-    
-    candidates = [
-        "gemini-2.0-flash-exp", 
-        "gemini-1.5-flash",     
-        "gemini-1.5-flash-8b",  
-        "gemini-2.0-flash",     
-        "gemini-pro"            
-    ]
-    
-    found_working = False
-    
-    for model_name in candidates:
-        print(f"   👉 Test de : {model_name} ...")
-        try:
-            m = genai.GenerativeModel(model_name)
-            response = m.generate_content("Test")
-            print(f"   ✅ SUCCÈS ! {model_name} répond (Quota OK).")
-            ACTIVE_MODEL_NAME = model_name
-            found_working = True
-            break 
-            
-        except Exception as e:
-            print(f"   ❌ Échec sur {model_name} : {e}")
-    
-    if found_working:
-        print(f"🚀 DÉMARRAGE SUR LE CHAMPION : {ACTIVE_MODEL_NAME} 🚀")
-    else:
-        print("⚠️ ATTENTION : Aucun modèle n'a répondu. Vérifiez la facturation Google Cloud.")
-
+    print("🚀 DÉMARRAGE MODE RÉPARATION EMAIL 🚀")
+    print("Initialisation BDD...")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -191,18 +169,24 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- LOGIQUE INTELLIGENTE ---
+# --- 6. LOGIQUE METIER ---
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
-    
     try:
-        model = genai.GenerativeModel(ACTIVE_MODEL_NAME)
+        model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"❌ ERREUR IA ({ACTIVE_MODEL_NAME}): {e}")
-        if "429" in str(e):
-            raise HTTPException(status_code=429, detail="Quota dépassé momentanément.")
+        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        # Fallback de secours
+        if "404" in str(e) or "429" in str(e):
+             try:
+                print("Tentative fallback sur gemini-pro...")
+                fallback = genai.GenerativeModel("gemini-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except Exception as e2:
+                 print(f"Echec fallback: {e2}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -234,12 +218,12 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- FONCTION D'ENVOI D'EMAIL "BLINDÉE" ---
+# --- FONCTION D'ENVOI D'EMAIL ROBUSTE ---
 def send_email_smtp(to_email: str, subject: str, body: str):
-    # Vérification de sécurité
+    # Vérification présence variables
     if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]):
-        print("❌ ERREUR CONFIG : Manque des variables SMTP")
-        return
+        print("❌ ERREUR CONFIG : Variables SMTP manquantes (vérifiez Railway).")
+        raise HTTPException(status_code=500, detail="Configuration Email manquante serveur.")
 
     print(f"📧 TENTATIVE ENVOI vers {to_email} via {SMTP_HOST}:{SMTP_PORT}...")
     
@@ -250,21 +234,22 @@ def send_email_smtp(to_email: str, subject: str, body: str):
     msg.set_content(body)
 
     try:
-        # On force le port 587 standard pour Gmail
-        with smtplib.SMTP(SMTP_HOST, 587, timeout=10) as server:
-            server.set_debuglevel(1) # Affiche les détails techniques dans les logs
-            server.ehlo() # Salutation au serveur
-            server.starttls() # Sécurisation
+        # Connexion avec timeout pour ne pas bloquer indéfiniment
+        # On force la conversion en int pour le port
+        with smtplib.SMTP(SMTP_HOST, int(SMTP_PORT), timeout=20) as server:
+            server.set_debuglevel(1)  # Affiche les détails dans les logs
+            server.ehlo()
+            server.starttls()
             server.ehlo()
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.send_message(msg)
             print("✅ EMAIL ENVOYÉ AVEC SUCCÈS !")
     except Exception as e:
         print(f"❌ ERREUR CRITIQUE SMTP : {e}")
-        # On relance l'erreur pour que le Frontend sache que ça a raté
-        raise e
+        raise HTTPException(status_code=500, detail=f"Erreur envoi email: {str(e)}")
 
-# --- ROUTES ---
+# --- 7. ROUTES ---
+
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -313,19 +298,17 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
     
-    sent, err = "not_sent", None
-    
     try:
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit(); db.refresh(new)
     except Exception as e: print(f"BDD Error: {e}")
     
+    sent, err = "not_sent", None
     if req.send_email:
-        # On ne lance pas d'exception pour ne pas casser la réponse API
         try: 
             send_email_smtp(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
-        except Exception as e:
+        except Exception as e: 
             sent = "error"
             err = str(e)
             
@@ -333,9 +316,9 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    # Ici, on veut savoir si ça plante, donc on laisse send_email_smtp afficher les logs
+    # On appelle directement la fonction d'envoi
     send_email_smtp(req.to_email, req.subject, req.body)
-    return {"status": "attempted"}
+    return {"status": "sent"}
 
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Depends(get_current_user)):
