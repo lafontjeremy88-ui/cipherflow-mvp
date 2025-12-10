@@ -6,7 +6,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = "cipherflow.services@gmail.com"  # <--- METTEZ VOTRE EMAIL ICI
 # LE PLUS IMPORTANT : Collez le code à 16 lettres ici (pas votre mot de passe habituel)
-SMTP_PASSWORD = "cdtglyfodtqwcxvw"    # <--- VOTRE MOT DE PASSE D'APPLICATION
+SMTP_PASSWORD = "rrgc hqgo gtce rsab"    # <--- VOTRE MOT DE PASSE D'APPLICATION
 
 def test_envoi():
     print(f"1. Tentative de connexion à {SMTP_HOST}...")

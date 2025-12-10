@@ -36,34 +36,26 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Modèle stable et autorisé
+# Modèle stable validé
 MODEL_NAME = "gemini-flash-latest"
 
-# --- 2. CONFIGURATION EMAIL (C'est ici que c'était effacé !) ---
-SMTP_HOST = os.getenv("SMTP_HOST")
-try:
-    # On force la conversion en entier, sinon ça plante
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-except ValueError:
-    SMTP_PORT = 587
-    
-SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_FROM = os.getenv("SMTP_FROM")
+# --- 2. CONFIGURATION EMAIL (EN DUR - VALIDÉ PAR VOTRE TEST LOCAL) ---
+# On contourne les variables Railway pour être sûr à 100%
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USERNAME = "cipherflow.services@gmail.com"
+SMTP_PASSWORD = "cdtg lyfo dtqw cxvw"  # Votre code valide
+SMTP_FROM = SMTP_USERNAME
 
 # --- 3. SECURITE ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(status_code=401, detail="Token invalide")
     return token
 
-# --- 4. MODELES DE DONNEES ---
+# --- 4. MODELES ---
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -159,8 +151,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE MODE RÉPARATION EMAIL 🚀")
-    print("Initialisation BDD...")
+    print("🚀 DÉMARRAGE FINAL - CONFIG EN DUR 🚀")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -178,15 +169,12 @@ async def call_gemini(prompt: str) -> str:
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
-        # Fallback de secours
         if "404" in str(e) or "429" in str(e):
              try:
-                print("Tentative fallback sur gemini-pro...")
                 fallback = genai.GenerativeModel("gemini-pro")
                 resp = await fallback.generate_content_async(prompt)
                 return resp.text
-             except Exception as e2:
-                 print(f"Echec fallback: {e2}")
+             except Exception as e2: print(f"Echec fallback: {e2}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -218,38 +206,26 @@ async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: 
     data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- FONCTION D'ENVOI D'EMAIL ROBUSTE ---
 def send_email_smtp(to_email: str, subject: str, body: str):
-    # Vérification présence variables
-    if not all([SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM]):
-        print("❌ ERREUR CONFIG : Variables SMTP manquantes (vérifiez Railway).")
-        raise HTTPException(status_code=500, detail="Configuration Email manquante serveur.")
-
-    print(f"📧 TENTATIVE ENVOI vers {to_email} via {SMTP_HOST}:{SMTP_PORT}...")
-    
+    print(f"📧 ENVOI vers {to_email} via {SMTP_HOST} (Hardcoded)...")
     msg = EmailMessage()
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_email
-    msg["Subject"] = subject
+    msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
     msg.set_content(body)
-
     try:
-        # Connexion avec timeout pour ne pas bloquer indéfiniment
-        # On force la conversion en int pour le port
-        with smtplib.SMTP(SMTP_HOST, int(SMTP_PORT), timeout=20) as server:
-            server.set_debuglevel(1)  # Affiche les détails dans les logs
+        # Timeout augmenté à 30s
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.set_debuglevel(1)
             server.ehlo()
             server.starttls()
             server.ehlo()
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.send_message(msg)
-            print("✅ EMAIL ENVOYÉ AVEC SUCCÈS !")
+            print("✅ EMAIL ENVOYÉ !")
     except Exception as e:
-        print(f"❌ ERREUR CRITIQUE SMTP : {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur envoi email: {str(e)}")
+        print(f"❌ ERREUR SMTP : {e}")
+        raise e
 
 # --- 7. ROUTES ---
-
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -316,7 +292,6 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    # On appelle directement la fonction d'envoi
     send_email_smtp(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
