@@ -13,3 +13,4 @@ python-jose[cryptography]
 fpdf2
 passlib
 bcrypt==4.0.1
+resend

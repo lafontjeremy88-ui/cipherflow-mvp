@@ -1,11 +1,11 @@
 import os
 import json
 import logging
-import socket
 from typing import Optional, List
 from datetime import datetime
-import smtplib
-from email.message import EmailMessage
+
+# --- MODIFICATION 1 : On remplace SMTP par Resend ---
+import resend
 
 from fastapi import FastAPI, HTTPException, Depends, status, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,7 +29,7 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -38,67 +38,41 @@ except Exception as e:
 
 MODEL_NAME = "gemini-flash-latest"
 
-# CONFIG EMAIL (EN DUR pour test)
-SMTP_HOST = "smtp.gmail.com"
-SMTP_USERNAME = "cipherflow.services@gmail.com"
-SMTP_PASSWORD = "cdtg lyfo dtqw cxvw" # Votre code valide
-SMTP_FROM = SMTP_USERNAME
+# --- MODIFICATION 2 : CONFIGURATION RESEND (API) ---
+# Plus besoin de SMTP_HOST, PORT, PASSWORD, etc. Juste la clé API.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
+else:
+    print("⚠️ ATTENTION: Variable RESEND_API_KEY manquante sur Railway !")
 
-# --- 2. FONCTION DE DIAGNOSTIC RÉSEAU ---
-def probe_smtp_ports():
-    print("\n🔍 --- DIAGNOSTIC RÉSEAU SMTP ---")
-    target = "smtp.gmail.com"
+# --- 3. FONCTION D'ENVOI D'EMAIL (NOUVELLE) ---
+def send_email_via_resend(to_email: str, subject: str, body: str):
+    print(f"📧 ENVOI RESEND vers {to_email}...")
     
-    # 1. Résolution DNS
-    try:
-        ip = socket.gethostbyname(target)
-        print(f"✅ DNS OK : {target} -> {ip}")
-    except Exception as e:
-        print(f"❌ ERREUR DNS : Impossible de résoudre {target} ({e})")
-        return
-
-    # 2. Test des Ports
-    ports = [587, 465, 25]
-    for port in ports:
-        print(f"👉 Test connexion vers {ip}:{port}...", end=" ")
-        try:
-            sock = socket.create_connection((ip, port), timeout=3)
-            sock.close()
-            print("✅ OUVERT")
-        except socket.timeout:
-            print("❌ TIMEOUT (Bloqué)")
-        except Exception as e:
-            print(f"❌ ERREUR ({e})")
-    print("----------------------------------\n")
-
-# --- 3. LOGIQUE EMAIL (NOUVELLE VERSION SSL 465) ---
-def send_email_smtp(to_email: str, subject: str, body: str):
-    print(f"📧 ENVOI vers {to_email} via Port 465 (SSL)...")
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = SMTP_FROM, to_email, subject
-    msg.set_content(body)
+    if not RESEND_API_KEY:
+        print("❌ ERREUR : Clé API Resend introuvable.")
+        raise HTTPException(status_code=500, detail="Configuration Email manquante (Resend).")
 
     try:
-        # On utilise SMTP_SSL sur le port 465 (plus robuste que 587)
-        with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=20) as server:
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            print("✅ EMAIL ENVOYÉ (SSL SUCCESS) !")
-    except Exception as e:
-        print(f"❌ ECHEC SSL 465 : {e}")
-        # Si SSL échoue, on tente une dernière fois le 587 en mode dégradé
-        print("⚠️ Tentative de secours sur le port 587...")
-        try:
-            with smtplib.SMTP(SMTP_HOST, 587, timeout=20) as server:
-                server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-                print("✅ EMAIL ENVOYÉ (TLS SECOURS) !")
-        except Exception as e2:
-            print(f"❌ ECHEC TOTAL : {e2}")
-            raise HTTPException(status_code=500, detail=f"Erreur réseau : {e2}")
+        # Envoi via API Web (Port 443 -> Jamais bloqué par Railway)
+        params = {
+            "from": "onboarding@resend.dev", # Expéditeur obligatoire pour le test gratuit
+            "to": [to_email],
+            "subject": subject,
+            "html": body.replace("\n", "<br>"), # Conversion simple des sauts de ligne
+        }
+        
+        email = resend.Emails.send(params)
+        print(f"✅ EMAIL ENVOYÉ ! ID: {email}")
+        return email
 
-# --- 4. CONFIG APP & ROUTES ---
+    except Exception as e:
+        print(f"❌ ERREUR RESEND : {e}")
+        # Note : En gratuit, on ne peut envoyer qu'à l'email de votre compte Resend.
+        raise HTTPException(status_code=500, detail=f"Erreur Resend: {str(e)}")
+
+# --- 4. SECURITE & MODELES (Inchangé) ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token: raise HTTPException(status_code=401, detail="Token invalide")
@@ -132,15 +106,13 @@ class InvoiceItem(BaseModel):
 class InvoiceRequest(BaseModel):
     client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
 
+# --- 5. INITIALISATION APP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE + DIAGNOSTIC RÉSEAU 🚀")
-    # Lancement de la sonde
-    probe_smtp_ports()
-    
+    print("🚀 DÉMARRAGE VERSION RESEND (API HTTP) 🚀")
     create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -149,7 +121,7 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- ROUTES ---
+# --- 6. ROUTES ---
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
@@ -251,7 +223,8 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     sent, err = "not_sent", None
     if req.send_email:
         try: 
-            send_email_smtp(req.from_email, reponse.subject, reponse.reply)
+            # --- MODIFICATION 3 : Appel de la fonction Resend ---
+            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
         except Exception as e: 
             sent = "error"; err = str(e)
@@ -260,7 +233,8 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 
 @app.post("/email/send")
 async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
-    send_email_smtp(req.to_email, req.subject, req.body)
+    # --- MODIFICATION 4 : Appel de la fonction Resend ---
+    send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
 @app.post("/api/generate-invoice")
