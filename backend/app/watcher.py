@@ -5,21 +5,20 @@ from email.header import decode_header
 import requests
 import os
 import logging
-import socket
 
 # --- CONFIGURATION ---
 IMAP_SERVER = "imap.gmail.com"
 EMAIL_USER = "cipherflow.services@gmail.com"
 EMAIL_PASS = "cdtg lyfo dtqw cxvw" 
 
-# URL API (Webhook)
+# Ton URL API (Webhook)
 API_URL = "https://cipherflow-mvp-production.up.railway.app/webhook/email"
 WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
 
 logging.basicConfig(level=logging.INFO, format="[WATCHER] %(message)s")
 
-# Liste des expéditeurs à IGNORER (Anti-Spam / Anti-Bot)
-BLACKLIST_SENDERS = ["railway", "google", "no-reply", "noreply", "donotreply", "microsoft", "github"]
+# LISTE NOIRE : On ignore ces expéditeurs
+BLACKLIST = ["railway", "google", "no-reply", "noreply", "postmaster", "mailer-daemon", "resend"]
 
 def get_body(msg):
     if msg.is_multipart():
@@ -49,7 +48,6 @@ def watch_emails():
     print("👀 WATCHER DÉMARRÉ : Surveillance de la boîte de réception...")
     
     while True:
-        mail = None
         try:
             mail = imaplib.IMAP4_SSL(IMAP_SERVER)
             mail.login(EMAIL_USER, EMAIL_PASS)
@@ -61,11 +59,11 @@ def watch_emails():
                 email_ids = []
             else:
                 all_ids = messages[0].split()
-                # On ne prend que les 5 derniers pour éviter l'embouteillage au démarrage
-                email_ids = all_ids[-5:]
+                # On ne prend que les 3 derniers pour éviter l'embouteillage
+                email_ids = all_ids[-3:]
 
             if email_ids:
-                print(f"📬 {len(email_ids)} emails détectés (Traitement en cours...)")
+                print(f"📬 {len(email_ids)} emails détectés...")
 
             for e_id in email_ids:
                 try:
@@ -75,49 +73,50 @@ def watch_emails():
                             msg = email.message_from_bytes(response_part[1])
                             subject = clean_subject(msg["Subject"])
                             real_sender = msg.get("From", "")
-                            body = get_body(msg)
-
-                            # --- FILTRE ANTI-ROBOT ---
-                            sender_lower = real_sender.lower()
-                            if any(blocked in sender_lower for blocked in BLACKLIST_SENDERS):
-                                print(f"   🚫 Ignoré (Robot détecté) : {subject}")
-                                continue
-
-                            print(f"   👉 Traitement de : {subject}")
                             
+                            # --- FILTRE ANTI-ROBOT ---
+                            is_spam = False
+                            for blocked in BLACKLIST:
+                                if blocked in real_sender.lower() or blocked in subject.lower():
+                                    is_spam = True
+                            
+                            if is_spam:
+                                print(f"   🚫 Ignoré (Robot): {subject}")
+                                continue
+                                
+                            body = get_body(msg)
+                            print(f"   👉 Traitement de : {subject}")
+                            print(f"      📨 De : {real_sender}")
+
                             payload = {
-                                "from_email": real_sender,
+                                "from_email": real_sender, # L'API essaiera de répondre à ça
                                 "subject": subject,
                                 "content": body or "Pas de contenu texte",
                                 "send_email": True 
                             }
                             headers = {"x-watcher-secret": WATCHER_SECRET}
                             
-                            # Appel API
                             response = requests.post(API_URL, json=payload, headers=headers)
                             
                             if response.status_code == 200:
-                                print(f"      ✅ SUCCÈS ! Email traité et répondu.")
+                                print(f"      ✅ SUCCÈS ! Email envoyé à l'IA.")
                             else:
-                                print(f"      ⚠️ Échec API ({response.status_code}) : {response.text}")
+                                print(f"      ⚠️ Échec API ({response.status_code})")
                     
-                    # --- PAUSE CRITIQUE ---
-                    # On attend 2 secondes entre chaque mail pour ne pas tuer le serveur
+                    # Pause de 2 secondes pour laisser respirer l'API
                     time.sleep(2)
 
                 except Exception as e_loop:
-                    print(f"   ❌ Erreur sur un email : {e_loop}")
+                    print(f"   ❌ Erreur mail: {e_loop}")
 
             try:
-                mail.close()
-                mail.logout()
+                mail.close(); mail.logout()
             except: pass
             
-            time.sleep(10)
-
         except Exception as e:
-            print(f"⚠️ Erreur Globale Watcher : {e}")
-            time.sleep(30)
+            print(f"⚠️ Erreur Globale: {e}")
+        
+        time.sleep(10)
 
 if __name__ == "__main__":
     watch_emails()
