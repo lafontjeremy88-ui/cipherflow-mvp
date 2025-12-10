@@ -238,9 +238,22 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends
     return {"status": "sent"}
 
 @app.post("/api/generate-invoice")
-async def generate_invoice(invoice_data: InvoiceRequest, current_user: str = Depends(get_current_user)):
+async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     try:
+        # 1. On récupère les réglages du client connecté (SaaS)
+        settings = db.query(AppSettings).first()
+        
+        # 2. On prépare les données pour le PDF
         data_dict = invoice_data.dict()
+        
+        # On injecte le nom de l'entreprise et le logo (S'il y en a un)
+        # Si pas de réglage, on met "Mon Entreprise" par défaut
+        data_dict['company_name_header'] = settings.company_name if settings else "Mon Entreprise"
+        
+        # NOTE : Pour le logo, dans la version suivante, on ajoutera un champ 'logo_url' dans la BDD.
+        # Pour l'instant, on va mettre un lien placeholder ou le vôtre.
+        data_dict['logo_url'] = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" # Exemple icône IA
+        
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
         return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
