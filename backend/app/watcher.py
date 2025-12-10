@@ -10,12 +10,13 @@ import socket
 # --- CONFIGURATION GMAIL (LECTURE) ---
 IMAP_SERVER = "imap.gmail.com"
 EMAIL_USER = "cipherflow.services@gmail.com"
-# Code app Gmail (le même que pour SMTP)
+# Code app Gmail
 EMAIL_PASS = "cdtg lyfo dtqw cxvw" 
 
 # --- CONFIGURATION API ---
-# On tape sur la route Webhook spéciale
-API_URL = "[https://cipherflow-mvp-production.up.railway.app/webhook/email](https://cipherflow-mvp-production.up.railway.app/webhook/email)"
+# CORRECTION ICI : L'URL doit être propre, sans crochets ni parenthèses !
+API_URL = "https://cipherflow-mvp-production.up.railway.app/webhook/email"
+
 # La clé secrète doit être identique à celle dans main.py
 WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
 
