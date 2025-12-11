@@ -53,7 +53,7 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
         raise HTTPException(status_code=500, detail="Clé API Resend manquante.")
     try:
         params = {
-            "from": "onboarding@resend.dev",
+            "from": "contact@cipherflow.company",
             "to": [to_email],
             "subject": subject,
             "html": body.replace("\n", "<br>"),
