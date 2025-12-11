@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Download, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { FileText, Download, CheckCircle, AlertCircle, RefreshCw, Eye } from 'lucide-react';
 
 const InvoiceGenerator = () => {
   const [loading, setLoading] = useState(false);
@@ -7,7 +7,7 @@ const InvoiceGenerator = () => {
   const [invoices, setInvoices] = useState([]); // Pour stocker l'historique
   const [formData, setFormData] = useState({
     client_name: "Client Test",
-    invoice_number: "", // On laisse vide pour forcer à remplir ou automatiser plus tard
+    invoice_number: "", 
     amount: "150.00"
   });
 
@@ -23,8 +23,7 @@ const InvoiceGenerator = () => {
         const data = await res.json();
         setInvoices(data);
         
-        // PETITE ASTUCE INTELLIGENTE (Brique B - Préparation) 💡
-        // Si on a des factures, on propose automatiquement le numéro suivant !
+        // Logique intelligente pour le numéro suivant
         if (data.length > 0) {
             const lastRef = data[0].reference; // ex: FAC-003
             const parts = lastRef.split('-');
@@ -43,10 +42,27 @@ const InvoiceGenerator = () => {
     fetchInvoices();
   }, []);
 
+  // 2. Fonction pour VOIR une ancienne facture (sans télécharger)
+  const handleViewInvoice = async (ref) => {
+    try {
+        const res = await fetch(`https://cipherflow-mvp-production.up.railway.app/api/invoices/${ref}/pdf`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            window.open(url, '_blank'); // Ouvre dans un nouvel onglet !
+        } else {
+            alert("Impossible de récupérer cette facture.");
+        }
+    } catch (e) { console.error("Erreur PDF", e); }
+  };
+
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  // 3. Générer une nouvelle facture (Ouverture directe)
   const handleGenerate = async () => {
     setLoading(true);
     setStatus(null);
@@ -70,15 +86,12 @@ const InvoiceGenerator = () => {
       if (response.ok) {
           const blob = await response.blob();
           const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `facture_${formData.invoice_number}.pdf`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+          
+          // MODIFICATION ICI : On ouvre au lieu de télécharger
+          window.open(url, '_blank'); 
           
           setStatus('success');
-          fetchInvoices(); // 🔄 On rafraîchit la liste immédiatement !
+          fetchInvoices(); // On rafraîchit la liste
       } else {
           setStatus('error');
       }
@@ -101,7 +114,7 @@ const InvoiceGenerator = () => {
             </div>
             <div>
                 <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Nouvelle Facture</h2>
-                <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.9rem' }}>Le numéro est calculé automatiquement (modifiable).</p>
+                <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.9rem' }}>Le numéro est calculé automatiquement.</p>
             </div>
         </div>
 
@@ -121,14 +134,14 @@ const InvoiceGenerator = () => {
         </div>
 
         <button className="btn btn-primary" onClick={handleGenerate} disabled={loading} style={{ width: '100%', justifyContent: 'center', marginTop: '1rem' }}>
-            {loading ? 'Génération...' : '📥 Générer et Sauvegarder'}
+            {loading ? 'Génération...' : '📥 Générer et Voir'}
         </button>
 
-        {status === 'success' && <div style={{ marginTop: '1rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}><CheckCircle size={16} /> Facture créée !</div>}
-        {status === 'error' && <div style={{ marginTop: '1rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}><AlertCircle size={16} /> Erreur (Doublon ?)</div>}
+        {status === 'success' && <div style={{ marginTop: '1rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}><CheckCircle size={16} /> Facture créée et sauvegardée !</div>}
+        {status === 'error' && <div style={{ marginTop: '1rem', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}><AlertCircle size={16} /> Erreur lors de la création.</div>}
       </div>
 
-      {/* ZONE HISTORIQUE (NOUVEAU) */}
+      {/* ZONE HISTORIQUE */}
       <h3 style={{ marginTop: '3rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
           📜 Historique des Factures
           <button onClick={fetchInvoices} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6366f1' }}><RefreshCw size={18}/></button>
@@ -143,11 +156,12 @@ const InvoiceGenerator = () => {
                     <th style={{ padding: '12px 20px' }}>Client</th>
                     <th style={{ padding: '12px 20px' }}>Montant</th>
                     <th style={{ padding: '12px 20px' }}>Statut</th>
+                    <th style={{ padding: '12px 20px' }}>Action</th>
                 </tr>
             </thead>
             <tbody>
                 {invoices.length === 0 ? (
-                    <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>Aucune facture pour l'instant.</td></tr>
+                    <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>Aucune facture pour l'instant.</td></tr>
                 ) : (
                     invoices.map((inv) => (
                         <tr key={inv.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -156,6 +170,15 @@ const InvoiceGenerator = () => {
                             <td style={{ padding: '12px 20px' }}>{inv.client_name}</td>
                             <td style={{ padding: '12px 20px', fontWeight: 'bold' }}>{inv.amount_total} €</td>
                             <td style={{ padding: '12px 20px' }}><span className="badge badge-success">{inv.status}</span></td>
+                            <td style={{ padding: '12px 20px' }}>
+                                <button 
+                                    onClick={() => handleViewInvoice(inv.reference)}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6366f1' }}
+                                    title="Voir le PDF"
+                                >
+                                    <Eye size={20} />
+                                </button>
+                            </td>
                         </tr>
                     ))
                 )}
