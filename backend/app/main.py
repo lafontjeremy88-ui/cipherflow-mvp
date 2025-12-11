@@ -311,3 +311,4 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
     except Exception as e:
         print(f"❌ Erreur Facture: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    # ok 
