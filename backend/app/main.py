@@ -16,7 +16,7 @@ import google.generativeai as genai
 
 # Imports locaux
 from app.database.database import create_tables, get_db
-from app.database.models import EmailAnalysis, AppSettings, User
+from app.database.models import EmailAnalysis, AppSettings, User, Invoice
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes 
 
@@ -267,13 +267,47 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
     try:
+        # 1. Récupération des réglages
         settings = db.query(AppSettings).first()
+        company_name = settings.company_name if settings else "Mon Entreprise"
+        
+        # 2. Préparation des données PDF
         data_dict = invoice_data.dict()
-        data_dict['company_name_header'] = settings.company_name if settings else "Mon Entreprise"
-        data_data_dict['logo_url'] = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        data_dict['company_name_header'] = company_name
+        data_dict['logo_url'] = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
+        
+        # 3. SAUVEGARDE EN BDD (La Brique A) 🧱
+        # On vérifie si la facture existe déjà
+        existing = db.query(Invoice).filter(Invoice.reference == invoice_data.invoice_number).first()
+        
+        if existing:
+            # Mise à jour simple
+            existing.amount_total = invoice_data.amount
+            db.commit()
+            print(f"🔄 Facture {existing.reference} mise à jour.")
+        else:
+            # Création nouvelle facture
+            # On stocke les articles en JSON texte pour faire simple
+            items_str = json.dumps([item.dict() for item in invoice_data.items])
+            
+            new_invoice = Invoice(
+                reference=invoice_data.invoice_number,
+                client_name=invoice_data.client_name,
+                amount_total=invoice_data.amount,
+                status="émise",
+                items_json=items_str
+            )
+            db.add(new_invoice)
+            db.commit()
+            db.refresh(new_invoice)
+            print(f"✅ Facture {new_invoice.reference} sauvegardée en BDD !")
+
+        # 4. Génération du PDF
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
+        
         return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
     except Exception as e:
-        print(f"Erreur PDF: {e}")
+        print(f"❌ Erreur Facture: {e}")
         raise HTTPException(status_code=500, detail=str(e))
