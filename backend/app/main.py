@@ -270,7 +270,7 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
         settings = db.query(AppSettings).first()
         data_dict = invoice_data.dict()
         data_dict['company_name_header'] = settings.company_name if settings else "Mon Entreprise"
-        data_dict['logo_url'] = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+        data_data_dict['logo_url'] = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
         return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
