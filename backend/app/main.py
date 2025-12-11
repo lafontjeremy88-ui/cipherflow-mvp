@@ -306,9 +306,14 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
         
-        return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={"inline": f"attachment; filename={filename}"})
 
     except Exception as e:
         print(f"❌ Erreur Facture: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    # ok 
+    # --- ROUTE MANQUANTE POUR L'HISTORIQUE ---
+@app.get("/api/invoices")
+async def get_invoices(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    # On récupère toutes les factures, de la plus récente à la plus ancienne
+    invoices = db.query(Invoice).order_by(Invoice.id.desc()).all()
+    return invoices
