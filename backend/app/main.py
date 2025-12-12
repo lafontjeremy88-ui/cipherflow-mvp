@@ -203,7 +203,23 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             sent = "sent"
         except Exception as e: sent = "error"; err = str(e)
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
-
+@app.post("/auth/register", response_model=TokenResponse)
+async def register(req: LoginRequest, db: Session = Depends(get_db)):
+    # 1. On vérifie si l'email existe déjà
+    existing_user = db.query(User).filter(User.email == req.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
+    
+    # 2. On crée le nouvel utilisateur
+    hashed_password = get_password_hash(req.password)
+    new_user = User(email=req.email, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # 3. On le connecte directement (on lui donne un jeton)
+    access_token = create_access_token(data={"sub": new_user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()

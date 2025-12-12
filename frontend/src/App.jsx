@@ -1,18 +1,16 @@
-// VERSION FINALE AVEC BOUTON FACTURE - REBUILD FORCÉ
 // frontend/src/App.jsx
 import React, { useState, useEffect } from "react";
 import { 
   LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
   Activity, AlertTriangle, Euro, Settings, LogOut, FileText
-} from "lucide-react"; // Ajout de FileText pour l'icône facture
+} from "lucide-react"; 
 
 import EmailHistory from "./components/EmailHistory";
 import StatCard from "./components/StatCard";
-
-
 import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login";
-import InvoiceGenerator from "./components/InvoiceGenerator"; // <--- NOUVEL IMPORT
+import InvoiceGenerator from "./components/InvoiceGenerator";
+import Register from "./components/Register"; // <--- 1. NOUVEL IMPORT
 
 // Ton URL Railway (Production)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
@@ -20,16 +18,48 @@ const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 function App() {
   // --- GESTION DU TOKEN (Login) ---
   const [token, setToken] = useState(localStorage.getItem('cipherflow_token'));
+  const [showRegister, setShowRegister] = useState(false); // <--- 2. NOUVEL ÉTAT (Bascule)
 
   // Fonction pour se déconnecter
   const handleLogout = () => {
     localStorage.removeItem('cipherflow_token');
     setToken(null);
+    setShowRegister(false); // On remet le login par défaut
   };
-  // Si pas de token, on affiche l'écran de Login
+
+  // Si pas de token, on affiche l'écran de Login OU Register
   if (!token) {
-    return <Login onLogin={(newToken) => setToken(newToken)} />;
+    if (showRegister) {
+        // AFFICHE L'INSCRIPTION
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+                <Register onLogin={(newToken) => setToken(newToken)} />
+                <button 
+                    onClick={() => setShowRegister(false)}
+                    style={{ marginTop: '1rem', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                    Retour à la connexion
+                </button>
+            </div>
+        );
+    }
+    // AFFICHE LE LOGIN (Par défaut)
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+            <Login onLogin={(newToken) => setToken(newToken)} />
+            <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <p style={{ color: '#94a3b8', marginBottom: '0.5rem' }}>Pas encore de compte ?</p>
+                <button 
+                    onClick={() => setShowRegister(true)}
+                    style={{ background: 'none', border: 'none', color: '#6366f1', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                    Créer un compte gratuitement
+                </button>
+            </div>
+        </div>
+    );
   }
+
   // --- APPLICATION PRINCIPALE (Si connecté) ---
   return <Dashboard token={token} onLogout={handleLogout} />;
 }
@@ -142,7 +172,6 @@ function Dashboard({ token, onLogout }) {
             <LayoutDashboard size={20} /> <span>Traitement</span>
           </div>
           
-          {/* --- NOUVEL ONGLET FACTURATION --- */}
           <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}>
             <FileText size={20} /> <span>Facturation</span>
           </div>
