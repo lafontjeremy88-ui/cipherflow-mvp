@@ -5,8 +5,9 @@ pydantic
 python-dotenv
 httpx
 jinja2
+python-multipart
 email-validator
-google-generativeai==0.7.2
+google-generativeai
 psycopg2-binary
 python-jose[cryptography]
 fpdf2
@@ -14,4 +15,3 @@ passlib
 bcrypt==4.0.1
 resend
 requests
-python-multipart
