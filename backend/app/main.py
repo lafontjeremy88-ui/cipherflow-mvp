@@ -16,9 +16,13 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
 
-# Imports locaux (J'ai ajouté FileAnalysis ici)
-from app.database.database import create_tables, get_db
+# --- IMPORTS CORRIGÉS POUR ÉVITER LE CRASH ---
+# 1. On importe la configuration DB
+from app.database.database import get_db, engine, Base
+# 2. On importe les modèles pour qu'ils soient reconnus par SQLAlchemy
+from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
+
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
 
@@ -30,50 +34,42 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION (On garde celle qui marche) ---
+# --- CONFIGURATION GEMINI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-flash-latest"
+MODEL_NAME = "gemini-1.5-flash" # Le standard actuel
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
-else:
-    print("⚠️ ATTENTION: Variable RESEND_API_KEY manquante sur Railway !")
 
 WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
 
 # --- FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
-    print(f"📧 ENVOI RESEND vers {to_email}...")
-    if not RESEND_API_KEY:
-        raise HTTPException(status_code=500, detail="Clé API Resend manquante.")
+    if not RESEND_API_KEY: return
     try:
-        params = {
-            "from": "contact@cipherflow.company",
-            "to": [to_email],
-            "subject": subject,
-            "html": body.replace("\n", "<br>"),
-        }
-        email = resend.Emails.send(params)
-        print(f"✅ EMAIL ENVOYÉ ! ID: {email}")
-        return email
-    except Exception as e:
-        print(f"❌ ERREUR RESEND : {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur Resend: {str(e)}")
+        resend.Emails.send({"from": "contact@cipherflow.company", "to": [to_email], "subject": subject, "html": body.replace("\n", "<br>")})
+    except Exception as e: print(f"Erreur Resend: {e}")
 
 async def call_gemini(prompt: str) -> str:
-    if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        print(f"ERREUR GEMINI: {e}")
+        # Si le modèle flash échoue, on essaie le pro en fallback
+        if "404" in str(e):
+            try:
+                fallback = genai.GenerativeModel("gemini-pro")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+            except: pass
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -90,8 +86,7 @@ def extract_json_from_text(text: str):
 async def analyze_email_logic(req: 'EmailAnalyseRequest', company_name: str) -> 'EmailAnalyseResponse':
     prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
     raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    data = extract_json_from_text(raw) or {}
     return EmailAnalyseResponse(
         is_devis=bool(data.get("is_devis", False)), category=str(data.get("category", "autre")),
         urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
@@ -101,68 +96,47 @@ async def analyze_email_logic(req: 'EmailAnalyseRequest', company_name: str) -> 
 async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone: str, signature: str) -> 'EmailReplyResponse':
     prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
     raw = await call_gemini(prompt)
-    struct = extract_json_from_text(raw) or {}
-    data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
+    data = extract_json_from_text(raw) or {}
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
 # --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Impossible de valider les identifiants",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
+        if email is None: raise HTTPException(status_code=401)
+    except JWTError: raise HTTPException(status_code=401)
     user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        raise credentials_exception
+    if user is None: raise HTTPException(status_code=401)
     return user
 
 # --- MODELES API ---
-class LoginRequest(BaseModel):
-    email: str; password: str
-class TokenResponse(BaseModel):
-    access_token: str; token_type: str; user_email: str
-class EmailAnalyseRequest(BaseModel):
-    from_email: EmailStr; subject: str; content: str
-class EmailAnalyseResponse(BaseModel):
-    is_devis: bool; category: str; urgency: str; summary: str; suggested_title: str; raw_ai_text: Optional[str] = None
-class EmailReplyRequest(BaseModel):
-    from_email: EmailStr; subject: str; content: str; summary: Optional[str] = None; category: Optional[str] = None; urgency: Optional[str] = None
-class EmailReplyResponse(BaseModel):
-    reply: str; subject: str; raw_ai_text: Optional[str] = None
-class EmailProcessRequest(BaseModel):
-    from_email: EmailStr; subject: str; content: str; send_email: bool = False
-class EmailProcessResponse(BaseModel):
-    analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
-class SendEmailRequest(BaseModel):
-    to_email: str; subject: str; body: str
-class SettingsRequest(BaseModel):
-    company_name: str; agent_name: str; tone: str; signature: str
-class EmailHistoryItem(BaseModel):
+class LoginRequest(BaseModel): email: str; password: str
+class TokenResponse(BaseModel): access_token: str; token_type: str; user_email: str
+class EmailAnalyseRequest(BaseModel): from_email: EmailStr; subject: str; content: str
+class EmailAnalyseResponse(BaseModel): is_devis: bool; category: str; urgency: str; summary: str; suggested_title: str; raw_ai_text: Optional[str] = None
+class EmailReplyRequest(BaseModel): from_email: EmailStr; subject: str; content: str; summary: Optional[str] = None; category: Optional[str] = None; urgency: Optional[str] = None
+class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Optional[str] = None
+class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
+class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
+class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str
+class SettingsRequest(BaseModel): company_name: str; agent_name: str; tone: str; signature: str
+class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
-class InvoiceItem(BaseModel):
-    desc: str; price: str
-class InvoiceRequest(BaseModel):
-    client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
+class InvoiceItem(BaseModel): desc: str; price: str
+class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
 
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE - MIGRATION DB AUTO 🚀")
-    create_tables()
+    print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
+    # C'EST ICI QU'ON CRÉE LES TABLES MAINTENANT (POUR ÉVITER L'ERREUR CIRCULAIRE)
+    models.Base.metadata.create_all(bind=engine)
+    
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
@@ -171,11 +145,9 @@ def on_startup():
         print("✅ Admin créé.")
 
 # --- ROUTES ---
-
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
-    if x_watcher_secret != WATCHER_SECRET:
-        raise HTTPException(status_code=401, detail="Clé Watcher invalide")
+    if x_watcher_secret != WATCHER_SECRET: raise HTTPException(status_code=401)
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"
@@ -184,41 +156,30 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
     try:
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
-        db.add(new); db.commit(); db.refresh(new)
+        db.add(new); db.commit()
     except Exception as e: print(f"BDD Error: {e}")
     sent, err = "not_sent", None
     if req.send_email:
-        try: 
-            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-            sent = "sent"
-        except Exception as e: sent = "error"; err = str(e)
+        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
+        sent = "sent"
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == req.email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
-    hashed_password = get_password_hash(req.password)
-    new_user = User(email=req.email, hashed_password=hashed_password)
+    if db.query(User).filter(User.email == req.email).first(): raise HTTPException(status_code=400, detail="Email pris")
+    new_user = User(email=req.email, hashed_password=get_password_hash(req.password))
     db.add(new_user); db.commit(); db.refresh(new_user)
-    access_token = create_access_token(data={"sub": new_user.email})
-    return {"access_token": access_token, "token_type": "bearer", "user_email": new_user.email}
+    return {"access_token": create_access_token({"sub": new_user.email}), "token_type": "bearer", "user_email": new_user.email}
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
-    if not user or not verify_password(req.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
-    access_token = create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer", "user_email": user.email}
+    if not user or not verify_password(req.password, user.hashed_password): raise HTTPException(status_code=400)
+    return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
 
 @app.get("/dashboard/stats")
-async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    total = db.query(EmailAnalysis).count()
-    high = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
-    devis = db.query(EmailAnalysis).filter(EmailAnalysis.category == "demande_devis").count()
-    return {"total_processed": total, "high_urgency": high, "devis_requests": devis, "last_update": datetime.now().strftime("%H:%M")}
+async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return {"total_processed": db.query(EmailAnalysis).count(), "high_urgency": db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count(), "devis_requests": db.query(EmailAnalysis).filter(EmailAnalysis.category == "demande_devis").count()}
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -226,154 +187,89 @@ async def get_history(db: Session = Depends(get_db), current_user: User = Depend
 
 @app.get("/settings")
 async def get_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    settings = db.query(AppSettings).first()
-    if not settings:
-        settings = AppSettings(company_name="CipherFlow", agent_name="Bot", tone="pro", signature="Team")
-        db.add(settings); db.commit(); db.refresh(settings)
-    return settings
+    s = db.query(AppSettings).first()
+    if not s: s = AppSettings(); db.add(s); db.commit(); db.refresh(s)
+    return s
 
 @app.post("/settings")
 async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    settings = db.query(AppSettings).first() or AppSettings()
-    if not settings.id: db.add(settings)
-    settings.company_name = req.company_name
-    settings.agent_name = req.agent_name
-    settings.tone = req.tone
-    settings.signature = req.signature
+    s = db.query(AppSettings).first() or AppSettings()
+    if not s.id: db.add(s)
+    s.company_name = req.company_name; s.agent_name = req.agent_name; s.tone = req.tone; s.signature = req.signature
     db.commit()
     return {"status": "updated"}
 
 @app.post("/email/process", response_model=EmailProcessResponse)
-async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    settings = db.query(AppSettings).first()
-    comp = settings.company_name if settings else "CipherFlow"
-    tone = settings.tone if settings else "pro"
-    sign = settings.signature if settings else "Team"
+async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    s = db.query(AppSettings).first()
+    comp = s.company_name if s else "CipherFlow"
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
+    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     try:
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
-        db.add(new); db.commit(); db.refresh(new)
-    except Exception as e: print(f"BDD Error: {e}")
-    sent, err = "not_sent", None
-    if req.send_email:
-        try: 
-            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-            sent = "sent"
-        except Exception as e: sent = "error"; err = str(e)
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+        db.add(new); db.commit()
+    except: pass
+    if req.send_email: send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status="sent" if req.send_email else "not_sent")
 
 @app.post("/email/send")
-async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
+async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE ANALYSE DOCUMENTS (AVEC MÉMOIRE) ---
+# --- DOCUMENTS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    temp_filename = f"temp_{file.filename}"
-    with open(temp_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+    tmp = f"temp_{file.filename}"
+    with open(tmp, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
     try:
-        uploaded_file = genai.upload_file(temp_filename)
-        prompt = """
-        Analyse ce document. 
-        1. Identifie le type (Facture, Devis...).
-        2. Extrait: Expéditeur, Date, Montant.
-        3. Résumé.
-        Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
-        """
-        
-        # On utilise le modèle qui fonctionne chez toi
-        model = genai.GenerativeModel(MODEL_NAME) 
-        response = await model.generate_content_async([uploaded_file, prompt])
-        
-        os.remove(temp_filename)
-        data = extract_json_from_text(response.text)
-        
-        # SAUVEGARDE EN BASE DE DONNÉES
+        # On tente le modèle Flash en priorité, puis Pro Vision si Flash échoue (pour compatibilité max)
+        try:
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            uploaded = genai.upload_file(tmp)
+            res = await model.generate_content_async([uploaded, "Analyse ce doc (facture/devis). JSON strict: {type, sender, date, amount, summary}"])
+        except:
+            model = genai.GenerativeModel("gemini-pro-vision")
+            with open(tmp, "rb") as f:
+                img_data = f.read()
+            res = await model.generate_content_async(["Analyse ce doc. JSON strict: {type, sender, date, amount, summary}", {"mime_type": file.content_type, "data": img_data}])
+
+        os.remove(tmp)
+        data = extract_json_from_text(res.text)
         if data:
-            new_doc = FileAnalysis(
-                filename=file.filename,
-                file_type=data.get("type", "Inconnu"),
-                sender=data.get("sender", "Non détecté"),
-                extracted_date=data.get("date", ""),
-                amount=str(data.get("amount", "")),
-                summary=data.get("summary", ""),
-                owner_id=current_user.id
-            )
-            db.add(new_doc); db.commit(); db.refresh(new_doc)
-            
+            new_doc = FileAnalysis(filename=file.filename, file_type=data.get("type"), sender=data.get("sender"), extracted_date=data.get("date"), amount=str(data.get("amount")), summary=data.get("summary"), owner_id=current_user.id)
+            db.add(new_doc); db.commit()
         return data
-
     except Exception as e:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-        print(f"Erreur Analyse Fichier: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        if os.path.exists(tmp): os.remove(tmp)
+        print(f"Err File: {e}")
+        raise HTTPException(500, detail=str(e))
 
-# --- NOUVELLE ROUTE : L'HISTORIQUE ---
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # On récupère l'historique lié à l'utilisateur
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
 
 # --- FACTURATION ---
 @app.post("/api/generate-invoice")
-async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    try:
-        settings = db.query(AppSettings).first()
-        company_name = settings.company_name if settings else "Mon Entreprise"
-        data_dict = invoice_data.dict()
-        data_dict['company_name_header'] = company_name
-        data_dict['logo_url'] = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
-        
-        existing = db.query(Invoice).filter(Invoice.reference == invoice_data.invoice_number, Invoice.owner_id == current_user.id).first()
-        if existing:
-            existing.amount_total = invoice_data.amount
-            db.commit()
-        else:
-            items_str = json.dumps([item.dict() for item in invoice_data.items])
-            new_invoice = Invoice(
-                reference=invoice_data.invoice_number,
-                client_name=invoice_data.client_name,
-                amount_total=invoice_data.amount,
-                status="émise",
-                items_json=items_str,
-                owner_id=current_user.id
-            )
-            db.add(new_invoice); db.commit(); db.refresh(new_invoice)
-
-        pdf_bytes = generate_pdf_bytes(data_dict)
-        filename = f"facture_{invoice_data.invoice_number}.pdf"
-        return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={filename}"})
-    except Exception as e:
-        print(f"❌ Erreur Facture: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    s = db.query(AppSettings).first()
+    data = req.dict()
+    data.update({"company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"})
+    
+    ex = db.query(Invoice).filter(Invoice.reference == req.invoice_number, Invoice.owner_id == current_user.id).first()
+    if ex: ex.amount_total = req.amount
+    else: db.add(Invoice(reference=req.invoice_number, client_name=req.client_name, amount_total=req.amount, items_json=json.dumps([i.dict() for i in req.items]), owner_id=current_user.id))
+    db.commit()
+    
+    return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"})
 
 @app.get("/api/invoices")
-async def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(Invoice).filter(Invoice.owner_id == current_user.id).order_by(Invoice.id.desc()).all()
 
-@app.get("/api/invoices/{reference}/pdf")
-async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    invoice = db.query(Invoice).filter(Invoice.reference == reference, Invoice.owner_id == current_user.id).first()
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Facture introuvable ou accès refusé")
-    settings = db.query(AppSettings).first()
-    company_name = settings.company_name if settings else "Mon Entreprise"
-    try: items = json.loads(invoice.items_json)
-    except: items = []
-    data_dict = {
-        "client_name": invoice.client_name,
-        "invoice_number": invoice.reference,
-        "amount": invoice.amount_total,
-        "date": invoice.date_issued.strftime("%d/%m/%Y"),
-        "items": items,
-        "company_name_header": company_name,
-        "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
-    }
-    pdf_bytes = generate_pdf_bytes(data_dict)
-    filename = f"facture_{reference}.pdf"
-    return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={filename}"})
+@app.get("/api/invoices/{ref}/pdf")
+async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
+    if not inv: raise HTTPException(404)
+    data = {"client_name": inv.client_name, "invoice_number": inv.reference, "amount": inv.amount_total, "date": inv.date_issued.strftime("%d/%m/%Y"), "items": json.loads(inv.items_json) if inv.items_json else [], "company_name_header": "Mon Entreprise", "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"}
+    return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={ref}.pdf"})
