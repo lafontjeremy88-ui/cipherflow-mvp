@@ -16,7 +16,6 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
 
-# Imports locaux
 from app.database.database import create_tables, get_db
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
@@ -37,8 +36,8 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# --- CHANGEMENT DÉFINITIF : ON UTILISE FLASH PARTOUT ---
-MODEL_NAME = "gemini-1.5-flash"
+# ON REVIENT SUR LE MODÈLE QUI MARCHAIT CE MATIN
+MODEL_NAME = "gemini-pro"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -70,12 +69,18 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        # Utilisation du modèle unique FLASH
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        # Si gemini-pro échoue, on tente une version vision (parfois plus permissive en 0.7.2)
+        if "404" in str(e):
+             try:
+                fallback = genai.GenerativeModel("gemini-pro-vision")
+                resp = await fallback.generate_content_async(prompt)
+                return resp.text
+             except: pass
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -269,34 +274,28 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depend
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE ANALYSE DOCUMENTS ---
+# --- PARTIE ANALYSE DOCUMENTS (COMPATIBLE 0.7.2) ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    temp_filename = f"temp_{file.filename}"
-    with open(temp_filename, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+    # Méthode manuelle robuste pour les anciennes versions
     try:
-        uploaded_file = genai.upload_file(temp_filename)
-        prompt = """
-        Analyse ce document. 
-        1. Identifie le type (Facture, Devis...).
-        2. Extrait: Expéditeur, Date, Montant.
-        3. Résumé.
-        Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
-        """
+        content = await file.read()
         
-        # Le modèle est déjà 'gemini-1.5-flash' défini dans MODEL_NAME
-        model = genai.GenerativeModel(MODEL_NAME) 
-        response = await model.generate_content_async([uploaded_file, prompt])
+        # On utilise gemini-pro-vision, le SEUL qui voit les images en 0.7.2
+        model = genai.GenerativeModel("gemini-pro-vision")
         
-        os.remove(temp_filename)
+        prompt = """Analyse ce document (facture ou devis). Extrait: Expéditeur, Date, Montant. Résumé. 
+        Format JSON: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}"""
+        
+        # Format spécifique pour 0.7.2 (Liste [Prompt, ImageBlob])
+        image_part = {"mime_type": file.content_type or "image/jpeg", "data": content}
+        response = await model.generate_content_async([prompt, image_part])
+        
         return extract_json_from_text(response.text)
 
     except Exception as e:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
         print(f"Erreur Analyse Fichier: {e}")
+        # En cas d'erreur ici, on ne bloque pas le reste
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- FACTURATION ---
