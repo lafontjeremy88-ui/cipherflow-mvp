@@ -1,5 +1,7 @@
 # backend/app/database/models.py
 
+from sqlalchemy import ForeignKey
+
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
 from sqlalchemy.orm import declarative_base
 
@@ -67,9 +69,13 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, index=True)
-    reference = Column(String, unique=True, index=True)  # Ex: FAC-001
+    reference = Column(String, unique=True, index=True)
     client_name = Column(String)
-    amount_total = Column(String) # On stocke en texte pour simplifier (ex: "100.00")
+    amount_total = Column(String)
     date_issued = Column(DateTime, default=func.now())
-    status = Column(String, default="émise") # émise, brouillon, annulée
-    items_json = Column(String) # On stocke la liste des articles en format JSON texte
+    status = Column(String, default="émise")
+    items_json = Column(String)
+    
+    # --- NOUVEAUTÉ SÉCURITÉ (BRIQUE C) ---
+    # On lie la facture à un utilisateur précis (la clé étrangère)
+    owner_id = Column(Integer, ForeignKey("users.id"))

@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 
 import resend 
+from jose import jwt, JWTError # Pour décoder le token et savoir qui est connecté
 
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,9 @@ import google.generativeai as genai
 # Imports locaux
 from app.database.database import create_tables, get_db
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice
-from app.auth import get_password_hash, verify_password, create_access_token
+from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
+# Assure-toi que ALGORITHM et SECRET_KEY sont bien dans app.auth, sinon on les mettra ici
+
 from app.pdf_service import generate_pdf_bytes 
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -43,7 +46,6 @@ if RESEND_API_KEY:
 else:
     print("⚠️ ATTENTION: Variable RESEND_API_KEY manquante sur Railway !")
 
-# --- MOT DE PASSE POUR LE WATCHER ---
 WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
 
 # --- 2. FONCTIONS UTILES ---
@@ -112,9 +114,28 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
 
 # --- 3. CONFIG APP & MODELES ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    if not token: raise HTTPException(status_code=401, detail="Token invalide")
-    return token
+
+# --- NOUVELLE FONCTION CRITIQUE : RECUPERER LE VRAI UTILISATEUR ---
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Impossible de valider les identifiants",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        # On décode le token pour trouver l'email
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    # On cherche l'utilisateur dans la BDD
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user # On retourne l'objet User complet (avec son ID !)
 
 class LoginRequest(BaseModel):
     email: str; password: str
@@ -149,8 +170,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 @app.on_event("startup")
 def on_startup():
-    print("🚀 DÉMARRAGE AVEC WEBHOOK WATCHER 🚀")
-    create_tables()
+    print("🚀 DÉMARRAGE - MIGRATION DB AUTO 🚀")
+    create_tables() # Cela va recréer la table invoices si elle a été supprimée
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
@@ -163,7 +184,7 @@ def on_startup():
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if x_watcher_secret != WATCHER_SECRET:
-        print(f"⚠️ Tentative d'accès Webhook non autorisée. Reçu: {x_watcher_secret}")
+        print(f"⚠️ Tentative accès non autorisé: {x_watcher_secret}")
         raise HTTPException(status_code=401, detail="Clé Watcher invalide")
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
@@ -192,18 +213,18 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/dashboard/stats")
-async def get_dashboard_stats(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     total = db.query(EmailAnalysis).count()
     high = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
     devis = db.query(EmailAnalysis).filter(EmailAnalysis.category == "demande_devis").count()
     return {"total_processed": total, "high_urgency": high, "devis_requests": devis, "last_update": datetime.now().strftime("%H:%M")}
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
-async def get_history(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).all()
 
 @app.get("/settings")
-async def get_settings(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def get_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
     if not settings:
         settings = AppSettings(company_name="CipherFlow", agent_name="Bot", tone="pro", signature="Team")
@@ -211,7 +232,7 @@ async def get_settings(db: Session = Depends(get_db), current_user: str = Depend
     return settings
 
 @app.post("/settings")
-async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     settings = db.query(AppSettings).first() or AppSettings()
     if not settings.id: db.add(settings)
     settings.company_name = req.company_name
@@ -222,7 +243,7 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     return {"status": "updated"}
 
 @app.post("/email/process", response_model=EmailProcessResponse)
-async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"
@@ -242,30 +263,31 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
 @app.post("/email/send")
-async def send_email_endpoint(req: SendEmailRequest, current_user: str = Depends(get_current_user)):
+async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE FACTURATION ---
+# --- PARTIE FACTURATION SÉCURISÉE (BRIQUE C) ---
 
 @app.post("/api/generate-invoice")
-async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
-        # 1. Récupération des réglages
         settings = db.query(AppSettings).first()
         company_name = settings.company_name if settings else "Mon Entreprise"
         
-        # 2. Préparation des données PDF
         data_dict = invoice_data.dict()
         data_dict['company_name_header'] = company_name
         data_dict['logo_url'] = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
         
-        # 3. SAUVEGARDE EN BDD (La Brique A) 🧱
-        existing = db.query(Invoice).filter(Invoice.reference == invoice_data.invoice_number).first()
+        # SÉCURITÉ : On vérifie si la facture existe ET si elle appartient bien à l'utilisateur
+        existing = db.query(Invoice).filter(
+            Invoice.reference == invoice_data.invoice_number,
+            Invoice.owner_id == current_user.id # <--- SEUL LE PROPRIO PEUT MODIFIER
+        ).first()
+        
         if existing:
             existing.amount_total = invoice_data.amount
             db.commit()
-            print(f"🔄 Facture {existing.reference} mise à jour.")
         else:
             items_str = json.dumps([item.dict() for item in invoice_data.items])
             new_invoice = Invoice(
@@ -273,14 +295,11 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
                 client_name=invoice_data.client_name,
                 amount_total=invoice_data.amount,
                 status="émise",
-                items_json=items_str
+                items_json=items_str,
+                owner_id=current_user.id # <--- ON GRAVE LE NOM DU PROPRIO DESSUS
             )
-            db.add(new_invoice)
-            db.commit()
-            db.refresh(new_invoice)
-            print(f"✅ Facture {new_invoice.reference} sauvegardée en BDD !")
+            db.add(new_invoice); db.commit(); db.refresh(new_invoice)
 
-        # 4. Génération du PDF
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
         
@@ -291,27 +310,26 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/invoices")
-async def get_invoices(db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
-    # On récupère toutes les factures, de la plus récente à la plus ancienne
-    return db.query(Invoice).order_by(Invoice.id.desc()).all()
+async def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # FILTRAGE : On ne retourne QUE les factures de l'utilisateur connecté
+    return db.query(Invoice).filter(Invoice.owner_id == current_user.id).order_by(Invoice.id.desc()).all()
 
-# --- LA ROUTE MANQUANTE AJOUTÉE ICI ---
 @app.get("/api/invoices/{reference}/pdf")
-async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
-    # 1. On cherche la facture dans la base
-    invoice = db.query(Invoice).filter(Invoice.reference == reference).first()
+async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # SÉCURITÉ : On vérifie le proprio ici aussi
+    invoice = db.query(Invoice).filter(
+        Invoice.reference == reference,
+        Invoice.owner_id == current_user.id # <--- INTERDIT DE VOIR LA FACTURE DU VOISIN
+    ).first()
+    
     if not invoice:
-        raise HTTPException(status_code=404, detail="Facture introuvable")
+        raise HTTPException(status_code=404, detail="Facture introuvable ou accès refusé")
 
-    # 2. Réglages
     settings = db.query(AppSettings).first()
     company_name = settings.company_name if settings else "Mon Entreprise"
 
-    # 3. Reconstruction des items
-    try:
-        items = json.loads(invoice.items_json)
-    except:
-        items = []
+    try: items = json.loads(invoice.items_json)
+    except: items = []
 
     data_dict = {
         "client_name": invoice.client_name,
@@ -323,7 +341,6 @@ async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db),
         "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     }
 
-    # 4. On re-génère le PDF
     pdf_bytes = generate_pdf_bytes(data_dict)
     filename = f"facture_{reference}.pdf"
     
