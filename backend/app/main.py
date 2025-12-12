@@ -40,7 +40,7 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-flash-latest"
+MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -72,7 +72,7 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
