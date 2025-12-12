@@ -140,7 +140,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 class LoginRequest(BaseModel):
     email: str; password: str
 class TokenResponse(BaseModel):
-    access_token: str; token_type: str
+    access_token: str; token_type: str; user_email: str
 class EmailAnalyseRequest(BaseModel):
     from_email: EmailStr; subject: str; content: str
 class EmailAnalyseResponse(BaseModel):
@@ -219,15 +219,23 @@ async def register(req: LoginRequest, db: Session = Depends(get_db)):
     
     # 3. On le connecte directement (on lui donne un jeton)
     access_token = create_access_token(data={"sub": new_user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+    "access_token": access_token, 
+    "token_type": "bearer",
+    "user_email": new_user.email # <--- AJOUT ICI
+}
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
     access_token = create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
-
+    # Remplace le return de la fin par :
+    return {
+    "access_token": access_token, 
+    "token_type": "bearer",
+    "user_email": user.email # <--- AJOUT ICI
+}
 @app.get("/dashboard/stats")
 async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     total = db.query(EmailAnalysis).count()

@@ -13,7 +13,6 @@ const Login = ({ onLogin }) => {
     setError('');
 
     try {
-      // MISE À JOUR : URL DE PRODUCTION RAILWAY
       const res = await fetch('https://cipherflow-mvp-production.up.railway.app/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -25,10 +24,10 @@ const Login = ({ onLogin }) => {
       }
 
       const data = await res.json();
-      // On sauvegarde le token dans le navigateur
       localStorage.setItem('cipherflow_token', data.access_token);
-      // On prévient l'application qu'on est connecté
-      onLogin(data.access_token);
+      
+      // MODIFICATION ICI : On passe aussi l'email reçu du serveur !
+      onLogin(data.access_token, data.user_email);
 
     } catch (err) {
       setError(err.message);

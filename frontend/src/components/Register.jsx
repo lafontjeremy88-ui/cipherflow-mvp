@@ -23,7 +23,10 @@ const Register = ({ onLogin }) => {
 
       if (response.ok) {
         localStorage.setItem('cipherflow_token', data.access_token);
-        onLogin(); // On connecte l'utilisateur directement
+        
+        // MODIFICATION ICI : On passe aussi l'email reçu !
+        onLogin(data.access_token, data.user_email);
+        
       } else {
         setError(data.detail || "Erreur lors de l'inscription");
       }
