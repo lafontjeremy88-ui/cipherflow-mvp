@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
 
-# Imports locaux
+# Imports locaux (J'ai ajouté FileAnalysis dans la liste)
 from app.database.database import create_tables, get_db
-from app.database.models import EmailAnalysis, AppSettings, User, Invoice
+from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
 
@@ -30,14 +30,13 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- 1. CONFIGURATION ---
+# --- CONFIGURATION (On ne touche plus, ça marche !) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# --- RETOUR À LA CONFIG QUI MARCHAIT HIER ---
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -48,7 +47,7 @@ else:
 
 WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
 
-# --- 2. FONCTIONS UTILES ---
+# --- FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     print(f"📧 ENVOI RESEND vers {to_email}...")
     if not RESEND_API_KEY:
@@ -70,7 +69,6 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        # On utilise le modèle flash-latest qui marchait pour toi
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
@@ -107,7 +105,7 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
     data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- 3. CONFIG APP & MODELES ---
+# --- AUTHENTIFICATION ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -129,6 +127,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+# --- MODÈLES Pydantic ---
 class LoginRequest(BaseModel):
     email: str; password: str
 class TokenResponse(BaseModel):
@@ -171,7 +170,7 @@ def on_startup():
         db.commit()
         print("✅ Admin créé.")
 
-# --- 4. ROUTES ---
+# --- ROUTES ---
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
@@ -269,7 +268,7 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depend
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE ANALYSE DOCUMENTS ---
+# --- PARTIE ANALYSE DOCUMENTS (Avec Historique) ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     temp_filename = f"temp_{file.filename}"
@@ -286,18 +285,37 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
         """
         
-        # ON UTILISE LE MEME MODELE QUI MARCHE POUR TOUT
+        # On utilise le même modèle que pour les emails (ça marche maintenant !)
         model = genai.GenerativeModel(MODEL_NAME) 
         response = await model.generate_content_async([uploaded_file, prompt])
         
         os.remove(temp_filename)
-        return extract_json_from_text(response.text)
+        data = extract_json_from_text(response.text)
+        
+        # SAUVEGARDE DANS LA MÉMOIRE (BASE DE DONNÉES)
+        if data:
+            new_doc = FileAnalysis(
+                filename=file.filename,
+                file_type=data.get("type", "Inconnu"),
+                sender=data.get("sender", "Non détecté"),
+                extracted_date=data.get("date", ""),
+                amount=str(data.get("amount", "")),
+                summary=data.get("summary", ""),
+                owner_id=current_user.id
+            )
+            db.add(new_doc); db.commit(); db.refresh(new_doc)
+            
+        return data
 
     except Exception as e:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
         print(f"Erreur Analyse Fichier: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/files/history")
+async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
 
 # --- FACTURATION ---
 @app.post("/api/generate-invoice")
