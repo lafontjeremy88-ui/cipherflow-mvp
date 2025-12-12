@@ -1,7 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, ForeignKey
-from sqlalchemy.orm import declarative_base
-
-Base = declarative_base()
+# ON IMPORTE LA BASE EXISTANTE AU LIEU D'EN CRÉER UNE NOUVELLE (C'était l'erreur !)
+from app.database.database import Base 
 
 class EmailAnalysis(Base):
     __tablename__ = "email_analyses"
@@ -43,7 +42,6 @@ class Invoice(Base):
     items_json = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
 
-# --- NOUVELLE TABLE (CORRIGÉE : BIEN ALIGNÉE À GAUCHE) ---
 class FileAnalysis(Base):
     __tablename__ = "file_analyses"
     id = Column(Integer, primary_key=True, index=True)
