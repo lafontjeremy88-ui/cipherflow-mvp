@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
   LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
-  Activity, AlertTriangle, Euro, Settings, LogOut, FileText, User
+  Activity, AlertTriangle, Euro, Settings, LogOut, FileText, User, FolderSearch
 } from "lucide-react"; 
 
 import EmailHistory from "./components/EmailHistory";
@@ -10,18 +10,18 @@ import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import Register from "./components/Register"; 
+import FileAnalyzer from "./components/FileAnalyzer"; // <--- NOUVEL IMPORT
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('cipherflow_token'));
-  const [userEmail, setUserEmail] = useState(localStorage.getItem('cipherflow_email')); // <--- On stocke l'email
+  const [userEmail, setUserEmail] = useState(localStorage.getItem('cipherflow_email'));
   const [showRegister, setShowRegister] = useState(false);
 
-  // Fonction de connexion unifiée
   const handleAuthSuccess = (newToken, email) => {
       localStorage.setItem('cipherflow_token', newToken);
-      localStorage.setItem('cipherflow_email', email); // Sauvegarde
+      localStorage.setItem('cipherflow_email', email);
       setToken(newToken);
       setUserEmail(email);
       setShowRegister(false);
@@ -35,56 +35,24 @@ function App() {
     setShowRegister(false);
   };
 
-  // --- ECRAN DE CONNEXION / INSCRIPTION COMPACT ---
   if (!token) {
     return (
-        <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            minHeight: '100vh',
-            background: '#0f172a',
-            padding: '20px'
-        }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0f172a', padding: '20px' }}>
             <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                 <Zap size={40} color="#6366f1" />
                 <h1 style={{ color: 'white', fontSize: '1.5rem', marginTop: '10px' }}>CipherFlow V2</h1>
             </div>
-
-            {/* Zone Blanche (Carte) */}
-            <div style={{ 
-                width: '100%', 
-                maxWidth: '400px', 
-                background: '#1e293b', 
-                padding: '2rem', 
-                borderRadius: '16px',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.5)'
-            }}>
+            <div style={{ width: '100%', maxWidth: '400px', background: '#1e293b', padding: '2rem', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.5)' }}>
                 {showRegister ? (
                     <Register onLogin={(t, e) => handleAuthSuccess(t, e)} />
                 ) : (
                     <Login onLogin={(t, e) => handleAuthSuccess(t, e)} />
                 )}
-
-                {/* LE BOUTON DE BASCULE (Juste en dessous) */}
                 <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid #334155', textAlign: 'center' }}>
                     <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '10px' }}>
                         {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
                     </p>
-                    <button 
-                        onClick={() => setShowRegister(!showRegister)}
-                        style={{ 
-                            background: 'rgba(99, 102, 241, 0.1)', 
-                            color: '#818cf8', 
-                            border: 'none', 
-                            padding: '10px 20px', 
-                            borderRadius: '8px', 
-                            cursor: 'pointer', 
-                            fontWeight: 'bold',
-                            width: '100%'
-                        }}
-                    >
+                    <button onClick={() => setShowRegister(!showRegister)} style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', width: '100%' }}>
                         {showRegister ? "Se connecter" : "Créer un compte gratuitement"}
                     </button>
                 </div>
@@ -96,11 +64,9 @@ function App() {
   return <Dashboard token={token} userEmail={userEmail} onLogout={handleLogout} />;
 }
 
-// --- DASHBOARD ---
 function Dashboard({ token, userEmail, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   
-  // États Dashboard...
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
@@ -157,7 +123,6 @@ function Dashboard({ token, userEmail, onLogout }) {
           <span>CipherFlow V2</span>
         </div>
         
-        {/* INFO UTILISATEUR CONNECTÉ */}
         <div style={{ padding: '0 20px 20px 20px', marginBottom: '20px', borderBottom: '1px solid #334155' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#94a3b8', fontSize: '0.85rem' }}>
                 <div style={{ background: '#334155', padding: '8px', borderRadius: '50%' }}><User size={16} /></div>
@@ -171,6 +136,10 @@ function Dashboard({ token, userEmail, onLogout }) {
         <nav>
           <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}><LayoutDashboard size={20} /> <span>Traitement</span></div>
           <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}><FileText size={20} /> <span>Facturation</span></div>
+          
+          {/* --- NOUVEAU BOUTON ICI --- */}
+          <div className={`nav-item ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => setActiveTab('documents')}><FolderSearch size={20} /> <span>Documents</span></div>
+          
           <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}><History size={20} /> <span>Historique</span></div>
           <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}><Settings size={20} /> <span>Paramètres</span></div>
           <div className="nav-item" style={{ marginTop: 'auto', color: '#f87171' }} onClick={onLogout}><LogOut size={20} /> <span>Déconnexion</span></div>
@@ -182,6 +151,7 @@ function Dashboard({ token, userEmail, onLogout }) {
             <h1 style={{ fontSize: '1.8rem', fontWeight: 'bold' }}>
                 {activeTab === 'dashboard' && 'Traitement Intelligent'}
                 {activeTab === 'invoices' && 'Générateur de Factures'}
+                {activeTab === 'documents' && 'Analyse de Documents'} {/* Titre */}
                 {activeTab === 'history' && 'Historique des Activités'}
                 {activeTab === 'settings' && 'Paramètres du SaaS'}
             </h1>
@@ -226,7 +196,11 @@ function Dashboard({ token, userEmail, onLogout }) {
             </div>
           </>
         )}
+        
+        {/* --- NOUVEAUX ONGLETS --- */}
         {activeTab === 'invoices' && <div style={{ maxWidth: '800px', margin: '0 auto' }}><InvoiceGenerator /></div>}
+        {activeTab === 'documents' && <FileAnalyzer token={token} />} {/* Affiche le composant ici */}
+        
         {activeTab === 'history' && <EmailHistory token={token} />}
         {activeTab === 'settings' && <SettingsPanel token={token} />}
       </main>
