@@ -6,8 +6,9 @@ const FileAnalyzer = ({ token }) => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [history, setHistory] = useState([]); 
+  const [history, setHistory] = useState([]); // État pour l'historique
 
+  // Fonction pour charger l'historique
   const fetchHistory = async () => {
     try {
       const res = await fetch('[https://cipherflow-mvp-production.up.railway.app/api/files/history](https://cipherflow-mvp-production.up.railway.app/api/files/history)', {
@@ -19,6 +20,7 @@ const FileAnalyzer = ({ token }) => {
     } catch (e) { console.error("Erreur historique fichiers", e); }
   };
 
+  // Charger l'historique au démarrage
   useEffect(() => {
     fetchHistory();
   }, []);
@@ -43,15 +45,17 @@ const FileAnalyzer = ({ token }) => {
     try {
       const res = await fetch('[https://cipherflow-mvp-production.up.railway.app/api/analyze-file](https://cipherflow-mvp-production.up.railway.app/api/analyze-file)', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: {
+          'Authorization': `Bearer ${token}` 
+        },
         body: formData
       });
 
-      if (!res.ok) throw new Error("Erreur lors de l'analyse.");
+      if (!res.ok) throw new Error("Erreur lors de l'analyse du fichier.");
       
       const data = await res.json();
       setResult(data);
-      fetchHistory(); 
+      fetchHistory(); // 🔄 On rafraîchit la liste immédiatement !
 
     } catch (err) {
       console.error(err);
@@ -64,35 +68,84 @@ const FileAnalyzer = ({ token }) => {
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto' }}>
       
+      {/* ZONE D'UPLOAD */}
       <div className="card" style={{ textAlign: 'center', padding: '3rem', border: '2px dashed #334155', backgroundColor: 'rgba(30, 41, 59, 0.5)' }}>
-        <input type="file" id="fileInput" onChange={handleFileChange} style={{ display: 'none' }} accept=".pdf,.jpg,.jpeg,.png"/>
+        <input 
+          type="file" 
+          id="fileInput" 
+          onChange={handleFileChange} 
+          style={{ display: 'none' }} 
+          accept=".pdf,.jpg,.jpeg,.png"
+        />
+        
         <label htmlFor="fileInput" style={{ cursor: 'pointer' }}>
             <div style={{ background: 'rgba(99, 102, 241, 0.1)', width: '80px', height: '80px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
                 <Upload size={40} color="#6366f1" />
             </div>
-            <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>{file ? file.name : "Glissez votre document ici"}</h3>
-            <p style={{ color: '#94a3b8' }}>{file ? "Prêt à être analysé" : "PDF, JPG, PNG"}</p>
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>
+                {file ? file.name : "Glissez votre document ici"}
+            </h3>
+            <p style={{ color: '#94a3b8' }}>
+                {file ? "Prêt à être analysé" : "ou cliquez pour sélectionner (PDF, JPG, PNG)"}
+            </p>
         </label>
+
         {file && (
-            <button className="btn btn-primary" onClick={handleAnalyze} disabled={loading} style={{ marginTop: '1.5rem', padding: '10px 30px' }}>
-                {loading ? 'Analyse IA en cours...' : 'Lancer l\'analyse'} {!loading && <Search size={18} style={{ marginLeft: '8px' }}/>}
+            <button 
+                className="btn btn-primary" 
+                onClick={handleAnalyze} 
+                disabled={loading}
+                style={{ marginTop: '1.5rem', padding: '10px 30px' }}
+            >
+                {loading ? 'Analyse IA en cours...' : 'Lancer l\'analyse'} 
+                {!loading && <Search size={18} style={{ marginLeft: '8px' }}/>}
             </button>
         )}
+        
         {error && <div style={{ color: '#ef4444', marginTop: '1rem' }}><AlertCircle size={16} style={{display:'inline'}}/> {error}</div>}
       </div>
 
+      {/* RÉSULTATS */}
+      {loading && (
+          <div style={{ textAlign: 'center', marginTop: '2rem', color: '#94a3b8' }}>
+              <Loader size={40} className="spin" style={{ margin: '0 auto 1rem' }} />
+              <p>L'IA lit votre document...</p>
+          </div>
+      )}
+
       {result && (
         <div className="card" style={{ marginTop: '2rem', borderColor: '#10b981' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#10b981', marginBottom: '1.5rem' }}><CheckCircle size={24} /> Résultat (Sauvegardé)</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', textAlign: 'center' }}>
-                <div><small style={{color:'#94a3b8'}}>TYPE</small><div style={{fontWeight:'bold'}}>{result.type}</div></div>
-                <div><small style={{color:'#94a3b8'}}>EXPÉDITEUR</small><div style={{fontWeight:'bold'}}>{result.sender}</div></div>
-                <div><small style={{color:'#94a3b8'}}>DATE</small><div>{result.date}</div></div>
-                <div><small style={{color:'#94a3b8'}}>MONTANT</small><div style={{color:'#10b981', fontWeight:'bold', fontSize:'1.1rem'}}>{result.amount}</div></div>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#10b981', marginBottom: '1.5rem' }}>
+                <CheckCircle size={24} /> Analyse Terminée
+            </h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                <div className="form-group">
+                    <label>Type de Document</label>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{result.type || "Inconnu"}</div>
+                </div>
+                <div className="form-group">
+                    <label>Expéditeur / Marque</label>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{result.sender || "Non détecté"}</div>
+                </div>
+                <div className="form-group">
+                    <label>Date</label>
+                    <div style={{ fontSize: '1.1rem' }}>{result.date || "Non détectée"}</div>
+                </div>
+                <div className="form-group">
+                    <label>Montant Total</label>
+                    <div style={{ fontSize: '1.5rem', color: '#6366f1', fontWeight: 'bold' }}>{result.amount || "N/A"}</div>
+                </div>
+            </div>
+
+            <div style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#94a3b8' }}>RÉSUMÉ IA</label>
+                <p style={{ margin: '5px 0 0 0', lineHeight: '1.5' }}>{result.summary}</p>
             </div>
         </div>
       )}
 
+      {/* HISTORIQUE */}
       <h3 style={{ marginTop: '3rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Clock size={20} /> Historique des Documents
       </h3>
@@ -110,7 +163,7 @@ const FileAnalyzer = ({ token }) => {
             </thead>
             <tbody>
                 {history.length === 0 ? (
-                    <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>Aucun document analysé.</td></tr>
+                    <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>Aucun document analysé pour l'instant.</td></tr>
                 ) : (
                     history.map((doc) => (
                         <tr key={doc.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>

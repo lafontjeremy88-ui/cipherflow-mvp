@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
 
-# Imports locaux (J'ai ajouté FileAnalysis dans la liste)
+# Imports locaux (J'ai ajouté FileAnalysis ici)
 from app.database.database import create_tables, get_db
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
@@ -30,7 +30,7 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION (On ne touche plus, ça marche !) ---
+# --- CONFIGURATION (On garde celle qui marche) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -105,7 +105,7 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
     data = struct if isinstance(struct, dict) else (struct[0] if isinstance(struct, list) and struct else {})
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- AUTHENTIFICATION ---
+# --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -127,7 +127,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
-# --- MODÈLES Pydantic ---
+# --- MODELES API ---
 class LoginRequest(BaseModel):
     email: str; password: str
 class TokenResponse(BaseModel):
@@ -268,7 +268,7 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depend
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE ANALYSE DOCUMENTS (Avec Historique) ---
+# --- PARTIE ANALYSE DOCUMENTS (AVEC MÉMOIRE) ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     temp_filename = f"temp_{file.filename}"
@@ -285,14 +285,14 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
         """
         
-        # On utilise le même modèle que pour les emails (ça marche maintenant !)
+        # On utilise le modèle qui fonctionne chez toi
         model = genai.GenerativeModel(MODEL_NAME) 
         response = await model.generate_content_async([uploaded_file, prompt])
         
         os.remove(temp_filename)
         data = extract_json_from_text(response.text)
         
-        # SAUVEGARDE DANS LA MÉMOIRE (BASE DE DONNÉES)
+        # SAUVEGARDE EN BASE DE DONNÉES
         if data:
             new_doc = FileAnalysis(
                 filename=file.filename,
@@ -313,8 +313,10 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         print(f"Erreur Analyse Fichier: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- NOUVELLE ROUTE : L'HISTORIQUE ---
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # On récupère l'historique lié à l'utilisateur
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
 
 # --- FACTURATION ---

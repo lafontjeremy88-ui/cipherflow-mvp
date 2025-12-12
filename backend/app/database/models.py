@@ -43,7 +43,7 @@ class Invoice(Base):
     items_json = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
 
-# --- NOUVELLE TABLE (Bien séparée cette fois) ---
+# --- NOUVELLE TABLE (CORRIGÉE : BIEN ALIGNÉE À GAUCHE) ---
 class FileAnalysis(Base):
     __tablename__ = "file_analyses"
     id = Column(Integer, primary_key=True, index=True)
