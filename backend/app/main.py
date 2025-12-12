@@ -5,24 +5,21 @@ from typing import Optional, List
 from datetime import datetime
 
 import resend 
-from jose import jwt, JWTError # Pour décoder le token et savoir qui est connecté
+from jose import jwt, JWTError 
 
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Header
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 import google.generativeai as genai
-from fastapi import UploadFile, File # <--- NOUVEAU
-import shutil # <--- NOUVEAU (Pour manipuler le fichier temporaire)
+import shutil 
 
 # Imports locaux
 from app.database.database import create_tables, get_db
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
-# Assure-toi que ALGORITHM et SECRET_KEY sont bien dans app.auth, sinon on les mettra ici
-
 from app.pdf_service import generate_pdf_bytes 
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -40,7 +37,8 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-1.5-flash"
+# REVENU AU CLASSIQUE POUR LES EMAILS (STABILITÉ AVANT TOUT)
+MODEL_NAME = "gemini-pro"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -72,11 +70,13 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # On utilise le modèle défini globalement (gemini-pro)
+        model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
+        # Petit filet de sécurité si jamais
         if "404" in str(e) or "429" in str(e):
              try:
                 fallback = genai.GenerativeModel("gemini-pro")
@@ -117,7 +117,6 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
 # --- 3. CONFIG APP & MODELES ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-# --- NOUVELLE FONCTION CRITIQUE : RECUPERER LE VRAI UTILISATEUR ---
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -125,7 +124,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        # On décode le token pour trouver l'email
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
@@ -133,11 +131,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
     
-    # On cherche l'utilisateur dans la BDD
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         raise credentials_exception
-    return user # On retourne l'objet User complet (avec son ID !)
+    return user
 
 class LoginRequest(BaseModel):
     email: str; password: str
@@ -173,7 +170,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 @app.on_event("startup")
 def on_startup():
     print("🚀 DÉMARRAGE - MIGRATION DB AUTO 🚀")
-    create_tables() # Cela va recréer la table invoices si elle a été supprimée
+    create_tables()
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
@@ -186,7 +183,6 @@ def on_startup():
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if x_watcher_secret != WATCHER_SECRET:
-        print(f"⚠️ Tentative accès non autorisé: {x_watcher_secret}")
         raise HTTPException(status_code=401, detail="Clé Watcher invalide")
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
@@ -208,37 +204,23 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
-    # 1. On vérifie si l'email existe déjà
     existing_user = db.query(User).filter(User.email == req.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
-    
-    # 2. On crée le nouvel utilisateur
     hashed_password = get_password_hash(req.password)
     new_user = User(email=req.email, hashed_password=hashed_password)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    # 3. On le connecte directement (on lui donne un jeton)
+    db.add(new_user); db.commit(); db.refresh(new_user)
     access_token = create_access_token(data={"sub": new_user.email})
-    return {
-    "access_token": access_token, 
-    "token_type": "bearer",
-    "user_email": new_user.email # <--- AJOUT ICI
-}
+    return {"access_token": access_token, "token_type": "bearer", "user_email": new_user.email}
+
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
     access_token = create_access_token(data={"sub": user.email})
-    # Remplace le return de la fin par :
-    return {
-    "access_token": access_token, 
-    "token_type": "bearer",
-    "user_email": user.email # <--- AJOUT ICI
-}
+    return {"access_token": access_token, "token_type": "bearer", "user_email": user.email}
+
 @app.get("/dashboard/stats")
 async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     total = db.query(EmailAnalysis).count()
@@ -294,62 +276,48 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depend
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- NOUVEAU : ANALYSE DE DOCUMENTS (OCR & INTELLIGENCE) ---
+# --- PARTIE ANALYSE DOCUMENTS (ISOLÉE) ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. On sauvegarde temporairement le fichier pour que Gemini puisse le lire
     temp_filename = f"temp_{file.filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        # 2. On prépare le fichier pour Gemini
         uploaded_file = genai.upload_file(temp_filename)
-        
-        # 3. Le Prompt Spécial "Extraction"
         prompt = """
         Analyse ce document. 
-        1. Identifie le type de document (Facture, Devis, Reçu, Autre).
-        2. Extrait les informations clés : Expéditeur, Date, Montant Total (si applicable).
-        3. Fais un court résumé du contenu.
-        Retourne la réponse en format JSON strict : 
-        {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
+        1. Identifie le type (Facture, Devis...).
+        2. Extrait: Expéditeur, Date, Montant.
+        3. Résumé.
+        Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
         """
         
-        # 4. On interroge Gemini Vision
-        model = genai.GenerativeModel("gemini-1.5-flash") # Version rapide qui voit les images/PDF
+        # ICI ON FORCE LE MODÈLE VISION (Même si on utilise 'pro' pour les mails)
+        model = genai.GenerativeModel("gemini-1.5-flash") 
         response = await model.generate_content_async([uploaded_file, prompt])
         
-        # 5. Nettoyage
-        os.remove(temp_filename) # On supprime le fichier temporaire
-        
-        # 6. On renvoie le résultat (On nettoie le JSON comme d'habitude)
+        os.remove(temp_filename)
         return extract_json_from_text(response.text)
 
     except Exception as e:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
         print(f"Erreur Analyse Fichier: {e}")
+        # Si ça plante ici, ça ne bloquera pas le reste du site
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- PARTIE FACTURATION SÉCURISÉE (BRIQUE C) ---
-
+# --- FACTURATION ---
 @app.post("/api/generate-invoice")
 async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try:
         settings = db.query(AppSettings).first()
         company_name = settings.company_name if settings else "Mon Entreprise"
-        
         data_dict = invoice_data.dict()
         data_dict['company_name_header'] = company_name
         data_dict['logo_url'] = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
         
-        # SÉCURITÉ : On vérifie si la facture existe ET si elle appartient bien à l'utilisateur
-        existing = db.query(Invoice).filter(
-            Invoice.reference == invoice_data.invoice_number,
-            Invoice.owner_id == current_user.id # <--- SEUL LE PROPRIO PEUT MODIFIER
-        ).first()
-        
+        existing = db.query(Invoice).filter(Invoice.reference == invoice_data.invoice_number, Invoice.owner_id == current_user.id).first()
         if existing:
             existing.amount_total = invoice_data.amount
             db.commit()
@@ -361,41 +329,30 @@ async def generate_invoice(invoice_data: InvoiceRequest, db: Session = Depends(g
                 amount_total=invoice_data.amount,
                 status="émise",
                 items_json=items_str,
-                owner_id=current_user.id # <--- ON GRAVE LE NOM DU PROPRIO DESSUS
+                owner_id=current_user.id
             )
             db.add(new_invoice); db.commit(); db.refresh(new_invoice)
 
         pdf_bytes = generate_pdf_bytes(data_dict)
         filename = f"facture_{invoice_data.invoice_number}.pdf"
-        
         return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={filename}"})
-
     except Exception as e:
         print(f"❌ Erreur Facture: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/invoices")
 async def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # FILTRAGE : On ne retourne QUE les factures de l'utilisateur connecté
     return db.query(Invoice).filter(Invoice.owner_id == current_user.id).order_by(Invoice.id.desc()).all()
 
 @app.get("/api/invoices/{reference}/pdf")
 async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # SÉCURITÉ : On vérifie le proprio ici aussi
-    invoice = db.query(Invoice).filter(
-        Invoice.reference == reference,
-        Invoice.owner_id == current_user.id # <--- INTERDIT DE VOIR LA FACTURE DU VOISIN
-    ).first()
-    
+    invoice = db.query(Invoice).filter(Invoice.reference == reference, Invoice.owner_id == current_user.id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Facture introuvable ou accès refusé")
-
     settings = db.query(AppSettings).first()
     company_name = settings.company_name if settings else "Mon Entreprise"
-
     try: items = json.loads(invoice.items_json)
     except: items = []
-
     data_dict = {
         "client_name": invoice.client_name,
         "invoice_number": invoice.reference,
@@ -405,8 +362,6 @@ async def get_invoice_pdf_reprint(reference: str, db: Session = Depends(get_db),
         "company_name_header": company_name,
         "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     }
-
     pdf_bytes = generate_pdf_bytes(data_dict)
     filename = f"facture_{reference}.pdf"
-    
     return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={filename}"})
