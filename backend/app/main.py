@@ -14,6 +14,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 import google.generativeai as genai
+from fastapi import UploadFile, File # <--- NOUVEAU
+import shutil # <--- NOUVEAU (Pour manipuler le fichier temporaire)
 
 # Imports locaux
 from app.database.database import create_tables, get_db
@@ -203,6 +205,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             sent = "sent"
         except Exception as e: sent = "error"; err = str(e)
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
     # 1. On vérifie si l'email existe déjà
@@ -290,6 +293,44 @@ async def process_email(req: EmailProcessRequest, db: Session = Depends(get_db),
 async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
+
+# --- NOUVEAU : ANALYSE DE DOCUMENTS (OCR & INTELLIGENCE) ---
+@app.post("/api/analyze-file")
+async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # 1. On sauvegarde temporairement le fichier pour que Gemini puisse le lire
+    temp_filename = f"temp_{file.filename}"
+    with open(temp_filename, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    try:
+        # 2. On prépare le fichier pour Gemini
+        uploaded_file = genai.upload_file(temp_filename)
+        
+        # 3. Le Prompt Spécial "Extraction"
+        prompt = """
+        Analyse ce document. 
+        1. Identifie le type de document (Facture, Devis, Reçu, Autre).
+        2. Extrait les informations clés : Expéditeur, Date, Montant Total (si applicable).
+        3. Fais un court résumé du contenu.
+        Retourne la réponse en format JSON strict : 
+        {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
+        """
+        
+        # 4. On interroge Gemini Vision
+        model = genai.GenerativeModel("gemini-1.5-flash") # Version rapide qui voit les images/PDF
+        response = await model.generate_content_async([uploaded_file, prompt])
+        
+        # 5. Nettoyage
+        os.remove(temp_filename) # On supprime le fichier temporaire
+        
+        # 6. On renvoie le résultat (On nettoie le JSON comme d'habitude)
+        return extract_json_from_text(response.text)
+
+    except Exception as e:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        print(f"Erreur Analyse Fichier: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- PARTIE FACTURATION SÉCURISÉE (BRIQUE C) ---
 
