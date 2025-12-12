@@ -37,8 +37,9 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# REVENU AU CLASSIQUE POUR LES EMAILS (STABILITÉ AVANT TOUT)
-MODEL_NAME = "gemini-pro"
+# --- ADAPTATION POUR TA LIBRAIRIE 0.8.4 ---
+# "gemini-pro" n'existe plus dans cette version, on utilise le remplaçant officiel
+MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -70,19 +71,12 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 async def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY: raise RuntimeError("Clé API manquante")
     try:
-        # On utilise le modèle défini globalement (gemini-pro)
+        # On utilise le modèle moderne (1.5-flash) compatible avec ta version
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
-        # Petit filet de sécurité si jamais
-        if "404" in str(e) or "429" in str(e):
-             try:
-                fallback = genai.GenerativeModel("gemini-pro")
-                resp = await fallback.generate_content_async(prompt)
-                return resp.text
-             except: pass
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -276,7 +270,7 @@ async def send_email_endpoint(req: SendEmailRequest, current_user: User = Depend
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE ANALYSE DOCUMENTS (ISOLÉE) ---
+# --- PARTIE ANALYSE DOCUMENTS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     temp_filename = f"temp_{file.filename}"
@@ -293,8 +287,8 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         Retourne JSON strict: {"type": "...", "sender": "...", "date": "...", "amount": "...", "summary": "..."}
         """
         
-        # ICI ON FORCE LE MODÈLE VISION (Même si on utilise 'pro' pour les mails)
-        model = genai.GenerativeModel("gemini-1.5-flash") 
+        # Le modèle est déjà 'gemini-1.5-flash' défini dans MODEL_NAME
+        model = genai.GenerativeModel(MODEL_NAME) 
         response = await model.generate_content_async([uploaded_file, prompt])
         
         os.remove(temp_filename)
@@ -304,7 +298,6 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
         print(f"Erreur Analyse Fichier: {e}")
-        # Si ça plante ici, ça ne bloquera pas le reste du site
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- FACTURATION ---
