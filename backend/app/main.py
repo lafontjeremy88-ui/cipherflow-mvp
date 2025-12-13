@@ -16,10 +16,8 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
 
-# --- IMPORTS CORRIGÉS POUR ÉVITER LE CRASH ---
-# 1. On importe la configuration DB
+# 1. Configuration DB & Imports
 from app.database.database import get_db, engine, Base
-# 2. On importe les modèles pour qu'ils soient reconnus par SQLAlchemy
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 
@@ -34,14 +32,15 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION GEMINI ---
+# --- CONFIGURATION GEMINI (La clé du succès) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-1.5-flash" # Le standard actuel
+# ON REMET LE NOM EXACT QUI MARCHAIT HIER
+MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -58,18 +57,12 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
 
 async def call_gemini(prompt: str) -> str:
     try:
+        # On utilise le modèle fiable
         model = genai.GenerativeModel(MODEL_NAME)
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        print(f"ERREUR GEMINI: {e}")
-        # Si le modèle flash échoue, on essaie le pro en fallback
-        if "404" in str(e):
-            try:
-                fallback = genai.GenerativeModel("gemini-pro")
-                resp = await fallback.generate_content_async(prompt)
-                return resp.text
-            except: pass
+        print(f"ERREUR GEMINI ({MODEL_NAME}): {e}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
 
 def extract_json_from_text(text: str):
@@ -134,7 +127,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 @app.on_event("startup")
 def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
-    # C'EST ICI QU'ON CRÉE LES TABLES MAINTENANT (POUR ÉVITER L'ERREUR CIRCULAIRE)
     models.Base.metadata.create_all(bind=engine)
     
     db = next(get_db())
@@ -203,46 +195,63 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     try:
+        # Analyse Email
+        analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+        reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
+        
+        # Sauvegarde
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit()
-    except: pass
-    if req.send_email: send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status="sent" if req.send_email else "not_sent")
+        
+        # Envoi Mail
+        sent, err = "not_sent", None
+        if req.send_email:
+            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
+            sent = "sent"
+        return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+    except Exception as e:
+        print(f"ERREUR PROCESS EMAIL: {e}")
+        raise HTTPException(500, detail=str(e))
 
 @app.post("/email/send")
 async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- DOCUMENTS ---
+# --- DOCUMENTS (Corrigé avec le bon modèle) ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     tmp = f"temp_{file.filename}"
     with open(tmp, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
     try:
-        # On tente le modèle Flash en priorité, puis Pro Vision si Flash échoue (pour compatibilité max)
-        try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            uploaded = genai.upload_file(tmp)
-            res = await model.generate_content_async([uploaded, "Analyse ce doc (facture/devis). JSON strict: {type, sender, date, amount, summary}"])
-        except:
-            model = genai.GenerativeModel("gemini-pro-vision")
-            with open(tmp, "rb") as f:
-                img_data = f.read()
-            res = await model.generate_content_async(["Analyse ce doc. JSON strict: {type, sender, date, amount, summary}", {"mime_type": file.content_type, "data": img_data}])
-
+        # ON UTILISE LE MODÈLE QUI MARCHE POUR TOUT
+        model = genai.GenerativeModel(MODEL_NAME)
+        uploaded = genai.upload_file(tmp)
+        
+        # Le prompt
+        prompt = "Analyse ce document (facture/devis). JSON strict: {type, sender, date, amount, summary}"
+        res = await model.generate_content_async([uploaded, prompt])
+        
         os.remove(tmp)
         data = extract_json_from_text(res.text)
+        
+        # Sauvegarde Historique
         if data:
-            new_doc = FileAnalysis(filename=file.filename, file_type=data.get("type"), sender=data.get("sender"), extracted_date=data.get("date"), amount=str(data.get("amount")), summary=data.get("summary"), owner_id=current_user.id)
+            new_doc = FileAnalysis(
+                filename=file.filename,
+                file_type=str(data.get("type", "Inconnu")),
+                sender=str(data.get("sender", "Non détecté")),
+                extracted_date=str(data.get("date", "")),
+                amount=str(data.get("amount", "")),
+                summary=str(data.get("summary", "")),
+                owner_id=current_user.id
+            )
             db.add(new_doc); db.commit()
         return data
     except Exception as e:
         if os.path.exists(tmp): os.remove(tmp)
-        print(f"Err File: {e}")
+        print(f"ERREUR FICHIER: {e}")
         raise HTTPException(500, detail=str(e))
 
 @app.get("/api/files/history")
