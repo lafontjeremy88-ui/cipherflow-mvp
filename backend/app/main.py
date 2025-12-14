@@ -171,19 +171,27 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. KPIs Généraux
+    # 1. KPIs
     total = db.query(EmailAnalysis).count()
     high_urgency = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
     invoices_generated = db.query(Invoice).filter(Invoice.owner_id == current_user.id).count()
     
-    # 2. Données pour le Graphique Camembert (Répartition par catégorie)
-    # SQL: SELECT category, COUNT(*) FROM email_analyses GROUP BY category
-    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id))\
-                  .group_by(EmailAnalysis.category).all()
-    
-    # On reformate proprement pour le Frontend
-    # Exemple : [{"name": "Devis", "value": 10}, {"name": "Reclamation", "value": 5}]
+    # 2. Graphique Camembert
+    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).group_by(EmailAnalysis.category).all()
     distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
+
+    # 3. NOUVEAU : Les 5 Dernières Activités (Pour le fil d'actualité)
+    recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
+    recent_activity = [
+        {
+            "id": r.id,
+            "subject": r.subject[:40] + "..." if len(r.subject) > 40 else r.subject, # Coupe si trop long
+            "category": r.category,
+            "urgency": r.urgency,
+            "date": r.created_at.strftime("%d/%m %H:%M")
+        } 
+        for r in recents
+    ]
 
     return {
         "kpis": {
@@ -193,7 +201,8 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
         },
         "charts": {
             "distribution": distribution_data
-        }
+        },
+        "recents": recent_activity # On envoie la liste au frontend
     }
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
