@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from dotenv import load_dotenv
 import google.generativeai as genai
 import shutil 
@@ -170,7 +171,30 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return {"total_processed": db.query(EmailAnalysis).count(), "high_urgency": db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count(), "devis_requests": db.query(EmailAnalysis).filter(EmailAnalysis.category == "demande_devis").count()}
+    # 1. KPIs Généraux
+    total = db.query(EmailAnalysis).count()
+    high_urgency = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
+    invoices_generated = db.query(Invoice).filter(Invoice.owner_id == current_user.id).count()
+    
+    # 2. Données pour le Graphique Camembert (Répartition par catégorie)
+    # SQL: SELECT category, COUNT(*) FROM email_analyses GROUP BY category
+    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id))\
+                  .group_by(EmailAnalysis.category).all()
+    
+    # On reformate proprement pour le Frontend
+    # Exemple : [{"name": "Devis", "value": 10}, {"name": "Reclamation", "value": 5}]
+    distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
+
+    return {
+        "kpis": {
+            "total_emails": total,
+            "high_urgency": high_urgency,
+            "invoices": invoices_generated
+        },
+        "charts": {
+            "distribution": distribution_data
+        }
+    }
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

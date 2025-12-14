@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { 
   LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
-  Activity, AlertTriangle, Euro, Settings, LogOut, FileText, User, FolderSearch
+  Settings, LogOut, FileText, User, FolderSearch, PieChart
 } from "lucide-react"; 
 
+// --- IMPORTS DES COMPOSANTS ---
 import EmailHistory from "./components/EmailHistory";
-import StatCard from "./components/StatCard";
 import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import Register from "./components/Register"; 
-import FileAnalyzer from "./components/FileAnalyzer"; // <--- NOUVEL IMPORT
+import FileAnalyzer from "./components/FileAnalyzer";
+
+// --- IMPORT DE LA NOUVELLE PAGE ---
+// On le renomme "DashboardPage" ici pour ne pas confondre
+import DashboardPage from "./pages/Dashboard"; 
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -61,12 +65,14 @@ function App() {
     );
   }
 
-  return <Dashboard token={token} userEmail={userEmail} onLogout={handleLogout} />;
+  return <MainApp token={token} userEmail={userEmail} onLogout={handleLogout} />;
 }
 
-function Dashboard({ token, userEmail, onLogout }) {
-  const [activeTab, setActiveTab] = useState("dashboard");
+// J'ai renommé ce composant "MainApp" au lieu de "Dashboard"
+function MainApp({ token, userEmail, onLogout }) {
+  const [activeTab, setActiveTab] = useState("dashboard"); // Par défaut sur le tableau de bord
   
+  // États pour le Traitement d'Email
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
@@ -77,7 +83,6 @@ function Dashboard({ token, userEmail, onLogout }) {
   const [isSending, setIsSending] = useState(false);
   const [infoMessage, setInfoMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [stats, setStats] = useState({ total_processed: 0, high_urgency: 0, devis_requests: 0 });
 
   const authFetch = async (url, options = {}) => {
     const headers = { 'Content-Type': 'application/json', ...options.headers, 'Authorization': `Bearer ${token}` };
@@ -85,15 +90,6 @@ function Dashboard({ token, userEmail, onLogout }) {
     if (res.status === 401) { onLogout(); throw new Error("Session expirée"); }
     return res;
   };
-
-  const fetchStats = async () => {
-    try {
-      const res = await authFetch(`${API_BASE}/dashboard/stats`);
-      if (res.ok) setStats(await res.json());
-    } catch (err) {}
-  };
-
-  useEffect(() => { if (activeTab === 'dashboard') fetchStats(); }, [activeTab, analyse]);
 
   const handleAnalyse = async () => {
     setErrorMessage(""); setInfoMessage(""); setIsAnalyzing(true);
@@ -134,24 +130,43 @@ function Dashboard({ token, userEmail, onLogout }) {
         </div>
 
         <nav>
-          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}><LayoutDashboard size={20} /> <span>Traitement</span></div>
-          <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}><FileText size={20} /> <span>Facturation</span></div>
+          {/* NOUVEAU MENU : VUE D'ENSEMBLE */}
+          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+            <PieChart size={20} /> <span>Vue d'ensemble</span>
+          </div>
+
+          {/* ANCIEN DASHBOARD DEVIENT TRAITEMENT */}
+          <div className={`nav-item ${activeTab === 'analyze' ? 'active' : ''}`} onClick={() => setActiveTab('analyze')}>
+            <LayoutDashboard size={20} /> <span>Traitement Email</span>
+          </div>
+
+          <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}>
+            <FileText size={20} /> <span>Facturation</span>
+          </div>
           
-          {/* --- NOUVEAU BOUTON ICI --- */}
-          <div className={`nav-item ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => setActiveTab('documents')}><FolderSearch size={20} /> <span>Documents</span></div>
+          <div className={`nav-item ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => setActiveTab('documents')}>
+            <FolderSearch size={20} /> <span>Documents</span>
+          </div>
           
-          <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}><History size={20} /> <span>Historique</span></div>
-          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}><Settings size={20} /> <span>Paramètres</span></div>
-          <div className="nav-item" style={{ marginTop: 'auto', color: '#f87171' }} onClick={onLogout}><LogOut size={20} /> <span>Déconnexion</span></div>
+          <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
+            <History size={20} /> <span>Historique</span>
+          </div>
+          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+            <Settings size={20} /> <span>Paramètres</span>
+          </div>
+          <div className="nav-item" style={{ marginTop: 'auto', color: '#f87171' }} onClick={onLogout}>
+            <LogOut size={20} /> <span>Déconnexion</span>
+          </div>
         </nav>
       </aside>
 
       <main className="main-content">
         <header style={{ marginBottom: '2rem' }}>
             <h1 style={{ fontSize: '1.8rem', fontWeight: 'bold' }}>
-                {activeTab === 'dashboard' && 'Traitement Intelligent'}
+                {activeTab === 'dashboard' && 'Tableau de Bord'}
+                {activeTab === 'analyze' && 'Traitement Intelligent'}
                 {activeTab === 'invoices' && 'Générateur de Factures'}
-                {activeTab === 'documents' && 'Analyse de Documents'} {/* Titre */}
+                {activeTab === 'documents' && 'Analyse de Documents'}
                 {activeTab === 'history' && 'Historique des Activités'}
                 {activeTab === 'settings' && 'Paramètres du SaaS'}
             </h1>
@@ -160,13 +175,11 @@ function Dashboard({ token, userEmail, onLogout }) {
         {errorMessage && <div style={{ backgroundColor: 'rgba(239,68,68,0.2)', color: '#f87171', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', gap: '10px' }}><AlertCircle size={20} /> {errorMessage}</div>}
         {infoMessage && <div style={{ backgroundColor: 'rgba(16,185,129,0.2)', color: '#34d399', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', gap: '10px' }}><CheckCircle size={20} /> {infoMessage}</div>}
 
-        {activeTab === 'dashboard' && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
-              <StatCard title="Emails Traités" value={stats.total_processed} icon={Activity} color="#6366f1" />
-              <StatCard title="Urgences" value={stats.high_urgency} icon={AlertTriangle} color="#ef4444" />
-              <StatCard title="Devis" value={stats.devis_requests} icon={Euro} color="#10b981" />
-            </div>
+        {/* --- ONGLET TABLEAU DE BORD (NOUVEAU) --- */}
+        {activeTab === 'dashboard' && <DashboardPage token={token} />}
+
+        {/* --- ONGLET TRAITEMENT (ANCIEN DASHBOARD) --- */}
+        {activeTab === 'analyze' && (
             <div className="dashboard-grid">
               <div className="card">
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}><Mail size={20} color="var(--accent)" /> Email du Client</h2>
@@ -194,13 +207,10 @@ function Dashboard({ token, userEmail, onLogout }) {
                 </>
               )}
             </div>
-          </>
         )}
         
-        {/* --- NOUVEAUX ONGLETS --- */}
-        {activeTab === 'invoices' && <div style={{ maxWidth: '800px', margin: '0 auto' }}><InvoiceGenerator /></div>}
-        {activeTab === 'documents' && <FileAnalyzer token={token} />} {/* Affiche le composant ici */}
-        
+        {activeTab === 'invoices' && <div style={{ maxWidth: '800px', margin: '0 auto' }}><InvoiceGenerator token={token} /></div>}
+        {activeTab === 'documents' && <FileAnalyzer token={token} />}
         {activeTab === 'history' && <EmailHistory token={token} />}
         {activeTab === 'settings' && <SettingsPanel token={token} />}
       </main>
