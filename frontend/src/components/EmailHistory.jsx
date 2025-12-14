@@ -1,167 +1,94 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, X, Mail, MessageSquare } from 'lucide-react';
+import { Mail, ArrowLeft, X } from 'lucide-react';
 
-// 1. On récupère le 'token' dans les props
-const EmailHistory = ({ token }) => {
+const EmailHistory = ({ token, initialId }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [selectedEmail, setSelectedEmail] = useState(null);
-
-  const fetchHistory = async () => {
-    setLoading(true);
-    try {
-      // 2. CORRECTION DE L'URL : ajout de /email/history à la fin
-      const response = await fetch("https://cipherflow-mvp-production.up.railway.app/email/history", {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` // <--- LA CLÉ D'ENTRÉE
-        }
-      });
-
-      if (response.status === 401) {
-        throw new Error("Session expirée, veuillez vous reconnecter.");
-      }
-      if (!response.ok) throw new Error('Erreur réseau');
-      
-      const data = await response.json();
-      setHistory(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [selectedEmail, setSelectedEmail] = useState(null); // Pour la vue détail
 
   useEffect(() => {
-    // On ne lance la requête que si on a un token
-    if (token) fetchHistory();
-  }, [token]);
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch("https://cipherflow-mvp-production.up.railway.app/email/history", {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            setHistory(data);
+            
+            // Si on a reçu un ID depuis le Dashboard, on l'ouvre direct !
+            if (initialId) {
+                const found = data.find(item => item.id === initialId);
+                if (found) setSelectedEmail(found);
+            }
+        }
+      } catch (e) { console.error(e); } 
+      finally { setLoading(false); }
+    };
+    fetchHistory();
+  }, [token, initialId]);
 
-  const getUrgencyColor = (urgency) => {
-    switch (urgency?.toLowerCase()) {
-      case 'haute': return 'badge-danger';
-      case 'moyenne': return 'badge-warning';
-      case 'basse': return 'badge-success';
-      default: return 'badge-info';
-    }
-  };
-
-  if (loading && history.length === 0) return <p>Chargement de l'historique...</p>;
-  if (error) return <p style={{ color: '#ef4444' }}>Erreur : {error}</p>;
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Chargement...</div>;
 
   return (
-    <div className="card" style={{ marginTop: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-          📜 Historique des Analyses
-        </h3>
-        <button onClick={fetchHistory} className="btn" style={{ padding: '5px 10px', fontSize: '0.9rem', backgroundColor: '#334155' }}>
-          🔄 Actualiser
-        </button>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', position: 'relative' }}>
+      <h2 style={{ marginBottom: '1.5rem', fontSize: '1.5rem', fontWeight: 'bold' }}>Historique des Emails</h2>
+      
+      {/* LISTE DES EMAILS */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {history.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#94a3b8', padding: '2rem', background: '#1e293b', borderRadius: '8px' }}>Aucun historique.</div>
+        ) : (
+            history.map((item) => (
+                <div 
+                    key={item.id} 
+                    onClick={() => setSelectedEmail(item)}
+                    style={{ cursor: 'pointer', background: '#1e293b', padding: '1.5rem', borderRadius: '12px', border: '1px solid #334155', transition: 'background 0.2s' }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#334155'}
+                    onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.subject}</div>
+                        <div style={{ fontSize: '0.85rem', color: '#94a3b8' }}>{new Date(item.created_at || Date.now()).toLocaleDateString()}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '1rem' }}>
+                        <span style={{ background: 'rgba(99,102,241,0.2)', color: '#818cf8', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>{item.category}</span>
+                        <span style={{ background: item.urgency === 'haute' ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)', color: item.urgency === 'haute' ? '#f87171' : '#34d399', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>{item.urgency}</span>
+                    </div>
+                    <p style={{ color: '#cbd5e1', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.summary}</p>
+                </div>
+            ))
+        )}
       </div>
 
-      {history.length === 0 ? (
-        <p style={{ color: 'var(--text-secondary)' }}>Aucun historique pour le moment.</p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase' }}>
-                <th style={{ padding: '12px' }}>ID</th>
-                <th style={{ padding: '12px' }}>Date</th>
-                <th style={{ padding: '12px' }}>Expéditeur</th>
-                <th style={{ padding: '12px' }}>Catégorie</th>
-                <th style={{ padding: '12px' }}>Urgence</th>
-                <th style={{ padding: '12px' }}>Résumé</th>
-                <th style={{ padding: '12px' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((item) => (
-                <tr 
-                  key={item.id} 
-                  className="clickable-row"
-                  style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                  onClick={() => setSelectedEmail(item)}
-                >
-                  <td style={{ padding: '12px', color: 'var(--text-secondary)' }}>#{item.id}</td>
-                  <td style={{ padding: '12px', fontSize: '0.9rem' }}>
-                    {new Date(item.created_at).toLocaleDateString()} <br/>
-                    <span style={{color: 'var(--text-secondary)', fontSize:'0.8rem'}}>
-                        {new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px' }}>{item.sender_email}</td>
-                  <td style={{ padding: '12px' }}>
-                    <span className="badge badge-info">{item.category}</span>
-                  </td>
-                  <td style={{ padding: '12px' }}>
-                    <span className={`badge ${getUrgencyColor(item.urgency)}`}>
-                      {item.urgency}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px', maxWidth: '250px', fontSize: '0.9rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.summary}
-                  </td>
-                  <td style={{ padding: '12px' }}>
-                    <Eye size={18} color="var(--accent)" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
+      {/* MODAL DETAIL (POP-UP) */}
       {selectedEmail && (
-        <div className="modal-overlay" onClick={() => setSelectedEmail(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.4rem' }}>Détails de l'analyse #{selectedEmail.id}</h2>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  {new Date(selectedEmail.created_at).toLocaleString()}
-                </span>
-              </div>
-              <button className="close-btn" onClick={() => setSelectedEmail(null)}>
-                <X size={24} />
-              </button>
-            </div>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, backdropFilter: 'blur(5px)' }}>
+            <div style={{ background: '#1e293b', padding: '2rem', borderRadius: '16px', width: '90%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid #334155', position: 'relative' }}>
+                <button onClick={() => setSelectedEmail(null)} style={{ position: 'absolute', top: '20px', right: '20px', background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><X size={24}/></button>
+                
+                <h2 style={{ marginBottom: '1.5rem', paddingRight: '30px' }}>{selectedEmail.subject}</h2>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div><label style={{color:'#94a3b8', fontSize:'0.85rem'}}>Expéditeur</label><div>{selectedEmail.sender_email}</div></div>
+                    <div><label style={{color:'#94a3b8', fontSize:'0.85rem'}}>Date</label><div>{new Date(selectedEmail.created_at).toLocaleString()}</div></div>
+                </div>
 
-            <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
-               <div className={`badge ${getUrgencyColor(selectedEmail.urgency)}`}>
-                  Urgence : {selectedEmail.urgency}
-               </div>
-               <div className="badge badge-info">
-                  {selectedEmail.category}
-               </div>
-            </div>
+                <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{color:'#6366f1', fontWeight:'bold', display:'block', marginBottom:'5px'}}>RÉSUMÉ IA</label>
+                    <div style={{ background: 'rgba(99,102,241,0.1)', padding: '1rem', borderRadius: '8px', color: '#e2e8f0' }}>{selectedEmail.summary}</div>
+                </div>
 
-            <div className="detail-section">
-              <h4><Mail size={14} style={{display:'inline', marginRight:'6px'}}/> Email du Client ({selectedEmail.sender_email})</h4>
-              <div className="detail-box" style={{ borderLeft: '3px solid var(--accent)' }}>
-                <strong>Objet : {selectedEmail.subject}</strong>
-                <br/><br/>
-                {selectedEmail.raw_email_text}
-              </div>
-            </div>
+                <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{color:'#94a3b8', fontWeight:'bold', display:'block', marginBottom:'5px'}}>MESSAGE ORIGINAL</label>
+                    <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', color: '#94a3b8', fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedEmail.raw_email_text}</div>
+                </div>
 
-            <div className="detail-section">
-              <h4><MessageSquare size={14} style={{display:'inline', marginRight:'6px'}}/> Réponse Envoyée</h4>
-              <div className="detail-box" style={{ borderLeft: '3px solid var(--success)' }}>
-                <strong>Objet : {selectedEmail.suggested_title}</strong>
-                <br/><br/>
-                {selectedEmail.suggested_response_text}
-              </div>
+                <div>
+                    <label style={{color:'#10b981', fontWeight:'bold', display:'block', marginBottom:'5px'}}>RÉPONSE SUGGÉRÉE</label>
+                    <div style={{ background: 'rgba(16,185,129,0.1)', padding: '1rem', borderRadius: '8px', color: '#e2e8f0', whiteSpace: 'pre-wrap' }}>{selectedEmail.suggested_response_text}</div>
+                </div>
             </div>
-
-            <div style={{ textAlign: 'right', marginTop: '2rem' }}>
-              <button className="btn btn-primary" onClick={() => setSelectedEmail(null)}>
-                Fermer
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>

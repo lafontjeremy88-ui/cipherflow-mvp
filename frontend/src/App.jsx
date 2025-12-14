@@ -4,16 +4,12 @@ import {
   Settings, LogOut, FileText, User, FolderSearch, PieChart
 } from "lucide-react"; 
 
-// --- IMPORTS DES COMPOSANTS ---
-import EmailHistory from "./components/EmailHistory";
-import SettingsPanel from "./components/SettingsPanel";
 import Login from "./components/Login";
-import InvoiceGenerator from "./components/InvoiceGenerator";
 import Register from "./components/Register"; 
 import FileAnalyzer from "./components/FileAnalyzer";
-
-// --- IMPORT DE LA NOUVELLE PAGE ---
-// On le renomme "DashboardPage" ici pour ne pas confondre
+import InvoiceGenerator from "./components/InvoiceGenerator";
+import EmailHistory from "./components/EmailHistory"; 
+import SettingsPanel from "./components/SettingsPanel";
 import DashboardPage from "./pages/Dashboard"; 
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
@@ -47,11 +43,7 @@ function App() {
                 <h1 style={{ color: 'white', fontSize: '1.5rem', marginTop: '10px' }}>CipherFlow V2</h1>
             </div>
             <div style={{ width: '100%', maxWidth: '400px', background: '#1e293b', padding: '2rem', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.5)' }}>
-                {showRegister ? (
-                    <Register onLogin={(t, e) => handleAuthSuccess(t, e)} />
-                ) : (
-                    <Login onLogin={(t, e) => handleAuthSuccess(t, e)} />
-                )}
+                {showRegister ? <Register onLogin={handleAuthSuccess} /> : <Login onLogin={handleAuthSuccess} />}
                 <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid #334155', textAlign: 'center' }}>
                     <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '10px' }}>
                         {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
@@ -68,11 +60,11 @@ function App() {
   return <MainApp token={token} userEmail={userEmail} onLogout={handleLogout} />;
 }
 
-// J'ai renommé ce composant "MainApp" au lieu de "Dashboard"
 function MainApp({ token, userEmail, onLogout }) {
-  const [activeTab, setActiveTab] = useState("dashboard"); // Par défaut sur le tableau de bord
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [selectedHistoryId, setSelectedHistoryId] = useState(null); // ID mémorisé pour ouverture directe
   
-  // États pour le Traitement d'Email
+  // États Analyse
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
@@ -83,6 +75,15 @@ function MainApp({ token, userEmail, onLogout }) {
   const [isSending, setIsSending] = useState(false);
   const [infoMessage, setInfoMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  // NETTOYAGE : Quand on quitte l'onglet Analyse, on efface le formulaire
+  useEffect(() => {
+    if (activeTab !== 'analyze') {
+        setAnalyse(null);
+        setInfoMessage("");
+        setErrorMessage("");
+    }
+  }, [activeTab]);
 
   const authFetch = async (url, options = {}) => {
     const headers = { 'Content-Type': 'application/json', ...options.headers, 'Authorization': `Bearer ${token}` };
@@ -95,7 +96,7 @@ function MainApp({ token, userEmail, onLogout }) {
     setErrorMessage(""); setInfoMessage(""); setIsAnalyzing(true);
     try {
       const res = await authFetch(`${API_BASE}/email/process`, { method: "POST", body: JSON.stringify({ from_email: fromEmail, subject, content, send_email: false }) });
-      if (!res.ok) throw new Error("Erreur");
+      if (!res.ok) throw new Error("Erreur serveur");
       const data = await res.json();
       setAnalyse(data.analyse); setReplySubject(data.reponse?.subject); setReplyBody(data.reponse?.reply);
       setInfoMessage("Analyse terminée !");
@@ -106,57 +107,44 @@ function MainApp({ token, userEmail, onLogout }) {
     setIsSending(true); setErrorMessage("");
     try {
       const res = await authFetch(`${API_BASE}/email/send`, { method: "POST", body: JSON.stringify({ to_email: fromEmail, subject: replySubject, body: replyBody }) });
-      if (!res.ok) throw new Error("Erreur");
+      if (!res.ok) throw new Error("Erreur envoi");
       setInfoMessage("Email envoyé !"); setAnalyse(null); setContent("");
     } catch (err) { setErrorMessage(err.message); } finally { setIsSending(false); }
+  };
+
+  // --- NAVIGATION DU DASHBOARD (Mémorise l'ID) ---
+  const handleNavigation = (tabName, id = null) => {
+    if (id) setSelectedHistoryId(id); 
+    setActiveTab(tabName);
+  };
+
+  // --- NAVIGATION DU MENU LATÉRAL (Efface la mémoire) ---
+  // C'est la fonction CORRIGÉE qui empêche l'ouverture automatique
+  const handleSidebarClick = (tabName) => {
+    setSelectedHistoryId(null); // On oublie l'ID sélectionné
+    setActiveTab(tabName);      // On change d'onglet
   };
 
   return (
     <div className="app-container">
       <aside className="sidebar">
-        <div className="logo">
-          <Zap size={28} color="#6366f1" />
-          <span>CipherFlow V2</span>
-        </div>
-        
+        <div className="logo"><Zap size={28} color="#6366f1" /><span>CipherFlow V2</span></div>
         <div style={{ padding: '0 20px 20px 20px', marginBottom: '20px', borderBottom: '1px solid #334155' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#94a3b8', fontSize: '0.85rem' }}>
                 <div style={{ background: '#334155', padding: '8px', borderRadius: '50%' }}><User size={16} /></div>
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    <div style={{ fontWeight: 'bold', color: 'white' }}>Connecté en tant que</div>
-                    <div title={userEmail}>{userEmail || "Utilisateur"}</div>
-                </div>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}><div style={{ fontWeight: 'bold', color: 'white' }}>Connecté</div><div title={userEmail}>{userEmail}</div></div>
             </div>
         </div>
-
+        
+        {/* MENU LATÉRAL : Utilise maintenant handleSidebarClick */}
         <nav>
-          {/* NOUVEAU MENU : VUE D'ENSEMBLE */}
-          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-            <PieChart size={20} /> <span>Vue d'ensemble</span>
-          </div>
-
-          {/* ANCIEN DASHBOARD DEVIENT TRAITEMENT */}
-          <div className={`nav-item ${activeTab === 'analyze' ? 'active' : ''}`} onClick={() => setActiveTab('analyze')}>
-            <LayoutDashboard size={20} /> <span>Traitement Email</span>
-          </div>
-
-          <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => setActiveTab('invoices')}>
-            <FileText size={20} /> <span>Facturation</span>
-          </div>
-          
-          <div className={`nav-item ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => setActiveTab('documents')}>
-            <FolderSearch size={20} /> <span>Documents</span>
-          </div>
-          
-          <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
-            <History size={20} /> <span>Historique</span>
-          </div>
-          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
-            <Settings size={20} /> <span>Paramètres</span>
-          </div>
-          <div className="nav-item" style={{ marginTop: 'auto', color: '#f87171' }} onClick={onLogout}>
-            <LogOut size={20} /> <span>Déconnexion</span>
-          </div>
+          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => handleSidebarClick('dashboard')}><PieChart size={20} /> <span>Vue d'ensemble</span></div>
+          <div className={`nav-item ${activeTab === 'analyze' ? 'active' : ''}`} onClick={() => handleSidebarClick('analyze')}><LayoutDashboard size={20} /> <span>Traitement Email</span></div>
+          <div className={`nav-item ${activeTab === 'invoices' ? 'active' : ''}`} onClick={() => handleSidebarClick('invoices')}><FileText size={20} /> <span>Facturation</span></div>
+          <div className={`nav-item ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => handleSidebarClick('documents')}><FolderSearch size={20} /> <span>Documents</span></div>
+          <div className={`nav-item ${activeTab === 'history' ? 'active' : ''}`} onClick={() => handleSidebarClick('history')}><History size={20} /> <span>Historique</span></div>
+          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => handleSidebarClick('settings')}><Settings size={20} /> <span>Paramètres</span></div>
+          <div className="nav-item" style={{ marginTop: 'auto', color: '#f87171' }} onClick={onLogout}><LogOut size={20} /> <span>Déconnexion</span></div>
         </nav>
       </aside>
 
@@ -175,10 +163,8 @@ function MainApp({ token, userEmail, onLogout }) {
         {errorMessage && <div style={{ backgroundColor: 'rgba(239,68,68,0.2)', color: '#f87171', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', gap: '10px' }}><AlertCircle size={20} /> {errorMessage}</div>}
         {infoMessage && <div style={{ backgroundColor: 'rgba(16,185,129,0.2)', color: '#34d399', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', gap: '10px' }}><CheckCircle size={20} /> {infoMessage}</div>}
 
-        {/* --- ONGLET TABLEAU DE BORD (NOUVEAU) --- */}
-        {activeTab === 'dashboard' && <DashboardPage token={token} />}
+        {activeTab === 'dashboard' && <DashboardPage token={token} onNavigate={handleNavigation} />}
 
-        {/* --- ONGLET TRAITEMENT (ANCIEN DASHBOARD) --- */}
         {activeTab === 'analyze' && (
             <div className="dashboard-grid">
               <div className="card">
@@ -211,7 +197,10 @@ function MainApp({ token, userEmail, onLogout }) {
         
         {activeTab === 'invoices' && <div style={{ maxWidth: '800px', margin: '0 auto' }}><InvoiceGenerator token={token} /></div>}
         {activeTab === 'documents' && <FileAnalyzer token={token} />}
-        {activeTab === 'history' && <EmailHistory token={token} />}
+        
+        {/* On passe l'ID sélectionné (qui sera null si on vient du menu) */}
+        {activeTab === 'history' && <EmailHistory token={token} initialId={selectedHistoryId} />}
+        
         {activeTab === 'settings' && <SettingsPanel token={token} />}
       </main>
     </div>
