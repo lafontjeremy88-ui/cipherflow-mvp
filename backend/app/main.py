@@ -301,7 +301,11 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Le fichier physique est introuvable (Peut-être supprimé après redémarrage serveur)")
 
     # 4. Envoi du fichier
-    return FileResponse(path=file_path, filename=db_file.filename, media_type='application/pdf')
+    # NOUVELLE VERSION (qui force l'aperçu)
+    return FileResponse(
+    path=file_path, 
+    content_disposition_type="inline" 
+)
 
 # --- FACTURATION ---
 @app.post("/api/generate-invoice")
