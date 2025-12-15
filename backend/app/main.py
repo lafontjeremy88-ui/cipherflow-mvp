@@ -3,11 +3,14 @@ import json
 import logging
 from typing import Optional, List
 from datetime import datetime
+import shutil
 
 import resend 
 from jose import jwt, JWTError 
 
+# --- AJOUT DE FileResponse ICI ---
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
+from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
@@ -15,13 +18,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from dotenv import load_dotenv
 import google.generativeai as genai
-import shutil 
 
-# --- IMPORTS ---
+# --- IMPORTS INTERNES ---
 from app.database.database import get_db, engine, Base
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
-
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
 
@@ -33,14 +34,13 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- CONFIGURATION GEMINI (On garde ce qui marche pour toi !) ---
+# --- CONFIGURATION GEMINI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# IMPORTANT : On reste sur le modèle qui fonctionne pour tes emails
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -129,6 +129,11 @@ def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
     models.Base.metadata.create_all(bind=engine)
     
+    # Création du dossier uploads s'il n'existe pas
+    if not os.path.exists("uploads"):
+        os.makedirs("uploads")
+        print("📁 Dossier 'uploads' créé.")
+    
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
@@ -171,38 +176,18 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. KPIs
     total = db.query(EmailAnalysis).count()
     high_urgency = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
     invoices_generated = db.query(Invoice).filter(Invoice.owner_id == current_user.id).count()
-    
-    # 2. Graphique Camembert
     cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).group_by(EmailAnalysis.category).all()
     distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
-
-    # 3. NOUVEAU : Les 5 Dernières Activités (Pour le fil d'actualité)
     recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
-    recent_activity = [
-        {
-            "id": r.id,
-            "subject": r.subject[:40] + "..." if len(r.subject) > 40 else r.subject, # Coupe si trop long
-            "category": r.category,
-            "urgency": r.urgency,
-            "date": r.created_at.strftime("%d/%m %H:%M")
-        } 
-        for r in recents
-    ]
+    recent_activity = [{"id": r.id, "subject": r.subject[:40] + "..." if len(r.subject) > 40 else r.subject, "category": r.category, "urgency": r.urgency, "date": r.created_at.strftime("%d/%m %H:%M")} for r in recents]
 
     return {
-        "kpis": {
-            "total_emails": total,
-            "high_urgency": high_urgency,
-            "invoices": invoices_generated
-        },
-        "charts": {
-            "distribution": distribution_data
-        },
-        "recents": recent_activity # On envoie la liste au frontend
+        "kpis": {"total_emails": total, "high_urgency": high_urgency, "invoices": invoices_generated},
+        "charts": {"distribution": distribution_data},
+        "recents": recent_activity
     }
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
@@ -230,10 +215,8 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
     try:
         analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
         reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
-        
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit()
-        
         sent, err = "not_sent", None
         if req.send_email:
             send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
@@ -248,21 +231,32 @@ async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_c
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE MANQUANTE : ANALYSE DE DOCUMENTS ---
-# C'est ce bloc qui manquait sur ton serveur et qui causait l'erreur 404
+# --- PARTIE CORRIGÉE : ANALYSE & SAUVEGARDE PERMANENTE DES DOCUMENTS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    tmp = f"temp_{file.filename}"
-    with open(tmp, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
+    # 1. On s'assure que le dossier uploads existe
+    if not os.path.exists("uploads"):
+        os.makedirs("uploads")
+    
+    # 2. On sauvegarde le fichier DÉFINITIVEMENT dans uploads/
+    file_path = f"uploads/{file.filename}"
+    
     try:
-        # On utilise le même modèle que pour les emails (flash-latest) pour ne rien casser
+        # Copie du contenu vers le disque
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # 3. On envoie ce fichier à Gemini pour analyse
         model = genai.GenerativeModel(MODEL_NAME)
-        uploaded = genai.upload_file(tmp)
+        # Gemini a besoin de lire le fichier, ici on utilise la méthode upload_file de l'API Gemini
+        uploaded = genai.upload_file(file_path)
         
         prompt = "Analyse ce document (facture/devis). Extrait au format JSON strict: {type, sender, date, amount, summary}"
         res = await model.generate_content_async([uploaded, prompt])
         
-        os.remove(tmp)
+        # 4. On NE SUPPRIME PAS le fichier (os.remove est retiré)
+        # Le fichier reste dans uploads/ pour être téléchargé plus tard
+        
         data = extract_json_from_text(res.text)
         
         if data:
@@ -278,19 +272,36 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
             db.add(new_doc); db.commit()
         return data
     except Exception as e:
-        if os.path.exists(tmp): os.remove(tmp)
+        # En cas d'erreur seulement, on peut nettoyer si besoin, mais ici on log juste
         print(f"ERREUR FICHIER: {e}")
-        # Si flash ne marche pas pour les images, on tente le fallback pro-vision
         try:
             print("Tentative fallback vision...")
             model_vision = genai.GenerativeModel("gemini-pro-vision")
-            # Logique vision ici si besoin, mais on commence simple
         except: pass
         raise HTTPException(500, detail=str(e))
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
+
+# --- NOUVELLE ROUTE : TÉLÉCHARGER / VOIR LE DOCUMENT ---
+@app.get("/api/files/download/{file_id}")
+async def download_file(file_id: int, db: Session = Depends(get_db)):
+    # 1. On cherche l'info en base
+    db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
+    
+    if not db_file:
+        raise HTTPException(status_code=404, detail="Fichier introuvable dans l'historique")
+
+    # 2. On reconstruit le chemin
+    file_path = f"uploads/{db_file.filename}"
+    
+    # 3. Vérification physique
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Le fichier physique est introuvable (Peut-être supprimé après redémarrage serveur)")
+
+    # 4. Envoi du fichier
+    return FileResponse(path=file_path, filename=db_file.filename, media_type='application/pdf')
 
 # --- FACTURATION ---
 @app.post("/api/generate-invoice")
@@ -316,3 +327,4 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
     if not inv: raise HTTPException(404)
     data = {"client_name": inv.client_name, "invoice_number": inv.reference, "amount": inv.amount_total, "date": inv.date_issued.strftime("%d/%m/%Y"), "items": json.loads(inv.items_json) if inv.items_json else [], "company_name_header": "Mon Entreprise", "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"}
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={ref}.pdf"})
+# essai 
