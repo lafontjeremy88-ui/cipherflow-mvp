@@ -114,7 +114,14 @@ class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Opti
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
 class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str
-class SettingsRequest(BaseModel): company_name: str; agent_name: str; tone: str; signature: str
+# MISE A JOUR : Ajout du champ logo (Optionnel)
+class SettingsRequest(BaseModel): 
+    company_name: str
+    agent_name: str
+    tone: str
+    signature: str
+    logo: Optional[str] = None 
+
 class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
@@ -129,7 +136,6 @@ def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
     models.Base.metadata.create_all(bind=engine)
     
-    # Création du dossier uploads s'il n'existe pas
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
         print("📁 Dossier 'uploads' créé.")
@@ -204,7 +210,16 @@ async def get_settings(db: Session = Depends(get_db), current_user: User = Depen
 async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first() or AppSettings()
     if not s.id: db.add(s)
-    s.company_name = req.company_name; s.agent_name = req.agent_name; s.tone = req.tone; s.signature = req.signature
+    
+    s.company_name = req.company_name
+    s.agent_name = req.agent_name
+    s.tone = req.tone
+    s.signature = req.signature
+    
+    # MISE A JOUR : Sauvegarde du logo s'il est envoyé
+    if req.logo:
+        s.logo = req.logo
+        
     db.commit()
     return {"status": "updated"}
 
@@ -234,28 +249,20 @@ async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_c
 # --- PARTIE CORRIGÉE : ANALYSE & SAUVEGARDE PERMANENTE DES DOCUMENTS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. On s'assure que le dossier uploads existe
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
     
-    # 2. On sauvegarde le fichier DÉFINITIVEMENT dans uploads/
     file_path = f"uploads/{file.filename}"
     
     try:
-        # Copie du contenu vers le disque
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 3. On envoie ce fichier à Gemini pour analyse
         model = genai.GenerativeModel(MODEL_NAME)
-        # Gemini a besoin de lire le fichier, ici on utilise la méthode upload_file de l'API Gemini
         uploaded = genai.upload_file(file_path)
         
         prompt = "Analyse ce document (facture/devis). Extrait au format JSON strict: {type, sender, date, amount, summary}"
         res = await model.generate_content_async([uploaded, prompt])
-        
-        # 4. On NE SUPPRIME PAS le fichier (os.remove est retiré)
-        # Le fichier reste dans uploads/ pour être téléchargé plus tard
         
         data = extract_json_from_text(res.text)
         
@@ -272,7 +279,6 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
             db.add(new_doc); db.commit()
         return data
     except Exception as e:
-        # En cas d'erreur seulement, on peut nettoyer si besoin, mais ici on log juste
         print(f"ERREUR FICHIER: {e}")
         try:
             print("Tentative fallback vision...")
@@ -284,7 +290,6 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
 
-# --- NOUVELLE ROUTE : TÉLÉCHARGER / VOIR LE DOCUMENT ---
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
@@ -292,11 +297,8 @@ async def view_file(file_id: int, db: Session = Depends(get_db)):
     
     file_path = f"uploads/{db_file.filename}"
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
-
-    # "inline" = Ouvre dans l'onglet
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="inline")
 
-# --- ROUTE 2 : TÉLÉCHARGER (Force l'enregistrement) ---
 @app.get("/api/files/download/{file_id}")
 async def download_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
@@ -304,8 +306,6 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     
     file_path = f"uploads/{db_file.filename}"
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
-
-    # "attachment" = Force le téléchargement
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
 
 # --- FACTURATION ---
@@ -313,7 +313,15 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
-    data.update({"company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"})
+    
+    # MISE A JOUR : UTILISER LE LOGO DE L'UTILISATEUR S'IL EXISTE
+    # Sinon, utiliser l'image par défaut
+    user_logo = s.logo if (s and s.logo) else "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    
+    data.update({
+        "company_name_header": s.company_name if s else "Mon Entreprise",
+        "logo_url": user_logo
+    })
     
     ex = db.query(Invoice).filter(Invoice.reference == req.invoice_number, Invoice.owner_id == current_user.id).first()
     if ex: ex.amount_total = req.amount
@@ -330,6 +338,18 @@ async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(g
 async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
     if not inv: raise HTTPException(404)
-    data = {"client_name": inv.client_name, "invoice_number": inv.reference, "amount": inv.amount_total, "date": inv.date_issued.strftime("%d/%m/%Y"), "items": json.loads(inv.items_json) if inv.items_json else [], "company_name_header": "Mon Entreprise", "logo_url": "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"}
+    
+    # Récupérer les settings pour le logo lors de la réimpression aussi
+    s = db.query(AppSettings).first()
+    user_logo = s.logo if (s and s.logo) else "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+
+    data = {
+        "client_name": inv.client_name, 
+        "invoice_number": inv.reference, 
+        "amount": inv.amount_total, 
+        "date": inv.date_issued.strftime("%d/%m/%Y"), 
+        "items": json.loads(inv.items_json) if inv.items_json else [], 
+        "company_name_header": s.company_name if s else "Mon Entreprise",
+        "logo_url": user_logo
+    }
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={ref}.pdf"})
-# essai 

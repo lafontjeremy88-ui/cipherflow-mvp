@@ -24,6 +24,7 @@ class AppSettings(Base):
     agent_name = Column(String, default="Assistant IA")
     tone = Column(String, default="professionnel et empathique")
     signature = Column(String, default="L'équipe CipherFlow")
+    logo = Column(String, nullable=True)
 
 class User(Base):
     __tablename__ = "users"
