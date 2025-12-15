@@ -67,7 +67,7 @@ const FileAnalyzer = ({ token }) => {
     }
   };
 
-  // Fonction de nettoyage (Comme avant)
+  // Fonction de nettoyage
   const cleanData = (data) => {
     if (!data) return "Non détecté";
     if (typeof data === 'string') {
@@ -86,11 +86,12 @@ const FileAnalyzer = ({ token }) => {
     return data;
   };
 
-  // Fonction pour ouvrir le document (Simulée via lien backend)
-  const handleDownload = (docId) => {
-    // Si ton backend a une route de téléchargement, c'est ici qu'on l'appelle
-    // Pour l'instant, on ouvre une alerte si le lien n'est pas prêt
-    window.open(`${API_BASE}/api/files/download/${docId}`, '_blank');
+  // --- NOUVELLE FONCTION INTELLIGENTE ---
+  const handleAction = (docId, mode) => {
+    // mode sera soit 'view' (pour voir), soit 'download' (pour télécharger)
+    // Cela correspond aux routes que nous avons créées dans le backend
+    const url = `${API_BASE}/api/files/${mode}/${docId}`;
+    window.open(url, '_blank');
   };
 
   return (
@@ -175,7 +176,7 @@ const FileAnalyzer = ({ token }) => {
             {history.map((doc) => (
               <tr 
                 key={doc.id} 
-                onClick={() => setSelectedDoc(doc)} // <--- C'EST ICI QU'ON ACTIVE LE CLIC
+                onClick={() => setSelectedDoc(doc)} 
                 className="clickable-row"
                 style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', transition: 'background 0.2s' }}
                 onMouseOver={(e) => e.currentTarget.style.background = '#334155'}
@@ -218,10 +219,13 @@ const FileAnalyzer = ({ token }) => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
-                    <button onClick={() => handleDownload(selectedDoc.id)} style={{ flex: 1, background: '#6366f1', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}>
+                    {/* BOUTON VOIR -> appelle /view/ */}
+                    <button onClick={() => handleAction(selectedDoc.id, 'view')} style={{ flex: 1, background: '#6366f1', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}>
                         <Eye size={18}/> Voir le document
                     </button>
-                    <button onClick={() => handleDownload(selectedDoc.id)} style={{ flex: 1, background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid #334155', padding: '12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    
+                    {/* BOUTON TÉLÉCHARGER -> appelle /download/ */}
+                    <button onClick={() => handleAction(selectedDoc.id, 'download')} style={{ flex: 1, background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid #334155', padding: '12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                         <Download size={18}/> Télécharger
                     </button>
                 </div>

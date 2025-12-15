@@ -285,27 +285,28 @@ async def get_file_history(db: Session = Depends(get_db), current_user: User = D
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
 
 # --- NOUVELLE ROUTE : TÉLÉCHARGER / VOIR LE DOCUMENT ---
+@app.get("/api/files/view/{file_id}")
+async def view_file(file_id: int, db: Session = Depends(get_db)):
+    db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
+    if not db_file: raise HTTPException(404, detail="Fichier introuvable en base")
+    
+    file_path = f"uploads/{db_file.filename}"
+    if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
+
+    # "inline" = Ouvre dans l'onglet
+    return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="inline")
+
+# --- ROUTE 2 : TÉLÉCHARGER (Force l'enregistrement) ---
 @app.get("/api/files/download/{file_id}")
 async def download_file(file_id: int, db: Session = Depends(get_db)):
-    # 1. On cherche l'info en base
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
+    if not db_file: raise HTTPException(404, detail="Fichier introuvable en base")
     
-    if not db_file:
-        raise HTTPException(status_code=404, detail="Fichier introuvable dans l'historique")
-
-    # 2. On reconstruit le chemin
     file_path = f"uploads/{db_file.filename}"
-    
-    # 3. Vérification physique
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Le fichier physique est introuvable (Peut-être supprimé après redémarrage serveur)")
+    if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
 
-    # 4. Envoi du fichier
-    # NOUVELLE VERSION (qui force l'aperçu)
-    return FileResponse(
-    path=file_path, 
-    content_disposition_type="inline" 
-)
+    # "attachment" = Force le téléchargement
+    return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
 
 # --- FACTURATION ---
 @app.post("/api/generate-invoice")
