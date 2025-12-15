@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Download, FileText, Printer, Save } from 'lucide-react';
+import { Plus, Trash2, Download, FileText } from 'lucide-react';
 
 const InvoiceGenerator = ({ token }) => {
   const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
   
+  // État pour stocker les infos de l'entreprise (Logo, Nom)
+  const [companySettings, setCompanySettings] = useState(null);
+
   // État de la facture
   const [invoiceData, setInvoiceData] = useState({
     invoice_number: `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
@@ -13,6 +16,18 @@ const InvoiceGenerator = ({ token }) => {
   });
 
   const [loading, setLoading] = useState(false);
+
+  // --- 1. RÉCUPÉRER LE LOGO ET LE NOM DE L'ENTREPRISE ---
+  useEffect(() => {
+    if (!token) return;
+    
+    fetch(`${API_BASE}/settings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+    })
+    .then(res => res.json())
+    .then(data => setCompanySettings(data))
+    .catch(err => console.error("Erreur chargement logo:", err));
+  }, [token]);
 
   // --- LOGIQUE DE CALCUL ---
   const calculateTotal = () => {
@@ -45,6 +60,7 @@ const InvoiceGenerator = ({ token }) => {
         amount: calculateTotal(),
         date: invoiceData.date,
         items: invoiceData.items
+        // Le backend utilisera ses propres settings pour le PDF
       };
 
       const res = await fetch(`${API_BASE}/api/generate-invoice`, {
@@ -179,7 +195,18 @@ const InvoiceGenerator = ({ token }) => {
                 {/* EN-TÊTE */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3rem' }}>
                     <div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#6366f1', marginBottom: '5px' }}>MON ENTREPRISE</div>
+                        {/* --- C'EST ICI QUE LE LOGO S'AFFICHE AUTOMATIQUEMENT --- */}
+                        {companySettings?.logo ? (
+                            <img 
+                                src={companySettings.logo} 
+                                alt="Logo Entreprise" 
+                                style={{ maxHeight: '60px', marginBottom: '10px', display: 'block' }}
+                            />
+                        ) : (
+                            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#6366f1', marginBottom: '5px' }}>
+                                {companySettings?.company_name || "MON ENTREPRISE"}
+                            </div>
+                        )}
                         <div style={{ fontSize: '0.85rem', color: '#64748b' }}>contact@monentreprise.com</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
