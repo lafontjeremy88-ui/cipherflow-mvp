@@ -1,10 +1,14 @@
 import os
 import json
 import logging
-import base64  # <--- AJOUT INDISPENSABLE
+import base64
+import io  # <--- AJOUT POUR GÉRER LES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
 import shutil
+
+# --- AJOUT IMPÉRATIF : POUR REDIMENSIONNER LES IMAGES ---
+from PIL import Image 
 
 import resend 
 from jose import jwt, JWTError 
@@ -224,31 +228,56 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
-# --- ROUTE SPECIALE UPLOAD LOGO (BASE64) ---
-# C'est la nouvelle route qui permet d'envoyer un fichier et de le stocker en texte
+# --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
 @app.post("/settings/upload-logo")
 async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. Vérification du type (Sécurité basique)
+    # 1. Vérification du type
     if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
         raise HTTPException(400, detail="Format non supporté. Utilisez PNG ou JPEG.")
 
-    # 2. Lecture et encodage
+    # 2. Lecture du fichier lourd
     contents = await file.read()
-    encoded_string = base64.b64encode(contents).decode("utf-8")
     
-    # 3. Création de la chaîne compatible HTML/PDF
-    final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
-    
-    # 4. Sauvegarde en base
-    s = db.query(AppSettings).first()
-    if not s:
-        s = AppSettings()
-        db.add(s)
-    
-    s.logo = final_logo_str
-    db.commit()
-    
-    return {"status": "logo_updated", "length": len(final_logo_str)}
+    try:
+        # 3. Ouverture de l'image avec PIL (Pillow)
+        img = Image.open(io.BytesIO(contents))
+        
+        # 4. Redimensionnement (On limite la largeur à 800px max pour économiser la base de données)
+        max_width = 800
+        if img.width > max_width:
+            # Calcule la hauteur proportionnelle
+            ratio = max_width / float(img.width)
+            new_height = int((float(img.height) * float(ratio)))
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+        
+        # 5. Sauvegarde de l'image optimisée dans un "buffer" mémoire
+        buffer = io.BytesIO()
+        # On conserve le format original (PNG ou JPEG)
+        fmt = img.format if img.format else "PNG"
+        img.save(buffer, format=fmt, optimize=True, quality=85)
+        
+        # On récupère les octets optimisés
+        optimized_contents = buffer.getvalue()
+        
+        # 6. Encodage en Base64
+        encoded_string = base64.b64encode(optimized_contents).decode("utf-8")
+        final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
+        
+        # 7. Sauvegarde en base
+        s = db.query(AppSettings).first()
+        if not s:
+            s = AppSettings()
+            db.add(s)
+        
+        s.logo = final_logo_str
+        db.commit()
+        
+        return {"status": "logo_updated", "size_before": len(contents), "size_after": len(optimized_contents)}
+
+    except Exception as e:
+        print(f"Erreur Resize Image: {e}")
+        raise HTTPException(500, detail="Erreur lors du traitement de l'image.")
+
 
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -341,8 +370,7 @@ async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_us
     s = db.query(AppSettings).first()
     data = req.dict()
     
-    # CORRECTION LOGO : URL Propre (pas de Markdown !!)
-    # Si on n'a pas de logo uploadé, on utilise ce lien.
+    # CORRECTION LOGO : URL Propre
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
     
