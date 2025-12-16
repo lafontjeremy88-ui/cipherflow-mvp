@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import base64  # <--- AJOUT INDISPENSABLE
 from typing import Optional, List
 from datetime import datetime
 import shutil
@@ -223,6 +224,32 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
+# --- ROUTE SPECIALE UPLOAD LOGO (BASE64) ---
+# C'est la nouvelle route qui permet d'envoyer un fichier et de le stocker en texte
+@app.post("/settings/upload-logo")
+async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # 1. Vérification du type (Sécurité basique)
+    if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
+        raise HTTPException(400, detail="Format non supporté. Utilisez PNG ou JPEG.")
+
+    # 2. Lecture et encodage
+    contents = await file.read()
+    encoded_string = base64.b64encode(contents).decode("utf-8")
+    
+    # 3. Création de la chaîne compatible HTML/PDF
+    final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
+    
+    # 4. Sauvegarde en base
+    s = db.query(AppSettings).first()
+    if not s:
+        s = AppSettings()
+        db.add(s)
+    
+    s.logo = final_logo_str
+    db.commit()
+    
+    return {"status": "logo_updated", "length": len(final_logo_str)}
+
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
@@ -314,7 +341,8 @@ async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_us
     s = db.query(AppSettings).first()
     data = req.dict()
     
-    # CORRECTION LOGO : URL Propre (pas de Markdown)
+    # CORRECTION LOGO : URL Propre (pas de Markdown !!)
+    # Si on n'a pas de logo uploadé, on utilise ce lien.
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
     
