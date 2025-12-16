@@ -2,12 +2,12 @@ import os
 import json
 import logging
 import base64
-import io  # <--- AJOUT POUR GÉRER LES FLUX DE DONNÉES
+import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
 import shutil
 
-# --- AJOUT IMPÉRATIF : POUR REDIMENSIONNER LES IMAGES ---
+# --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
 
 import resend 
@@ -130,12 +130,26 @@ class EmailHistoryItem(BaseModel):
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
 
-# CORRECTION TYPE PRIX (float)
+# TYPE PRIX (float)
 class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
 app = FastAPI(title="CipherFlow Inbox IA Pro")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# --- CORRECTION CORS : Liste explicite pour autoriser Vercel ---
+origins = [
+    "http://localhost:3000",
+    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",             # Votre Frontend
+    "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)" # Votre Backend
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,     # <-- IMPORTANT : On autorise explicitement Vercel
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def on_startup():
@@ -364,13 +378,13 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
 
-# --- FACTURATION (CORRIGÉE : LOGO + PRIX) ---
+# --- FACTURATION (CORRIGÉE : LOGO + PRIX + CORS) ---
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
     
-    # CORRECTION LOGO : URL Propre
+    # CORRECTION CRITIQUE : URL PROPRE SANS CROCHETS NI PARENTHESES
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
     
@@ -397,7 +411,7 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
     
     s = db.query(AppSettings).first()
     
-    # CORRECTION LOGO (Idem pour la réimpression)
+    # CORRECTION CRITIQUE : URL PROPRE ICI AUSSI
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
 
