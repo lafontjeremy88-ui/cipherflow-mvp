@@ -8,7 +8,6 @@ import shutil
 import resend 
 from jose import jwt, JWTError 
 
-# --- AJOUT DE FileResponse ICI ---
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
@@ -114,7 +113,7 @@ class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Opti
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
 class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str
-# MISE A JOUR : Ajout du champ logo (Optionnel)
+
 class SettingsRequest(BaseModel): 
     company_name: str
     agent_name: str
@@ -125,6 +124,8 @@ class SettingsRequest(BaseModel):
 class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
+
+# CORRECTION TYPE PRIX (float)
 class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
@@ -216,7 +217,6 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     s.tone = req.tone
     s.signature = req.signature
     
-    # MISE A JOUR : Sauvegarde du logo s'il est envoyé
     if req.logo:
         s.logo = req.logo
         
@@ -246,7 +246,7 @@ async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_c
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
 
-# --- PARTIE CORRIGÉE : ANALYSE & SAUVEGARDE PERMANENTE DES DOCUMENTS ---
+# --- GESTION FICHIERS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if not os.path.exists("uploads"):
@@ -308,15 +308,15 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
 
-# --- FACTURATION ---
+# --- FACTURATION (CORRIGÉE : LOGO + PRIX) ---
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
     
-    # MISE A JOUR : UTILISER LE LOGO DE L'UTILISATEUR S'IL EXISTE
-    # Sinon, utiliser l'image par défaut
-    user_logo = s.logo if (s and s.logo) else "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    # CORRECTION LOGO : URL Propre (pas de Markdown)
+    default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    user_logo = s.logo if (s and s.logo) else default_logo
     
     data.update({
         "company_name_header": s.company_name if s else "Mon Entreprise",
@@ -339,9 +339,11 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
     inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
     if not inv: raise HTTPException(404)
     
-    # Récupérer les settings pour le logo lors de la réimpression aussi
     s = db.query(AppSettings).first()
-    user_logo = s.logo if (s and s.logo) else "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    
+    # CORRECTION LOGO (Idem pour la réimpression)
+    default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    user_logo = s.logo if (s and s.logo) else default_logo
 
     data = {
         "client_name": inv.client_name, 
