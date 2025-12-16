@@ -125,8 +125,8 @@ class SettingsRequest(BaseModel):
 class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
-class InvoiceItem(BaseModel): desc: str; price: str
-class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: str; date: str; items: List[InvoiceItem]
+class InvoiceItem(BaseModel): desc: str; price: float
+class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
