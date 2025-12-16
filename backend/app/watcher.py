@@ -132,7 +132,7 @@ def process_one_email(msg: email.message.Message) -> None:
         "from_email": sender_email,
         "subject": subject,
         # ton backend attend "body" (EmailProcessRequest) → on envoie body
-        "body": body,
+        "content": body,
         "send_email": AUTO_SEND
     }
 
