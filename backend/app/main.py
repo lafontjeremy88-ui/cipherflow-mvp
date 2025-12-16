@@ -145,7 +145,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,     # <-- IMPORTANT : On autorise explicitement Vercel
+    allow_origins=["*"],     # <-- IMPORTANT : On autorise explicitement Vercel
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
