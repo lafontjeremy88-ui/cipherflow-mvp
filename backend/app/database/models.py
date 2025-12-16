@@ -19,12 +19,13 @@ class EmailAnalysis(Base):
 
 class AppSettings(Base):
     __tablename__ = "app_settings"
+
     id = Column(Integer, primary_key=True, index=True)
     company_name = Column(String, default="CipherFlow")
-    agent_name = Column(String, default="Assistant IA")
-    tone = Column(String, default="professionnel et empathique")
-    signature = Column(String, default="L'équipe CipherFlow")
-    logo = Column(String, nullable=True)
+    agent_name = Column(String, default="Sophie")
+    tone = Column(String, default="pro")
+    signature = Column(String, default="L'équipe")
+    logo = Column(Text, nullable=True) 
 
 class User(Base):
     __tablename__ = "users"
