@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import base64
+import os, secrets
 import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
@@ -51,7 +52,10 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
-WATCHER_SECRET = "CLE_SECRETE_WATCHER_123"
+WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
+ENV = os.getenv("ENV", "dev").lower()
+if ENV in ("prod", "production") and not WATCHER_SECRET:
+    raise RuntimeError("WATCHER_SECRET manquant en production")
 
 # --- FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
@@ -170,7 +174,8 @@ def on_startup():
 # --- ROUTES ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
-    if x_watcher_secret != WATCHER_SECRET: raise HTTPException(status_code=401)
+    if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"

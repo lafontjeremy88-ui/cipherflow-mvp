@@ -3,10 +3,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+import os
 
 # --- CONFIGURATION DE SÉCURITÉ ---
 # Dans un vrai projet, mettez ces valeurs dans le fichier .env !
-SECRET_KEY = "CHANGE_MOI_POUR_UNE_CLE_SECRETE_TRES_LONGUE_ET_ALEATOIRE"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
+ENV = os.getenv("ENV", "dev").lower()
+if ENV in ("prod", "production") and not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY manquant en production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # Le badge est valide 24 heures
 
