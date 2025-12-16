@@ -2,6 +2,7 @@ from fpdf import FPDF
 from datetime import datetime
 import requests
 import os
+import base64  # <--- AJOUT INDISPENSABLE
 
 class PDF(FPDF):
     def __init__(self, header_data):
@@ -13,18 +14,36 @@ class PDF(FPDF):
         self.set_fill_color(99, 102, 241) 
         self.rect(0, 0, 210, 40, 'F')
         
-        # --- LOGO (Dynamique via URL) ---
-        logo_url = self.header_data.get('logo_url')
-        if logo_url:
+        # --- LOGO (INTELLIGENT : URL ou BASE64) ---
+        logo_data = self.header_data.get('logo_url')
+        image_path = None
+
+        if logo_data:
             try:
-                # Astuce : On télécharge l'image temporairement pour l'afficher
-                response = requests.get(logo_url)
-                if response.status_code == 200:
+                # CAS 1 : C'est une image stockée en Base64 (Upload PC)
+                if logo_data.startswith("data:image"):
+                    # On sépare l'en-tête "data:image/png;base64," du contenu réel
+                    header, encoded = logo_data.split(",", 1)
+                    decoded_data = base64.b64decode(encoded)
+                    
                     with open('temp_logo.png', 'wb') as f:
-                        f.write(response.content)
-                    # Affichage du logo (x=10, y=8, largeur=20)
-                    self.image('temp_logo.png', 10, 8, 20)
-            except:
+                        f.write(decoded_data)
+                    image_path = 'temp_logo.png'
+
+                # CAS 2 : C'est une URL Web (Lien internet)
+                elif logo_data.startswith("http"):
+                    response = requests.get(logo_data)
+                    if response.status_code == 200:
+                        with open('temp_logo.png', 'wb') as f:
+                            f.write(response.content)
+                        image_path = 'temp_logo.png'
+
+                # Si on a réussi à créer une image locale, on l'affiche
+                if image_path:
+                    self.image(image_path, 10, 8, 20)
+
+            except Exception as e:
+                print(f"Erreur Logo PDF: {e}")
                 pass # Si le logo échoue, on continue sans planter
 
         # --- NOM ENTREPRISE (Dynamique) ---
@@ -33,12 +52,13 @@ class PDF(FPDF):
         self.set_font('Helvetica', 'B', 24)
         self.set_text_color(255, 255, 255)
         # On décale le texte si y'a un logo (x=35), sinon au bord (x=10)
-        self.set_xy(35, 10)
+        offset_x = 35 if logo_data else 10
+        self.set_xy(offset_x, 10)
         self.cell(0, 15, clean_text(company_name), ln=1)
         
         # Sous-titre
         self.set_font('Helvetica', 'I', 10)
-        self.set_xy(35, 22)
+        self.set_xy(offset_x, 22)
         self.cell(0, 5, 'Genere automatiquement par IA', align='L')
         
         self.ln(20)
