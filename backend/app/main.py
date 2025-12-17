@@ -31,6 +31,7 @@ from app.database import models
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
+from starlette.middleware.sessions import SessionMiddleware
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -140,6 +141,20 @@ class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
 app = FastAPI(title="CipherFlow Inbox IA Pro")
+
+OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "").strip()
+ENV = os.getenv("ENV", "dev").lower()
+
+if ENV in ("prod", "production") and not OAUTH_STATE_SECRET:
+    raise RuntimeError("OAUTH_STATE_SECRET manquant en production")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=OAUTH_STATE_SECRET or "dev-secret-change-me",
+    same_site="lax",
+    https_only=(ENV in ("prod", "production")),
+)
+
 
 # 🔐 Google OAuth router (routes complètes déjà définies dans google_oauth.py)
 app.include_router(
