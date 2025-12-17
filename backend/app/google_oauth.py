@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .models import User
+from app.database.models import User
 from .auth import create_access_token, get_password_hash
 
 router = APIRouter()
