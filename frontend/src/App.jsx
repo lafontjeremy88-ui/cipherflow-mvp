@@ -26,6 +26,26 @@ function App() {
       setUserEmail(email);
       setShowRegister(false);
   };
+  
+   // ✅ Gestion du retour Google OAuth (sans react-router)
+  useEffect(() => {
+    if (window.location.pathname === "/oauth/callback") {
+      const params = new URLSearchParams(window.location.search);
+      const tokenFromGoogle = params.get("token");
+      const emailFromGoogle = params.get("email") || "";
+
+      if (tokenFromGoogle) {
+        // On réutilise ta fonction existante
+        handleAuthSuccess(tokenFromGoogle, emailFromGoogle);
+
+        // Nettoie l'URL (enlève token/email de la barre d'adresse)
+        window.history.replaceState({}, "", "/");
+      } else {
+        // Si pas de token, retour login
+        window.history.replaceState({}, "", "/");
+      }
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('cipherflow_token');
