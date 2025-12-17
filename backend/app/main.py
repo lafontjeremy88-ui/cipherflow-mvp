@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 
 # --- IMPORTS INTERNES ---
+from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
@@ -140,19 +141,24 @@ class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: 
 
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
+# 🔐 Google OAuth router (routes complètes déjà définies dans google_oauth.py)
+app.include_router(
+    google_oauth_router,
+    tags=["Google OAuth"]
+)
 # --- CORRECTION CORS : Liste explicite pour autoriser Vercel ---
 origins = [
-    "http://localhost:3000",
-    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",             # Votre Frontend
-    "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)" # Votre Backend
+  "http://localhost:5173",
+  "https://cipherflow-mvp.vercel.app",
+  "https://cipherflow.company",
 ]
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],     # <-- IMPORTANT : On autorise explicitement Vercel
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+  CORSMiddleware,
+  allow_origins=origins,
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
 )
 
 @app.on_event("startup")
