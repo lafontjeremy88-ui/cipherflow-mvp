@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 
 # --- IMPORTS INTERNES ---
-from app.google_oauth import router as google_oauth_router
+from google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
