@@ -1,34 +1,20 @@
-// frontend/src/pages/OAuthCallback.jsx
-import React, { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
-export default function OAuthCallback({ onLogin }) {
-  const location = useLocation();
+export default function OAuthCallback() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
+    const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
-    const email = params.get("email");
 
-    if (!token) {
-      navigate("/login");
-      return;
+    if (token) {
+      localStorage.setItem("token", token); // ou ton système actuel
+      navigate("/dashboard", { replace: true });
+    } else {
+      navigate("/login?error=oauth", { replace: true });
     }
+  }, [navigate]);
 
-    localStorage.setItem("cipherflow_token", token);
-
-    // si ton app utilise onLogin(token, email) comme ton Login.jsx
-    if (typeof onLogin === "function") {
-      onLogin(token, email || "");
-    }
-
-    navigate("/dashboard");
-  }, [location.search, navigate, onLogin]);
-
-  return (
-    <div style={{ padding: 24, color: "white" }}>
-      Connexion Google en cours...
-    </div>
-  );
+  return <div style={{ padding: 24 }}>Connexion en cours…</div>;
 }
