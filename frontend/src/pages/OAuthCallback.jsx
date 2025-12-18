@@ -1,36 +1,23 @@
-import React, { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function OAuthCallback() {
-  const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-
-    // ton backend peut renvoyer token=... et optionnellement user=...
+    const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
-    const user = params.get("user"); // optionnel
 
     if (!token) {
-      // pas de token => on retourne au login
-      navigate("/login", { replace: true });
+      navigate("/login?error=oauth_missing_token", { replace: true });
       return;
     }
 
-    localStorage.setItem("cf_token", token);
-    if (user) localStorage.setItem("cf_user", user);
+    localStorage.setItem("token", token);
 
-    // Nettoyage URL + redirection
+    // Nettoie l’URL (optionnel) + redirection dashboard
     navigate("/dashboard", { replace: true });
-  }, [location.search, navigate]);
+  }, [navigate]);
 
-  return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-      <div style={{ padding: 20 }}>
-        <h3>Connexion en cours...</h3>
-        <p>On finalise la session.</p>
-      </div>
-    </div>
-  );
+  return <div style={{ padding: 24 }}>Connexion en cours…</div>;
 }
