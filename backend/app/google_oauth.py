@@ -1,40 +1,26 @@
+# app/app/google_oauth.py
 import os
-import secrets
+from datetime import datetime, timedelta
+from typing import Optional
 from urllib.parse import urlencode
 
-import httpx
+import jwt
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from starlette.middleware.sessions import SessionMiddleware
 
-from .database import get_db
-from app.database.models import User
-from .auth import create_access_token, get_password_hash
+router = APIRouter(prefix="/auth/google", tags=["auth-google"])
 
-router = APIRouter()
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rstrip("/")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+JWT_ALGO = os.getenv("JWT_ALGO", "HS256")
+OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "change-me")  # doit être rempli en prod
 
-GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
-GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-GOOGLE_OAUTH_REDIRECT_URL = os.getenv("GOOGLE_OAUTH_REDIRECT_URL", "").strip()
-FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()  # ex: https://cipherflow.company
-
-# Optionnel : si ton front a une route différente
-FRONTEND_OAUTH_CALLBACK_PATH = os.getenv("FRONTEND_OAUTH_CALLBACK_PATH", "/oauth/callback").strip()
-
-ENV = os.getenv("ENV", "dev").lower()
-if ENV in ("prod", "production"):
-    missing = []
-    if not GOOGLE_OAUTH_CLIENT_ID:
-        missing.append("GOOGLE_OAUTH_CLIENT_ID")
-    if not GOOGLE_OAUTH_CLIENT_SECRET:
-        missing.append("GOOGLE_OAUTH_CLIENT_SECRET")
-    if not GOOGLE_OAUTH_REDIRECT_URL:
-        missing.append("GOOGLE_OAUTH_REDIRECT_URL")
-    if not FRONTEND_URL:
-        missing.append("FRONTEND_URL")
-    if missing:
-        raise RuntimeError(f"Variables Google OAuth manquantes: {', '.join(missing)}")
+# Scopes minimum
+SCOPES = "openid email profile"
 
 oauth = OAuth()
 oauth.register(
@@ -42,85 +28,83 @@ oauth.register(
     client_id=GOOGLE_OAUTH_CLIENT_ID,
     client_secret=GOOGLE_OAUTH_CLIENT_SECRET,
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
+    client_kwargs={"scope": SCOPES},
 )
 
-def _frontend_callback_url_with_fragment(token: str, email: str) -> str:
-    """
-    On met le token dans le fragment (#) pour éviter qu'il soit envoyé au serveur
-    via Referer / logs / proxies.
-    Exemple final:
-      https://front.tld/oauth/callback#token=...&email=...
-    """
-    base = FRONTEND_URL.rstrip("/") + FRONTEND_OAUTH_CALLBACK_PATH
-    frag = urlencode({"token": token, "email": email})
-    return f"{base}#{frag}"
 
-@router.get("/auth/google/login")
+def attach_oauth(app):
+    """
+    A appeler dans main.py:
+      from app.google_oauth import router, attach_oauth
+      attach_oauth(app)
+      app.include_router(router)
+    """
+    # Obligatoire pour stocker l'état OAuth (anti-CSRF)
+    # IMPORTANT: mets une valeur stable en env: OAUTH_STATE_SECRET
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=OAUTH_STATE_SECRET,
+        same_site="lax",
+        https_only=True,
+    )
+
+
+def create_jwt(email: str, sub: str, name: Optional[str] = None, picture: Optional[str] = None) -> str:
+    if not JWT_SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY manquant côté backend")
+
+    now = datetime.utcnow()
+    payload = {
+        "sub": sub,
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=7)).timestamp()),
+        "iss": "cipherflow",
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGO)
+
+
+@router.get("/login")
 async def google_login(request: Request):
-    # IMPORTANT : nécessite SessionMiddleware dans main.py
-    # Redirige l'utilisateur vers Google (consent screen)
-    if not GOOGLE_OAUTH_REDIRECT_URL:
-        raise HTTPException(status_code=500, detail="GOOGLE_OAUTH_REDIRECT_URL not configured")
-    return await oauth.google.authorize_redirect(request, redirect_uri=GOOGLE_OAUTH_REDIRECT_URL)
+    # IMPORTANT: l'URL de callback doit être celle côté Railway (celle déclarée dans Google Console)
+    backend_base = str(request.base_url).rstrip("/")
+    redirect_uri = f"{backend_base}/auth/google/callback"
 
-@router.get("/auth/google/callback")
-async def google_callback(request: Request, db: Session = Depends(get_db)):
-    """
-    1) Google renvoie ici avec ?code=...
-    2) On échange le code contre un access token
-    3) On récupère le userinfo (email)
-    4) Upsert en base
-    5) On génère ton JWT interne
-    6) Redirection vers le front avec JWT (dans #)
-    """
+    # Force une page Google “propre” quand nécessaire (optionnel)
+    # params = {"prompt": "select_account"}
+    # return await oauth.google.authorize_redirect(request, redirect_uri, **params)
+
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/callback")
+async def google_callback(request: Request):
     try:
         token = await oauth.google.authorize_access_token(request)
+        userinfo = token.get("userinfo")
+
+        # Fallback si userinfo pas présent
+        if not userinfo:
+            userinfo = await oauth.google.userinfo(token=token)
+
+        email = userinfo.get("email")
+        sub = userinfo.get("sub")
+        name = userinfo.get("name")
+        picture = userinfo.get("picture")
+
+        if not email or not sub:
+            raise HTTPException(status_code=400, detail="Google userinfo incomplet")
+
+        cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
+
+        # ✅ REDIRECTION PRO : route dédiée callback côté front
+        # -> ton front lit token=... puis stocke et redirige vers /dashboard
+        redirect_to = f"{FRONTEND_URL}/oauth/callback?{urlencode({'token': cf_token})}"
+        return RedirectResponse(url=redirect_to, status_code=302)
+
     except Exception as e:
-        # Authlib lève souvent une erreur si state/code invalides
-        raise HTTPException(status_code=400, detail=f"Google OAuth failed: {str(e)}")
-
-    # userinfo peut être déjà présent selon la config du provider
-    userinfo = token.get("userinfo")
-
-    if not userinfo:
-        # fallback standard OIDC userinfo endpoint
-        access_token = token.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No access_token returned by Google")
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://openidconnect.googleapis.com/v1/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if resp.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to fetch Google userinfo")
-            userinfo = resp.json()
-
-    email = (userinfo or {}).get("email")
-    if not email:
-        raise HTTPException(status_code=400, detail="Google account email not found")
-
-    # Upsert user
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        random_pw = secrets.token_urlsafe(24)
-        user = User(email=email, hashed_password=get_password_hash(random_pw))
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-    # JWT interne
-    jwt_token = create_access_token({"sub": user.email})
-
-    if not FRONTEND_URL:
-        raise HTTPException(status_code=500, detail="FRONTEND_URL not configured")
-
-    redirect_url = _frontend_callback_url_with_fragment(jwt_token, email)
-
-    response = RedirectResponse(url=redirect_url, status_code=302)
-    # Bonnes pratiques OAuth/JWT
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    return response
+        # En cas d'erreur, renvoie vers login avec un flag
+        err_url = f"{FRONTEND_URL}/?oauth_error=1"
+        return RedirectResponse(url=err_url, status_code=302)

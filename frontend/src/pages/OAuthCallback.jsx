@@ -1,23 +1,41 @@
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
-export default function OAuthCallback() {
+const LS_TOKEN = "cipherflow_token";
+const LS_EMAIL = "cipherflow_email";
+
+export default function OAuthCallback({ onSuccess }) {
+  const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(location.search);
+
     const token = params.get("token");
+    const email = params.get("email"); // backend peut envoyer email
 
     if (!token) {
-      navigate("/login?error=oauth_missing_token", { replace: true });
+      navigate("/", { replace: true });
       return;
     }
 
-    localStorage.setItem("token", token);
+    localStorage.setItem(LS_TOKEN, token);
+    if (email) localStorage.setItem(LS_EMAIL, email);
 
-    // Nettoie l’URL (optionnel) + redirection dashboard
-    navigate("/dashboard", { replace: true });
-  }, [navigate]);
+    if (typeof onSuccess === "function") {
+      onSuccess(token, email);
+    }
 
-  return <div style={{ padding: 24 }}>Connexion en cours…</div>;
+    // Nettoyage + retour app
+    navigate("/", { replace: true });
+  }, [location.search, navigate, onSuccess]);
+
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ padding: 20 }}>
+        <h3>Connexion en cours...</h3>
+        <p>On finalise la session.</p>
+      </div>
+    </div>
+  );
 }
