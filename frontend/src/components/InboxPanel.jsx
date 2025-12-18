@@ -1,174 +1,85 @@
-import React, { useState } from "react";
-import { RefreshCw, ArrowRight, Mail, AlertCircle } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { apiFetch } from "../services/api";
+import { RefreshCw, Loader2, Inbox, Mail, AlertCircle } from "lucide-react";
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app"; // ⚠️ Mets ici ton URL d'API (ex: "http://localhost:8000")
-
-const InboxPanel = ({ token, onSelectEmail }) => {
-  const [emails, setEmails] = useState([]);
+const InboxPanel = ({ token }) => {
   const [loading, setLoading] = useState(false);
+  const [emails, setEmails] = useState([]);
   const [error, setError] = useState("");
 
-  const fetchEmails = async () => {
-    if (!token) {
-      setError("Token manquant, merci de vous reconnecter.");
-      return;
-    }
-
+  const refreshInbox = async () => {
     setLoading(true);
     setError("");
 
     try {
-      const res = await fetch(`${API_BASE}/inbox/refresh`, {
-        method: "GET", // ou "POST" selon ton backend
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
+      const res = await apiFetch("/inbox/refresh", { method: "GET" });
 
       if (!res.ok) {
-        throw new Error(`Erreur serveur (${res.status})`);
+        const text = await res.text();
+        throw new Error(text || "Erreur refresh inbox");
       }
 
       const data = await res.json();
-      // On essaie de s'adapter à plusieurs formats possibles
-      const list = Array.isArray(data) ? data : data.emails || [];
-      setEmails(list);
-    } catch (err) {
-      console.error(err);
-      setError(
-        err.message || "Erreur lors du rafraîchissement de la boîte mail."
-      );
+      setEmails(data || []);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Erreur inconnue");
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    // Optionnel : auto-refresh au chargement
+    // refreshInbox();
+  }, []);
+
   return (
-    <div style={{ maxWidth: "1000px" }}>
-      {/* Header */}
-      <div
+    <div style={{ padding: 20, color: "white" }}>
+      <h2 style={{ fontSize: 26, fontWeight: 900, marginBottom: 12 }}>
+        <Inbox size={20} style={{ marginRight: 8 }} />
+        Inbox
+      </h2>
+
+      <button
+        onClick={refreshInbox}
+        disabled={loading}
         style={{
-          marginBottom: "2rem",
-          display: "flex",
-          justifyContent: "space-between",
+          background: loading ? "#374151" : "#3b82f6",
+          border: "none",
+          color: "white",
+          padding: "10px 14px",
+          borderRadius: 10,
+          cursor: loading ? "not-allowed" : "pointer",
+          display: "inline-flex",
           alignItems: "center",
+          gap: 8
         }}
       >
-        <div>
-          <h2
-            style={{
-              fontSize: "1.5rem",
-              marginBottom: "0.5rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
-            <Mail color="#6366f1" />
-            Boîte de Réception
-          </h2>
-          <p style={{ color: "#94a3b8" }}>
-            Connecté à : cipherflow.services@gmail.com
-          </p>
-        </div>
+        {loading ? <Loader2 size={16} /> : <RefreshCw size={16} />}
+        {loading ? "Actualisation..." : "Rafraîchir"}
+      </button>
 
-        <button
-          onClick={fetchEmails}
-          disabled={loading}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "0.5rem 1rem",
-            borderRadius: "999px",
-            border: "none",
-            backgroundColor: "#6366f1",
-            color: "white",
-            cursor: loading ? "not-allowed" : "pointer",
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          <RefreshCw size={18} className={loading ? "spin" : ""} />
-          {loading ? "Rafraîchissement..." : "Rafraîchir"}
-        </button>
-      </div>
-
-      {/* Message d'erreur */}
       {error && (
-        <div
-          style={{
-            marginBottom: "1rem",
-            padding: "0.75rem 1rem",
-            borderRadius: "0.5rem",
-            backgroundColor: "#fee2e2",
-            color: "#b91c1c",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-          }}
-        >
-          <AlertCircle size={18} />
-          <span>{error}</span>
+        <div style={{ marginTop: 12, color: "#fca5a5", display: "flex", gap: 8, alignItems: "center" }}>
+          <AlertCircle size={16} />
+          {error}
         </div>
       )}
 
-      {/* Message vide */}
-      {emails.length === 0 && !loading && !error && (
-        <p style={{ color: "#64748b" }}>
-          Aucun email chargé pour le moment. Clique sur « Rafraîchir ».
-        </p>
-      )}
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+        {emails.length === 0 && <div style={{ opacity: 0.8 }}>Aucun email.</div>}
 
-      {/* Liste des emails */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-        {emails.map((email) => (
-          <button
-            key={email.id || email.message_id}
-            onClick={() => onSelectEmail && onSelectEmail(email)}
-            style={{
-              textAlign: "left",
-              padding: "0.75rem 1rem",
-              borderRadius: "0.75rem",
-              border: "1px solid #e2e8f0",
-              backgroundColor: "white",
-              cursor: "pointer",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "1rem",
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontWeight: 600,
-                  marginBottom: "0.25rem",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  maxWidth: "520px",
-                }}
-              >
-                {email.subject || "(Sans objet)"}
-              </div>
-              <div
-                style={{
-                  fontSize: "0.85rem",
-                  color: "#64748b",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  maxWidth: "520px",
-                }}
-              >
-                {(email.from || email.sender || "Expéditeur inconnu") +
-                  " — " +
-                  (email.snippet || email.preview || "")}
-              </div>
+        {emails.map((m) => (
+          <div key={m.id} style={{ background: "#111827", padding: 14, borderRadius: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Mail size={16} />
+              <div style={{ fontWeight: 900 }}>{m.subject || "Sans sujet"}</div>
             </div>
-            <ArrowRight size={18} />
-          </button>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>{m.from_email || ""}</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>{m.date || m.created_at || ""}</div>
+            {m.snippet && <div style={{ marginTop: 8, opacity: 0.9 }}>{m.snippet}</div>}
+          </div>
         ))}
       </div>
     </div>
