@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import base64
-import secrets
+import os, secrets
 import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
@@ -107,34 +107,14 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
 # --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
-
-    if not JWT_SECRET_KEY:
-        print("❌ JWT_SECRET_KEY manquant dans Railway Variables")
-        raise HTTPException(status_code=401, detail="Server misconfigured")
-
     try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET_KEY,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except JWTError as e:
-        print("❌ JWT decode error:", str(e))
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    # Google OAuth met souvent l'email dans "email", sinon parfois dans "sub"
-    email = payload.get("email") or payload.get("sub")
-    if not email:
-        raise HTTPException(status_code=401, detail="Token missing email")
-
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None: raise HTTPException(status_code=401)
+    except JWTError: raise HTTPException(status_code=401)
     user = db.query(User).filter(User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
+    if user is None: raise HTTPException(status_code=401)
     return user
-
 
 # --- MODELES API ---
 class LoginRequest(BaseModel): email: str; password: str
