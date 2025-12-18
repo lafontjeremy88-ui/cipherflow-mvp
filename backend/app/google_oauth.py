@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
-import jwt
+from jose import jwt
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from authlib.integrations.starlette_client import OAuth
