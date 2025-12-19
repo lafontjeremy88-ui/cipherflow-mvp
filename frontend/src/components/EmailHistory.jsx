@@ -71,9 +71,10 @@ const EmailHistory = ({ initialId }) => {
           to_email,
           subject,
           body,
-          email_id: selectedEmail.id, // ✅ IMPORTANT
-        }),
-      });
+          email_id: item.id // OU analysisId selon le nom exact
+       })
+    });
+
 
       if (!res.ok) {
         const t = await res.text();
