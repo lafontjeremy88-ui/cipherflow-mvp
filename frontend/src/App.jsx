@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useEffect } from "react";
 import {
   LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
   Settings, LogOut, FileText, User, FolderSearch, PieChart
@@ -112,6 +111,10 @@ function MainApp({ token, userEmail, onLogout }) {
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
   const [analyse, setAnalyse] = useState(null);
+
+  // ✅ NOUVEAU : on stocke l'id renvoyé par /email/process
+  const [analysisId, setAnalysisId] = useState(null);
+
   const [replySubject, setReplySubject] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -122,14 +125,21 @@ function MainApp({ token, userEmail, onLogout }) {
   useEffect(() => {
     if (activeTab !== "analyze") {
       setAnalyse(null);
+      setAnalysisId(null); // ✅ reset aussi l'id
       setInfoMessage("");
       setErrorMessage("");
     }
   }, [activeTab]);
 
   const authFetch = async (url, options = {}) => {
-    const headers = { "Content-Type": "application/json", ...options.headers, Authorization: `Bearer ${token}` };
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+
     const res = await fetch(url, { ...options, headers });
+
     if (res.status === 401) {
       onLogout();
       throw new Error("Session expirée");
@@ -141,13 +151,26 @@ function MainApp({ token, userEmail, onLogout }) {
     setErrorMessage("");
     setInfoMessage("");
     setIsAnalyzing(true);
+
     try {
       const res = await authFetch(`${API_BASE}/email/process`, {
         method: "POST",
-        body: JSON.stringify({ from_email: fromEmail, subject, content, send_email: false }),
+        body: JSON.stringify({
+          from_email: fromEmail,
+          subject,
+          content,
+          send_email: false,
+        }),
       });
+
       if (!res.ok) throw new Error("Erreur serveur");
+
       const data = await res.json();
+
+      // ✅ IMPORTANT : on récupère l'id peu importe le nom exact
+      const id = data.id ?? data.email_id ?? data.analysis_id ?? null;
+      setAnalysisId(id);
+
       setAnalyse(data.analyse);
       setReplySubject(data.reponse?.subject);
       setReplyBody(data.reponse?.reply);
@@ -162,14 +185,25 @@ function MainApp({ token, userEmail, onLogout }) {
   const handleSendEmail = async () => {
     setIsSending(true);
     setErrorMessage("");
+
     try {
       const res = await authFetch(`${API_BASE}/email/send`, {
         method: "POST",
-        body: JSON.stringify({ to_email: fromEmail, subject: replySubject, body: replyBody }),
+        body: JSON.stringify({
+          to_email: fromEmail,
+          subject: replySubject,
+          body: replyBody,
+
+          // ✅ NOUVEAU : c'est ça qui permet au backend de marquer "Envoyé" dans l’historique
+          email_id: analysisId,
+        }),
       });
+
       if (!res.ok) throw new Error("Erreur envoi");
+
       setInfoMessage("Email envoyé !");
       setAnalyse(null);
+      setAnalysisId(null); // ✅ reset
       setContent("");
     } catch (err) {
       setErrorMessage(err.message);
@@ -226,19 +260,32 @@ function MainApp({ token, userEmail, onLogout }) {
           </h1>
         </header>
 
-        {errorMessage && <div style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#f87171", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}><AlertCircle size={20} /> {errorMessage}</div>}
-        {infoMessage && <div style={{ backgroundColor: "rgba(16,185,129,0.2)", color: "#34d399", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}><CheckCircle size={20} /> {infoMessage}</div>}
+        {errorMessage && (
+          <div style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#f87171", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}>
+            <AlertCircle size={20} /> {errorMessage}
+          </div>
+        )}
+
+        {infoMessage && (
+          <div style={{ backgroundColor: "rgba(16,185,129,0.2)", color: "#34d399", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}>
+            <CheckCircle size={20} /> {infoMessage}
+          </div>
+        )}
 
         {activeTab === "dashboard" && <DashboardPage token={token} onNavigate={handleNavigation} />}
 
         {activeTab === "analyze" && (
           <div className="dashboard-grid">
             <div className="card">
-              <h2 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}><Mail size={20} color="var(--accent)" /> Email du Client</h2>
+              <h2 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}>
+                <Mail size={20} color="var(--accent)" /> Email du Client
+              </h2>
               <div className="form-group"><label>Expéditeur</label><input type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} /></div>
               <div className="form-group"><label>Sujet</label><input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
               <div className="form-group"><label>Contenu</label><textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} /></div>
-              <button className="btn btn-primary" onClick={handleAnalyse} disabled={isAnalyzing}>{isAnalyzing ? "Analyse..." : "Analyser"} <Zap size={18} /></button>
+              <button className="btn btn-primary" onClick={handleAnalyse} disabled={isAnalyzing}>
+                {isAnalyzing ? "Analyse..." : "Analyser"} <Zap size={18} />
+              </button>
             </div>
 
             {analyse && (
@@ -257,7 +304,9 @@ function MainApp({ token, userEmail, onLogout }) {
                   <div className="form-group"><label>Objet</label><input type="text" value={replySubject} onChange={(e) => setReplySubject(e.target.value)} /></div>
                   <div className="form-group"><label>Corps</label><textarea rows={10} value={replyBody} onChange={(e) => setReplyBody(e.target.value)} /></div>
                   <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <button className="btn btn-success" onClick={handleSendEmail} disabled={isSending}>{isSending ? "Envoi..." : "Envoyer"} <Send size={18} /></button>
+                    <button className="btn btn-success" onClick={handleSendEmail} disabled={isSending}>
+                      {isSending ? "Envoi..." : "Envoyer"} <Send size={18} />
+                    </button>
                   </div>
                 </div>
               </>

@@ -7,13 +7,13 @@ import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
 import shutil
-
+from sqlalchemy import text as sql_text
 # --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
 
 import resend 
 from jose import jwt, JWTError 
-
+from sqlalchemy import text as sql_text
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
@@ -145,7 +145,7 @@ class EmailReplyRequest(BaseModel): from_email: EmailStr; subject: str; content:
 class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Optional[str] = None
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
-class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str
+class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str; email_id: Optional[int] = None
 
 class SettingsRequest(BaseModel): 
     company_name: str
@@ -213,6 +213,16 @@ def on_startup():
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
         print("✅ Admin créé.")
+            # --- Mini-migration : ajoute send_status si absent ---
+    try:
+        table_name = EmailAnalysis.__tablename__
+        with engine.begin() as conn:
+            conn.execute(
+                sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\'')
+            )
+    except Exception as e:
+        print("⚠️ Migration send_status ignorée:", e)
+
 
 # --- ROUTES ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
@@ -360,10 +370,26 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         raise HTTPException(500, detail=str(e))
 
 @app.post("/email/send")
-async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
+async def send_mail_ep(
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 1) envoi
     send_email_via_resend(req.to_email, req.subject, req.body)
-    return {"status": "sent"}
 
+    # 2) si on a un email_id -> on marque comme envoyé
+    if req.email_id is not None:
+        email_row = db.query(EmailAnalysis).filter(EmailAnalysis.id == req.email_id).first()
+        if email_row:
+            # colonne send_status (si elle existe)
+            try:
+                email_row.send_status = "sent"
+                db.commit()
+            except Exception:
+                db.rollback()
+
+    return {"status": "sent"}
 # --- GESTION FICHIERS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
