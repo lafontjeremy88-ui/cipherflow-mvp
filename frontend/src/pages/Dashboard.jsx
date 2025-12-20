@@ -81,25 +81,26 @@ const Dashboard = ({ token, onNavigate }) => {
 
       <div style={{ ...cardStyle, gridColumn: 'span 6', minHeight: 300 }}>
         <div style={titleStyle}><PieIcon size={18} style={{ marginRight: 8 }} />Catégories d’emails</div>
-        <div style={{ width: '100%', height: 250 }}>
-          <ResponsiveContainer>
-            <PieChart>
-              <Pie
-                data={email_categories}
-                dataKey="count"
-                nameKey="category"
-                outerRadius={90}
-                label
-              >
-                {email_categories.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+        <div style={{ width: "100%", height: 250, minHeight: 250 }}>
+  <ResponsiveContainer width="100%" height="100%">
+    <PieChart>
+      <Pie
+        data={email_categories}
+        dataKey="count"
+        nameKey="category"
+        outerRadius={90}
+        label
+      >
+        {(email_categories || []).map((entry, index) => (
+          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+        ))}
+      </Pie>
+      <Tooltip />
+      <Legend />
+    </PieChart>
+  </ResponsiveContainer>
+</div>
+
       </div>
 
       <div style={{ ...cardStyle, gridColumn: 'span 6', minHeight: 300 }}>
