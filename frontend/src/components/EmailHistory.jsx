@@ -68,12 +68,13 @@ const EmailHistory = ({ initialId }) => {
       const res = await apiFetch("/email/send", {
         method: "POST",
         body: JSON.stringify({
-          to_email,
-          subject,
-          body,
-          email_id: item.id // OU analysisId selon le nom exact
-       })
+        to_email,
+        subject,
+        body,
+        email_id: selectedEmail.id ?? selectedEmail.email_id ?? null,// ✅ IMPORTANT
+      }),
     });
+
 
 
       if (!res.ok) {

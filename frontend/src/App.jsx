@@ -185,6 +185,7 @@ function MainApp({ token, userEmail, onLogout }) {
   const handleSendEmail = async () => {
     setIsSending(true);
     setErrorMessage("");
+    setInfoMessage("");
 
     try {
       const res = await authFetch(`${API_BASE}/email/send`, {
@@ -195,13 +196,13 @@ function MainApp({ token, userEmail, onLogout }) {
           body: replyBody,
 
           // ✅ NOUVEAU : c'est ça qui permet au backend de marquer "Envoyé" dans l’historique
-          email_id: analysisId,
+          email_id: analysisId ?? null,
         }),
       });
 
       if (!res.ok) throw new Error("Erreur envoi");
-
-      setInfoMessage("Email envoyé !");
+      const data = await res.json();
+      setInfoMessage(data?.status === "sent" ? "Email envoyé ✅" : "Email envoyé");
       setAnalyse(null);
       setAnalysisId(null); // ✅ reset
       setContent("");
