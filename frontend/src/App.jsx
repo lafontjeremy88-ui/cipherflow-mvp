@@ -12,7 +12,7 @@ import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
 import DashboardPage from "./pages/Dashboard";
-import OAuthCallback from "./OAuthCallback"; // <-- IMPORTANT
+import OAuthCallback from "./pages/OAuthCallback";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
