@@ -144,7 +144,7 @@ class EmailAnalyseResponse(BaseModel): is_devis: bool; category: str; urgency: s
 class EmailReplyRequest(BaseModel): from_email: EmailStr; subject: str; content: str; summary: Optional[str] = None; category: Optional[str] = None; urgency: Optional[str] = None
 class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Optional[str] = None
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
-class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
+class EmailProcessResponse(BaseModel):analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; email_id: Optional[int] = None; error: Optional[str] = None
 class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str; email_id: Optional[int] = None
 
 class SettingsRequest(BaseModel): 
@@ -359,12 +359,12 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
         reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
-        db.add(new); db.commit()
+        db.add(new); db.commit(); db.refresh(new)
         sent, err = "not_sent", None
         if req.send_email:
             send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
-        return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+        return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new.id, error=err)
     except Exception as e:
         print(f"ERREUR PROCESS EMAIL: {e}")
         raise HTTPException(500, detail=str(e))
