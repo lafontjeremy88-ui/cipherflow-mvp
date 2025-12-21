@@ -49,7 +49,7 @@ try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
-
+###############################################
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
