@@ -10,7 +10,6 @@ import shutil
 from sqlalchemy import text as sql_text
 # --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
-
 import resend 
 from jose import jwt, JWTError 
 from sqlalchemy import text as sql_text
@@ -25,7 +24,6 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from fastapi import Depends
 from app.security import get_current_user
-
 # --- IMPORTS INTERNES ---
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
@@ -34,40 +32,35 @@ from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileA
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
 from starlette.middleware.sessions import SessionMiddleware
-
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
-
 logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
-
 # --- CONFIGURATION GEMINI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
+
 ###############################################
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
-
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 if ENV in ("prod", "production") and not WATCHER_SECRET:
     raise RuntimeError("WATCHER_SECRET manquant en production")
-
 # --- FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY: return
     try:
         resend.Emails.send({"from": "contact@cipherflow.company", "to": [to_email], "subject": subject, "html": body.replace("\n", "<br>")})
     except Exception as e: print(f"Erreur Resend: {e}")
-
 async def call_gemini(prompt: str) -> str:
     try:
         model = genai.GenerativeModel(MODEL_NAME)
@@ -76,7 +69,6 @@ async def call_gemini(prompt: str) -> str:
     except Exception as e:
         print(f"ERREUR GEMINI: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur IA : {str(e)}")
-
 def extract_json_from_text(text: str):
     raw = text.strip()
     if "```" in raw:
@@ -87,7 +79,6 @@ def extract_json_from_text(text: str):
     if start != -1 and end != -1: raw = raw[start:end+1]
     try: return json.loads(raw)
     except: return None
-
 async def analyze_email_logic(req: 'EmailAnalyseRequest', company_name: str) -> 'EmailAnalyseResponse':
     prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
     raw = await call_gemini(prompt)
@@ -97,22 +88,18 @@ async def analyze_email_logic(req: 'EmailAnalyseRequest', company_name: str) -> 
         urgency=str(data.get("urgency", "moyenne")), summary=str(data.get("summary", req.content[:100])),
         suggested_title=str(data.get("suggested_title", "Analyse")), raw_ai_text=raw
     )
-
 async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone: str, signature: str) -> 'EmailReplyResponse':
     prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
-
 # --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
-
     if not JWT_SECRET_KEY:
         print("❌ JWT_SECRET_KEY manquant dans Railway Variables")
         raise HTTPException(status_code=401, detail="Server misconfigured")
-
     try:
         payload = jwt.decode(
             token,
@@ -123,19 +110,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError as e:
         print("❌ JWT decode error:", str(e))
         raise HTTPException(status_code=401, detail="Invalid token")
-
     # Google OAuth met souvent l'email dans "email", sinon parfois dans "sub"
     email = payload.get("email") or payload.get("sub")
     if not email:
         raise HTTPException(status_code=401, detail="Token missing email")
-
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-
     return user
-
-
 # --- MODELES API ---
 class LoginRequest(BaseModel): email: str; password: str
 class TokenResponse(BaseModel): access_token: str; token_type: str; user_email: str
@@ -146,38 +128,29 @@ class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Opti
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel):analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; email_id: Optional[int] = None; error: Optional[str] = None
 class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str; email_id: Optional[int] = None
-
 class SettingsRequest(BaseModel): 
     company_name: str
     agent_name: str
     tone: str
     signature: str
     logo: Optional[str] = None 
-
 class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
-
 # TYPE PRIX (float)
 class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
-
 app = FastAPI(title="CipherFlow Inbox IA Pro")
-
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
-
 if ENV in ("prod", "production") and not OAUTH_STATE_SECRET:
     raise RuntimeError("OAUTH_STATE_SECRET manquant en production")
-
 app.add_middleware(
     SessionMiddleware,
     secret_key=OAUTH_STATE_SECRET or "dev-secret-change-me",
     same_site="lax",
     https_only=(ENV in ("prod", "production")),
 )
-
-
 # 🔐 Google OAuth router (routes complètes déjà définies dans google_oauth.py)
 app.include_router(
     google_oauth_router,
@@ -189,7 +162,6 @@ origins = [
   "https://cipherflow-mvp.vercel.app",
   "https://cipherflow.company",
 ]
-
 app.add_middleware(
   CORSMiddleware,
   allow_origins=origins,
@@ -197,7 +169,6 @@ app.add_middleware(
   allow_methods=["*"],
   allow_headers=["*"],
 )
-
 @app.on_event("startup")
 def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
@@ -222,8 +193,6 @@ def on_startup():
             )
     except Exception as e:
         print("⚠️ Migration send_status ignorée:", e)
-
-
 # --- ROUTES ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
@@ -244,20 +213,17 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
         sent = "sent"
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
-
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == req.email).first(): raise HTTPException(status_code=400, detail="Email pris")
     new_user = User(email=req.email, hashed_password=get_password_hash(req.password))
     db.add(new_user); db.commit(); db.refresh(new_user)
     return {"access_token": create_access_token({"sub": new_user.email}), "token_type": "bearer", "user_email": new_user.email}
-
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password): raise HTTPException(status_code=400)
     return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
-
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     total = db.query(EmailAnalysis).count()
@@ -267,23 +233,19 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
     distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
     recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
     recent_activity = [{"id": r.id, "subject": r.subject[:40] + "..." if len(r.subject) > 40 else r.subject, "category": r.category, "urgency": r.urgency, "date": r.created_at.strftime("%d/%m %H:%M")} for r in recents]
-
     return {
         "kpis": {"total_emails": total, "high_urgency": high_urgency, "invoices": invoices_generated},
         "charts": {"distribution": distribution_data},
         "recents": recent_activity
     }
-
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).all()
-
 @app.get("/settings")
 async def get_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     if not s: s = AppSettings(); db.add(s); db.commit(); db.refresh(s)
     return s
-
 @app.post("/settings")
 async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first() or AppSettings()
@@ -299,14 +261,12 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
         
     db.commit()
     return {"status": "updated"}
-
 # --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
 @app.post("/settings/upload-logo")
 async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # 1. Vérification du type
     if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
         raise HTTPException(400, detail="Format non supporté. Utilisez PNG ou JPEG.")
-
     # 2. Lecture du fichier lourd
     contents = await file.read()
     
@@ -345,12 +305,9 @@ async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db
         db.commit()
         
         return {"status": "logo_updated", "size_before": len(contents), "size_after": len(optimized_contents)}
-
     except Exception as e:
         print(f"Erreur Resize Image: {e}")
         raise HTTPException(500, detail="Erreur lors du traitement de l'image.")
-
-
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
@@ -368,7 +325,6 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
     except Exception as e:
         print(f"ERREUR PROCESS EMAIL: {e}")
         raise HTTPException(500, detail=str(e))
-
 @app.post("/email/send")
 async def send_mail_ep(
     req: SendEmailRequest,
@@ -377,7 +333,6 @@ async def send_mail_ep(
 ):
     # 1) envoi
     send_email_via_resend(req.to_email, req.subject, req.body)
-
     # 2) si on a un email_id -> on marque comme envoyé
     if req.email_id is not None:
         email_row = db.query(EmailAnalysis).filter(EmailAnalysis.id == req.email_id).first()
@@ -388,7 +343,6 @@ async def send_mail_ep(
                 db.commit()
             except Exception:
                 db.rollback()
-
     return {"status": "sent"}
 # --- GESTION FICHIERS ---
 @app.post("/api/analyze-file")
@@ -429,11 +383,9 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
             model_vision = genai.GenerativeModel("gemini-pro-vision")
         except: pass
         raise HTTPException(500, detail=str(e))
-
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
-
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
@@ -442,7 +394,6 @@ async def view_file(file_id: int, db: Session = Depends(get_db)):
     file_path = f"uploads/{db_file.filename}"
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="inline")
-
 @app.get("/api/files/download/{file_id}")
 async def download_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
@@ -451,7 +402,6 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     file_path = f"uploads/{db_file.filename}"
     if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
-
 # --- FACTURATION (CORRIGÉE : LOGO + PRIX + CORS) ---
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -473,11 +423,9 @@ async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_us
     db.commit()
     
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"})
-
 @app.get("/api/invoices")
 async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(Invoice).filter(Invoice.owner_id == current_user.id).order_by(Invoice.id.desc()).all()
-
 @app.get("/api/invoices/{ref}/pdf")
 async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
@@ -488,7 +436,6 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
     # CORRECTION CRITIQUE : URL PROPRE ICI AUSSI
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
-
     data = {
         "client_name": inv.client_name, 
         "invoice_number": inv.reference, 
