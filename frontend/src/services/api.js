@@ -9,22 +9,20 @@ function getToken() {
 }
 
 export async function apiFetch(path, options = {}) {
-  const token = getToken();
+  const token = localStorage.getItem("token");
+
+  const isFormData =
+    options.body instanceof FormData ||
+    (typeof FormData !== "undefined" && options.body && options.body.constructor?.name === "FormData");
 
   const headers = {
     ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    // IMPORTANT:
+    // On ne met PAS Content-Type si c'est un FormData.
+    // Le navigateur le mettra tout seul avec le boundary.
+    ...(!isFormData ? { "Content-Type": "application/json" } : {}),
   };
-
-  const isFormData = options.body instanceof FormData;
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  // Ne force pas Content-Type si FormData (le navigateur gère le boundary)
-  if (!isFormData && !headers["Content-Type"]) {
-    headers["Content-Type"] = "application/json";
-  }
 
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -32,9 +30,9 @@ export async function apiFetch(path, options = {}) {
   });
 
   if (response.status === 401) {
-    localStorage.removeItem("cipherflow_token");
     localStorage.removeItem("token");
     window.location.href = "/login";
+    return;
   }
 
   return response;
