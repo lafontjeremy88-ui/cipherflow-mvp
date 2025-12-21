@@ -273,7 +273,13 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {activeTab === "dashboard" && <DashboardPage token={token} onNavigate={handleNavigation} />}
+        {activeTab === "dashboard" && (
+           <DashboardPage 
+           token={token} 
+           onNavigate={handleNavigation} 
+           authFetch={authFetch} 
+          />
+       )}
 
         {activeTab === "analyze" && (
           <div className="dashboard-grid">
