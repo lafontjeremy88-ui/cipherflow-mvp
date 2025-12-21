@@ -2,18 +2,18 @@ import os
 import json
 import logging
 import base64
-import os, secrets
+import secrets
 import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
 import shutil
-
+from sqlalchemy import text as sql_text
 # --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
 
 import resend 
 from jose import jwt, JWTError 
-
+from sqlalchemy import text as sql_text
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,7 +49,7 @@ try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
-
+###############################################
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -107,14 +107,34 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
 # --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
+
+    if not JWT_SECRET_KEY:
+        print("❌ JWT_SECRET_KEY manquant dans Railway Variables")
+        raise HTTPException(status_code=401, detail="Server misconfigured")
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None: raise HTTPException(status_code=401)
-    except JWTError: raise HTTPException(status_code=401)
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+    except JWTError as e:
+        print("❌ JWT decode error:", str(e))
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Google OAuth met souvent l'email dans "email", sinon parfois dans "sub"
+    email = payload.get("email") or payload.get("sub")
+    if not email:
+        raise HTTPException(status_code=401, detail="Token missing email")
+
     user = db.query(User).filter(User.email == email).first()
-    if user is None: raise HTTPException(status_code=401)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
     return user
+
 
 # --- MODELES API ---
 class LoginRequest(BaseModel): email: str; password: str
@@ -124,8 +144,8 @@ class EmailAnalyseResponse(BaseModel): is_devis: bool; category: str; urgency: s
 class EmailReplyRequest(BaseModel): from_email: EmailStr; subject: str; content: str; summary: Optional[str] = None; category: Optional[str] = None; urgency: Optional[str] = None
 class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Optional[str] = None
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
-class EmailProcessResponse(BaseModel): analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; error: Optional[str] = None
-class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str
+class EmailProcessResponse(BaseModel):analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; email_id: Optional[int] = None; error: Optional[str] = None
+class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str; email_id: Optional[int] = None
 
 class SettingsRequest(BaseModel): 
     company_name: str
@@ -193,6 +213,16 @@ def on_startup():
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
         print("✅ Admin créé.")
+            # --- Mini-migration : ajoute send_status si absent ---
+    try:
+        table_name = EmailAnalysis.__tablename__
+        with engine.begin() as conn:
+            conn.execute(
+                sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\'')
+            )
+    except Exception as e:
+        print("⚠️ Migration send_status ignorée:", e)
+
 
 # --- ROUTES ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
@@ -329,21 +359,37 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
         reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
-        db.add(new); db.commit()
+        db.add(new); db.commit(); db.refresh(new)
         sent, err = "not_sent", None
         if req.send_email:
             send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
             sent = "sent"
-        return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
+        return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new.id, error=err)
     except Exception as e:
         print(f"ERREUR PROCESS EMAIL: {e}")
         raise HTTPException(500, detail=str(e))
 
 @app.post("/email/send")
-async def send_mail_ep(req: SendEmailRequest, current_user: User = Depends(get_current_user)):
+async def send_mail_ep(
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 1) envoi
     send_email_via_resend(req.to_email, req.subject, req.body)
-    return {"status": "sent"}
 
+    # 2) si on a un email_id -> on marque comme envoyé
+    if req.email_id is not None:
+        email_row = db.query(EmailAnalysis).filter(EmailAnalysis.id == req.email_id).first()
+        if email_row:
+            # colonne send_status (si elle existe)
+            try:
+                email_row.send_status = "sent"
+                db.commit()
+            except Exception:
+                db.rollback()
+
+    return {"status": "sent"}
 # --- GESTION FICHIERS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

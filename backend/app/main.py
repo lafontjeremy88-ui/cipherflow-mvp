@@ -24,7 +24,28 @@ from sqlalchemy import func
 from dotenv import load_dotenv
 import google.generativeai as genai
 from fastapi import Depends
-from app.security import get_current_user
+from app.security import get_current_user as get_user_original
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    db: Session = Depends(get_db)
+):
+    # Si on est sur Swagger et qu'on a mis un token dans le cadenas
+    if credentials:
+        token = credentials.credentials
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("email") or payload.get("sub")
+            user = db.query(User).filter(User.email == email).first()
+            if user:
+                return user
+        except Exception:
+            pass # Si le décodage échoue, on laisse l'ancienne méthode tenter sa chance
+
+    # Par défaut, on utilise ton ancienne méthode qui marche sur le frontend
+    # Note: On passe None car Depends sera géré par FastAPI
+    return await get_user_original()
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # --- IMPORTS INTERNES ---
 from app.google_oauth import router as google_oauth_router
@@ -35,6 +56,7 @@ from app.auth import get_password_hash, verify_password, create_access_token, AL
 from app.pdf_service import generate_pdf_bytes 
 from starlette.middleware.sessions import SessionMiddleware
 
+security_bearer = HTTPBearer()
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
