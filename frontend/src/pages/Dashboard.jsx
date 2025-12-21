@@ -1,19 +1,28 @@
-import React, { useEffect, useState } from 'react';
-import { apiFetch } from "../services/api";
-import { Users, AlertTriangle, FileText, PieChart as PieIcon, Activity } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import React, { useEffect, useState } from "react";
+import { Users, AlertTriangle, FileText, PieChart as PieIcon, Activity } from "lucide-react";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { apiFetch } from "../services/api"; // ✅ pages/ -> services/
 
 const Dashboard = ({ token, onNavigate }) => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const COLORS = ["#6366f1", "#8b5cf6", "#ec4899", "#10b981", "#f59e0b"];
+
   useEffect(() => {
     const fetchStats = async () => {
+      setLoading(true);
       try {
         const res = await apiFetch("/dashboard/stats");
-        if (res?.ok) setStats(await res.json());
+        if (res?.ok) {
+          const data = await res.json();
+          setStats(data);
+        } else {
+          setStats(null);
+        }
       } catch (e) {
         console.error("Erreur stats", e);
+        setStats(null);
       } finally {
         setLoading(false);
       }
@@ -21,110 +30,163 @@ const Dashboard = ({ token, onNavigate }) => {
     fetchStats();
   }, []);
 
-  if (loading) return <div style={{ padding: 20 }}>Chargement...</div>;
+  if (loading) {
+    return (
+      <div style={{ padding: "4rem", textAlign: "center", color: "#6366f1" }}>
+        <Activity className="spin" size={40} /> Chargement...
+      </div>
+    );
+  }
+
   if (!stats) return <div style={{ padding: 20 }}>Aucune donnée.</div>;
 
-  const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b'];
+  // ✅ On prend la structure "pro" : stats.kpis, stats.charts.distribution, stats.recents
+  const distributionData =
+    Array.isArray(stats?.charts?.distribution) && stats.charts.distribution.length > 0
+      ? stats.charts.distribution
+      : [{ name: "Aucune donnée", value: 1 }];
 
-  const {
-    total_emails = 0,
-    total_clients = 0,
-    total_invoices = 0,
-    recent_activity = [],
-    email_categories = []
-  } = stats;
+  const recentActivity = Array.isArray(stats?.recents) ? stats.recents : [];
 
-  const cardStyle = {
-    background: '#111827',
-    color: 'white',
-    borderRadius: 12,
-    padding: 16,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.25)'
+  // --- Labels % (optionnel mais joli)
+  const RADIAN = Math.PI / 180;
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+    if (percent < 0.05) return null;
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="white"
+        textAnchor="middle"
+        dominantBaseline="central"
+        style={{ fontSize: 12, fontWeight: "bold" }}
+      >
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
   };
-
-  const containerStyle = {
-    padding: 20,
-    display: 'grid',
-    gridTemplateColumns: 'repeat(12, 1fr)',
-    gap: 16
-  };
-
-  const titleStyle = { fontSize: 20, fontWeight: 700, marginBottom: 8 };
-
-  const StatCard = ({ icon: Icon, label, value }) => (
-    <div style={{ ...cardStyle, gridColumn: 'span 3' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: '#1f2937', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon size={20} />
-        </div>
-        <div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>{label}</div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>{value}</div>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
-    <div style={containerStyle}>
-      <div style={{ gridColumn: 'span 12', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontSize: 28, fontWeight: 900 }}>Dashboard</div>
-          <div style={{ opacity: 0.8 }}>Vue d’ensemble de CipherFlow</div>
+    <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+        <h1 style={{ fontSize: "2rem", fontWeight: "bold" }}>Tableau de Bord</h1>
+        <div style={{ fontSize: "0.9rem", color: "#94a3b8" }}>Données en temps réel</div>
+      </div>
+
+      {/* KPIs */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+          gap: "1.5rem",
+          marginBottom: "2rem",
+        }}
+      >
+        <div className="card clickable-row" onClick={() => onNavigate?.("history")}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: 5 }}>Emails Traités</div>
+              <div style={{ fontSize: "2.5rem", fontWeight: "bold" }}>{stats?.kpis?.total_emails || 0}</div>
+            </div>
+            <div style={{ padding: 12, background: "rgba(99,102,241,0.2)", borderRadius: 12 }}>
+              <Users size={24} />
+            </div>
+          </div>
+        </div>
+
+        <div className="card clickable-row" onClick={() => onNavigate?.("history")}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: 5 }}>Urgences Hautes</div>
+              <div style={{ fontSize: "2.5rem", fontWeight: "bold" }}>{stats?.kpis?.high_urgency || 0}</div>
+            </div>
+            <div style={{ padding: 12, background: "rgba(239,68,68,0.2)", borderRadius: 12 }}>
+              <AlertTriangle size={24} />
+            </div>
+          </div>
+        </div>
+
+        <div className="card clickable-row" onClick={() => onNavigate?.("invoices")}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div>
+              <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: 5 }}>Factures Générées</div>
+              <div style={{ fontSize: "2.5rem", fontWeight: "bold" }}>{stats?.kpis?.invoices || 0}</div>
+            </div>
+            <div style={{ padding: 12, background: "rgba(16,185,129,0.2)", borderRadius: 12 }}>
+              <FileText size={24} />
+            </div>
+          </div>
         </div>
       </div>
 
-      <StatCard icon={Activity} label="Emails traités" value={total_emails} />
-      <StatCard icon={Users} label="Clients" value={total_clients} />
-      <StatCard icon={FileText} label="Factures générées" value={total_invoices} />
-      <StatCard icon={AlertTriangle} label="Alertes" value={0} />
+      {/* Graph + activité */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "2rem" }}>
+        <div className="card" style={{ minHeight: 400, display: "flex", flexDirection: "column" }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "1.5rem", fontSize: "1.1rem" }}>
+            <PieIcon size={20} /> Répartition des Demandes
+          </h3>
 
-      <div style={{ ...cardStyle, gridColumn: 'span 6', minHeight: 300 }}>
-        <div style={titleStyle}><PieIcon size={18} style={{ marginRight: 8 }} />Catégories d’emails</div>
-        <div style={{ width: "100%", height: 250, minHeight: 250 }}>
-  <ResponsiveContainer width="100%" height="100%">
-    <PieChart>
-      <Pie
-        data={email_categories}
-        dataKey="count"
-        nameKey="category"
-        outerRadius={90}
-        label
-      >
-        {(email_categories || []).map((entry, index) => (
-          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-        ))}
-      </Pie>
-      <Tooltip />
-      <Legend />
-    </PieChart>
-  </ResponsiveContainer>
-</div>
+          {/* ✅ IMPORTANT : height fixe -> plus de width(-1)/height(-1) */}
+          <div style={{ width: "100%", height: 300, minHeight: 300 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={distributionData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={80}
+                  outerRadius={110}
+                  paddingAngle={5}
+                  dataKey="value"
+                  stroke="none"
+                  cornerRadius={5}
+                  label={renderCustomizedLabel}
+                  labelLine={false}
+                >
+                  {distributionData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
 
-      </div>
+        <div className="card" style={{ minHeight: 400, display: "flex", flexDirection: "column" }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "1.5rem", fontSize: "1.1rem" }}>
+            <Activity size={20} /> Activité Récente
+          </h3>
 
-      <div style={{ ...cardStyle, gridColumn: 'span 6', minHeight: 300 }}>
-        <div style={titleStyle}>Activité récente</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {recent_activity.length === 0 && <div style={{ opacity: 0.8 }}>Aucune activité récente.</div>}
-          {recent_activity.map((item, idx) => (
-            <button
-              key={idx}
-              onClick={() => onNavigate?.(item)}
-              style={{
-                textAlign: 'left',
-                background: '#1f2937',
-                color: 'white',
-                border: 'none',
-                padding: 12,
-                borderRadius: 10,
-                cursor: 'pointer'
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>{item.title || 'Évènement'}</div>
-              <div style={{ fontSize: 12, opacity: 0.8 }}>{item.subtitle || ''}</div>
-            </button>
-          ))}
+          {recentActivity.length === 0 ? (
+            <div style={{ opacity: 0.8 }}>Aucune activité récente.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {recentActivity.map((item) => (
+                <div
+                  key={item.id}
+                  className="clickable-row"
+                  onClick={() => onNavigate?.("history", item.id)}
+                  style={{
+                    cursor: "pointer",
+                    padding: 12,
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: 8,
+                    borderLeft: `3px solid ${item.urgency === "haute" ? "#ef4444" : "#6366f1"}`,
+                  }}
+                >
+                  <div style={{ fontWeight: "bold" }}>{item.subject}</div>
+                  <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                    {item.category} • {item.date}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
