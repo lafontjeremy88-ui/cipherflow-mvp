@@ -321,7 +321,11 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {activeTab === "invoices" && <div style={{ maxWidth: "800px", margin: "0 auto" }}><InvoiceGenerator token={token} /></div>}
+        {activeTab === "invoices" && (
+          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+             <InvoiceGenerator token={token} authFetch={authFetch} /> {/* 👈 Ajout crucial */}
+          </div>
+        )}
         {activeTab === "documents" && <FileAnalyzer token={token} />}
         {activeTab === "history" && <EmailHistory token={token} initialId={selectedHistoryId} />}
         {activeTab === "settings" && <SettingsPanel token={token} />}

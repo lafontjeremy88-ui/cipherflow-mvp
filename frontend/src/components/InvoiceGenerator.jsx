@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Download, Loader2, Plus, Trash2, Calendar } from 'lucide-react';
+import { FileText, Download, Loader2, Plus, Trash2, Calendar, Eye } from 'lucide-react';
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const InvoiceGenerator = ({ token, authFetch }) => {
   const [loading, setLoading] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
   const [companySettings, setCompanySettings] = useState({
     company_name: "Mon Entreprise",
     logo: "",
     signature: ""
   });
 
-  // État du formulaire
   const [invoice, setInvoice] = useState({
     number: `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
     date: new Date().toISOString().split('T')[0],
@@ -19,24 +19,20 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     items: [{ description: "Prestation de service", price: 0 }]
   });
 
-  // Charger les infos de l'entreprise au démarrage
+  // Chargement des paramètres (Sécurisé)
   useEffect(() => {
     if (authFetch) {
       authFetch(`${API_BASE}/settings`)
         .then(res => res.json())
-        .then(data => {
-            if (data) setCompanySettings(data);
-        })
+        .then(data => { if (data) setCompanySettings(data); })
         .catch(err => console.error("Erreur settings", err));
     }
   }, [authFetch]);
 
-  // Gestion des changements dans le formulaire
   const handleChange = (field, value) => {
     setInvoice(prev => ({ ...prev, [field]: value }));
   };
 
-  // Gestion des items (Lignes de facture)
   const handleItemChange = (index, field, value) => {
     const newItems = [...invoice.items];
     newItems[index][field] = value;
@@ -44,10 +40,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   };
 
   const addItem = () => {
-    setInvoice(prev => ({
-      ...prev,
-      items: [...prev.items, { description: "Nouvelle prestation", price: 0 }]
-    }));
+    setInvoice(prev => ({ ...prev, items: [...prev.items, { description: "Nouvelle prestation", price: 0 }] }));
   };
 
   const removeItem = (index) => {
@@ -55,24 +48,48 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     setInvoice(prev => ({ ...prev, items: newItems }));
   };
 
-  // Calcul du total en temps réel
   const total = invoice.items.reduce((acc, item) => acc + Number(item.price || 0), 0);
 
-  // Fonction pour télécharger le PDF officiel (via le Backend)
-  const handleDownload = async () => {
-    setLoading(true);
-    try {
-      const payload = {
-        client_name: invoice.clientName || "Client",
-        invoice_number: invoice.number,
-        amount: total,
-        date: new Date(invoice.date).toLocaleDateString("fr-FR"),
-        items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
-      };
+  // Préparation des données pour le backend
+  const getPayload = () => ({
+    client_name: invoice.clientName || "Client",
+    invoice_number: invoice.number,
+    amount: total,
+    date: new Date(invoice.date).toLocaleDateString("fr-FR"),
+    items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
+  });
 
+  // BOUTON 1 : VISIONNER (Ouvre dans un nouvel onglet)
+  const handleView = async () => {
+    if (!authFetch) return alert("Erreur: Authentification manquante (Recocher App.jsx)");
+    setViewLoading(true);
+    try {
       const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(getPayload()),
+      });
+
+      if (!res.ok) throw new Error("Erreur génération PDF");
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank'); // Ouvre dans un nouvel onglet
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors de la génération de l'aperçu");
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  // BOUTON 2 : TÉLÉCHARGER (Enregistre sur le PC)
+  const handleDownload = async () => {
+    if (!authFetch) return alert("Erreur: Authentification manquante (Recocher App.jsx)");
+    setLoading(true);
+    try {
+      const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
+        method: "POST",
+        body: JSON.stringify(getPayload()),
       });
 
       if (!res.ok) throw new Error("Erreur génération PDF");
@@ -88,7 +105,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error(e);
-      alert("Erreur lors du téléchargement du PDF");
+      alert("Erreur lors du téléchargement");
     } finally {
       setLoading(false);
     }
@@ -97,18 +114,39 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   return (
     <div style={{ padding: "2rem", color: "white", maxWidth: "1600px", margin: "0 auto" }}>
       
-      {/* En-tête avec bouton Télécharger */}
+      {/* En-tête avec LES DEUX BOUTONS */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
         <h2 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>Générateur de Factures</h2>
-        <button 
-            onClick={handleDownload} 
-            disabled={loading}
-            className="btn btn-primary"
-            style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px" }}
-        >
-            {loading ? <Loader2 className="spin" size={20} /> : <Download size={20} />}
-            Télécharger le PDF Officiel
-        </button>
+        
+        <div style={{ display: "flex", gap: "10px" }}>
+            {/* BOUTON VISIONNER */}
+            <button 
+                onClick={handleView} 
+                disabled={viewLoading}
+                className="btn"
+                style={{ 
+                    display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px",
+                    background: "#3b82f6", color: "white", border: "none", borderRadius: "8px", cursor: "pointer"
+                }}
+            >
+                {viewLoading ? <Loader2 className="spin" size={20} /> : <Eye size={20} />}
+                Visionner PDF
+            </button>
+
+            {/* BOUTON TÉLÉCHARGER */}
+            <button 
+                onClick={handleDownload} 
+                disabled={loading}
+                className="btn"
+                style={{ 
+                    display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px",
+                    background: "#10b981", color: "white", border: "none", borderRadius: "8px", cursor: "pointer"
+                }}
+            >
+                {loading ? <Loader2 className="spin" size={20} /> : <Download size={20} />}
+                Télécharger
+            </button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem" }}>
@@ -120,12 +158,11 @@ const InvoiceGenerator = ({ token, authFetch }) => {
           </h3>
 
           <div className="card" style={{ padding: "2rem" }}>
-            
             <h4 style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase", marginBottom: "1rem" }}>Informations</h4>
             
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
               <div>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Numéro de Facture</label>
+                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Numéro</label>
                 <input 
                     type="text" 
                     value={invoice.number} 
@@ -134,7 +171,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                 />
               </div>
               <div>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Date d'émission</label>
+                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Date</label>
                 <div style={{ position: "relative" }}>
                     <input 
                         type="date" 
@@ -148,7 +185,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
             </div>
 
             <div style={{ marginBottom: "2rem" }}>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Client (Nom / Entreprise)</label>
+                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Client</label>
                 <input 
                     type="text" 
                     placeholder="Ex: ACME Corp" 
@@ -194,24 +231,21 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                 <div style={{ color: "#94a3b8", fontSize: "0.8rem", textTransform: "uppercase", marginBottom: "5px" }}>Total Estimé</div>
                 <div style={{ fontSize: "2rem", fontWeight: "bold", color: "#6366f1" }}>{total.toFixed(2)} €</div>
             </div>
-
           </div>
         </div>
 
         {/* --- COLONNE DROITE : APERÇU LIVE (HTML/CSS) --- */}
         <div>
-            {/* Simulation feuille A4 */}
             <div style={{ 
                 background: "white", 
                 color: "black", 
                 width: "100%", 
-                minHeight: "800px", // Hauteur fixe style A4
+                minHeight: "800px", 
                 padding: "40px", 
                 borderRadius: "4px", 
                 boxShadow: "0 0 20px rgba(0,0,0,0.5)",
                 position: "relative"
             }}>
-                
                 {/* Header Facture */}
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
                     <div>
@@ -267,10 +301,8 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                 <div style={{ position: "absolute", bottom: "40px", left: "40px", right: "40px", textAlign: "center", fontSize: "0.8rem", color: "#94a3b8" }}>
                     Merci de votre confiance.
                 </div>
-
             </div>
         </div>
-
       </div>
     </div>
   );
