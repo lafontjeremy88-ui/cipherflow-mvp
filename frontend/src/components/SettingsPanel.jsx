@@ -12,8 +12,8 @@ const SettingsPanel = ({ token, authFetch }) => {
     logo: ''
   });
   
-  const [loading, setLoading] = useState(false); // Chargement sauvegarde
-  const [uploading, setUploading] = useState(false); // Chargement logo
+  const [loading, setLoading] = useState(false); // Chargement sauvegarde settings
+  const [uploading, setUploading] = useState(false); // Chargement upload logo
   const [message, setMessage] = useState(null);
 
   // Charger les paramètres au démarrage
@@ -38,7 +38,7 @@ const SettingsPanel = ({ token, authFetch }) => {
     setSettings({ ...settings, [e.target.name]: e.target.value });
   };
 
-  // --- GESTION DU LOGO (UPLOAD) ---
+  // --- GESTION DU LOGO (UPLOAD VIA FETCH NATIF) ---
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -50,26 +50,32 @@ const SettingsPanel = ({ token, authFetch }) => {
     formData.append("file", file);
 
     try {
-      console.log("Envoi du logo...", file.name, file.size); // 🔍 Log de contrôle
+      console.log("Envoi du logo via Fetch natif...", file.name, file.size);
 
-      // On utilise la route spéciale du backend qui redimensionne l'image
-      const res = await authFetch(`${API_BASE}/settings/upload-logo`, {
+      // ⚠️ CORRECTIF 422 : On utilise fetch directement pour l'upload.
+      // Cela permet au navigateur de générer automatiquement le bon header
+      // Content-Type: multipart/form-data; boundary=----WebKitFormBoundary...
+      const res = await fetch(`${API_BASE}/settings/upload-logo`, {
         method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}` // On injecte manuellement le token
+            // NE SURTOUT PAS METTRE DE 'Content-Type' ICI !
+        },
         body: formData, 
-        // Note: authFetch détecte FormData et supprime le Content-Type json automatiquement
       });
 
       if (res.ok) {
-        // On recharge les settings pour afficher le nouveau logo (base64)
+        // Si l'upload réussit, on recharge les settings pour avoir l'URL/Base64 du logo à jour
         const refresh = await authFetch(`${API_BASE}/settings`);
-        const data = await refresh.json();
-        setSettings(data);
-        setMessage({ type: "success", text: "Logo mis à jour avec succès !" });
+        if (refresh.ok) {
+            const data = await refresh.json();
+            setSettings(data);
+            setMessage({ type: "success", text: "Logo mis à jour avec succès !" });
+        }
       } else {
-        // On essaie de lire l'erreur renvoyée par le serveur
-        const errData = await res.json().catch(() => ({})); 
-        console.error("Erreur Upload:", errData);
-        setMessage({ type: "error", text: "Erreur serveur lors de l'upload." });
+        const errText = await res.text();
+        console.error("Erreur Upload (Server):", res.status, errText);
+        setMessage({ type: "error", text: `Erreur serveur (${res.status}).` });
       }
     } catch (err) {
       console.error(err);
@@ -79,7 +85,7 @@ const SettingsPanel = ({ token, authFetch }) => {
     }
   };
 
-  // --- SAUVEGARDE GLOBALE ---
+  // --- SAUVEGARDE GLOBALE (JSON VIA AUTH_FETCH) ---
   const handleSave = async () => {
     setLoading(true);
     setMessage(null);
