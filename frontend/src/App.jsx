@@ -137,6 +137,8 @@ function MainApp({ token, userEmail, onLogout }) {
       Authorization: `Bearer ${token}`,
     };
 
+    // ⚠️ CRUCIAL : Si c'est un fichier (FormData), on retire le Content-Type
+    // pour laisser le navigateur générer le "multipart/form-data" correct avec la boundary.
     if (options.body instanceof FormData) {
         delete headers["Content-Type"];
     }
