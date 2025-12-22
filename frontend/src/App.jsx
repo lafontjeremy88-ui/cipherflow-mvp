@@ -11,8 +11,10 @@ import FileAnalyzer from "./components/FileAnalyzer";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
-import DashboardPage from "./components/Dashboard"; // Attention au chemin (parfois pages/Dashboard)
-import OAuthCallback from "./components/OAuthCallback"; // Idem, vérifie si c'est components ou pages
+
+// 👇 CORRECTION ICI : On pointe vers "pages" et non "components"
+import DashboardPage from "./pages/Dashboard"; 
+import OAuthCallback from "./pages/OAuthCallback"; 
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -107,7 +109,6 @@ function MainApp({ token, userEmail, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
-  // États pour l'onglet "Analyse"
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
@@ -129,7 +130,6 @@ function MainApp({ token, userEmail, onLogout }) {
     }
   }, [activeTab]);
 
-  // --- FONCTION VITALE : AUTH FETCH ---
   const authFetch = async (url, options = {}) => {
     const headers = {
       "Content-Type": "application/json",
@@ -137,7 +137,6 @@ function MainApp({ token, userEmail, onLogout }) {
       Authorization: `Bearer ${token}`,
     };
 
-    // Si on envoie un FormData (upload fichier), on supprime Content-Type pour laisser le navigateur gérer
     if (options.body instanceof FormData) {
         delete headers["Content-Type"];
     }
@@ -273,8 +272,6 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {/* --- ROUTAGE DES ONGLETS (TOUS CONNECTÉS) --- */}
-        
         {activeTab === "dashboard" && (
            <DashboardPage 
              token={token} 
@@ -323,14 +320,12 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {/* ✅ FACTURATION RÉPARÉE */}
         {activeTab === "invoices" && (
           <div style={{ maxWidth: "1600px", margin: "0 auto" }}>
              <InvoiceGenerator token={token} authFetch={authFetch} />
           </div>
         )}
 
-        {/* ✅ AUTRES ONGLETS CONNECTÉS */}
         {activeTab === "documents" && (
             <FileAnalyzer token={token} authFetch={authFetch} /> 
         )}
@@ -349,4 +344,3 @@ function MainApp({ token, userEmail, onLogout }) {
 }
 
 export default App;
-//////essau 
