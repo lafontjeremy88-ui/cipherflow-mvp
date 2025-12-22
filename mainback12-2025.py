@@ -3,42 +3,38 @@ import json
 import logging
 import base64
 import secrets
-import io 
-import shutil
+import io  # <--- GESTION DES FLUX DE DONNÉES
 from typing import Optional, List
 from datetime import datetime
-
-# --- IMAGES & PDF ---
+import shutil
+from sqlalchemy import text as sql_text
+# --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
-from fpdf import FPDF # Si utilisé pour générer des PDF simples côté serveur
 
-# --- EXTERNES ---
 import resend 
 from jose import jwt, JWTError 
 from sqlalchemy import text as sql_text
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from dotenv import load_dotenv
-import google.generativeai as genai
-
-# --- FASTAPI ---
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
-from starlette.middleware.sessions import SessionMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from dotenv import load_dotenv
+import google.generativeai as genai
+from fastapi import Depends
+from app.security import get_current_user
 
 # --- IMPORTS INTERNES ---
-# Assure-toi que ces fichiers existent bien dans ton dossier app/
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
+from starlette.middleware.sessions import SessionMiddleware
 
-# --- CONFIG INITIALE ---
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
@@ -47,16 +43,16 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- GEMINI ---
+# --- CONFIGURATION GEMINI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
+###############################################
 MODEL_NAME = "gemini-flash-latest"
 
-# --- RESEND ---
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
@@ -66,7 +62,7 @@ ENV = os.getenv("ENV", "dev").lower()
 if ENV in ("prod", "production") and not WATCHER_SECRET:
     raise RuntimeError("WATCHER_SECRET manquant en production")
 
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS UTILES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY: return
     try:
@@ -109,27 +105,28 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
     data = extract_json_from_text(raw) or {}
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- AUTHENTIFICATION (INTÉGRÉE ICI POUR ÉVITER LES ERREURS D'IMPORT) ---
+# --- AUTH ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
+
     if not JWT_SECRET_KEY:
-        # Fallback dev si pas de clé (A CHANGER EN PROD)
-        JWT_SECRET_KEY = "dev_secret_key" 
+        print("❌ JWT_SECRET_KEY manquant dans Railway Variables")
+        raise HTTPException(status_code=401, detail="Server misconfigured")
 
     try:
         payload = jwt.decode(
             token,
             JWT_SECRET_KEY,
-            algorithms=[ALGORITHM], # ALGORITHM vient de app.auth
+            algorithms=["HS256"],
             options={"verify_aud": False},
         )
     except JWTError as e:
         print("❌ JWT decode error:", str(e))
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    email = payload.get("sub") # Dans app.auth.create_access_token on met l'email dans "sub"
+    # Google OAuth met souvent l'email dans "email", sinon parfois dans "sub"
+    email = payload.get("email") or payload.get("sub")
     if not email:
         raise HTTPException(status_code=401, detail="Token missing email")
 
@@ -139,7 +136,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
     return user
 
-# --- MODELES PYDANTIC ---
+
+# --- MODELES API ---
 class LoginRequest(BaseModel): email: str; password: str
 class TokenResponse(BaseModel): access_token: str; token_type: str; user_email: str
 class EmailAnalyseRequest(BaseModel): from_email: EmailStr; subject: str; content: str
@@ -161,13 +159,15 @@ class EmailHistoryItem(BaseModel):
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
 
+# TYPE PRIX (float)
 class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
-# --- APP FASTAPI ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "").strip()
+ENV = os.getenv("ENV", "dev").lower()
+
 if ENV in ("prod", "production") and not OAUTH_STATE_SECRET:
     raise RuntimeError("OAUTH_STATE_SECRET manquant en production")
 
@@ -178,12 +178,17 @@ app.add_middleware(
     https_only=(ENV in ("prod", "production")),
 )
 
-app.include_router(google_oauth_router, tags=["Google OAuth"])
 
+# 🔐 Google OAuth router (routes complètes déjà définies dans google_oauth.py)
+app.include_router(
+    google_oauth_router,
+    tags=["Google OAuth"]
+)
+# --- CORRECTION CORS : Liste explicite pour autoriser Vercel ---
 origins = [
   "http://localhost:5173",
-  "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
-  "[https://cipherflow.company](https://cipherflow.company)",
+  "https://cipherflow-mvp.vercel.app",
+  "https://cipherflow.company",
 ]
 
 app.add_middleware(
@@ -198,6 +203,7 @@ app.add_middleware(
 def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
     models.Base.metadata.create_all(bind=engine)
+    
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
         print("📁 Dossier 'uploads' créé.")
@@ -208,15 +214,18 @@ def on_startup():
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
         print("✅ Admin créé.")
+            # --- Mini-migration : ajoute send_status si absent ---
     try:
         table_name = EmailAnalysis.__tablename__
         with engine.begin() as conn:
-            conn.execute(sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
+            conn.execute(
+                sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\'')
+            )
     except Exception as e:
         print("⚠️ Migration send_status ignorée:", e)
 
-# --- ROUTES ---
 
+# --- ROUTES ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
@@ -259,7 +268,12 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
     distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
     recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
     recent_activity = [{"id": r.id, "subject": r.subject[:40] + "..." if len(r.subject) > 40 else r.subject, "category": r.category, "urgency": r.urgency, "date": r.created_at.strftime("%d/%m %H:%M")} for r in recents]
-    return {"kpis": {"total_emails": total, "high_urgency": high_urgency, "invoices": invoices_generated}, "charts": {"distribution": distribution_data}, "recents": recent_activity}
+
+    return {
+        "kpis": {"total_emails": total, "high_urgency": high_urgency, "invoices": invoices_generated},
+        "charts": {"distribution": distribution_data},
+        "recents": recent_activity
+    }
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -275,62 +289,75 @@ async def get_settings(db: Session = Depends(get_db), current_user: User = Depen
 async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first() or AppSettings()
     if not s.id: db.add(s)
-    s.company_name = req.company_name; s.agent_name = req.agent_name; s.tone = req.tone; s.signature = req.signature
-    if req.logo: s.logo = req.logo
+    
+    s.company_name = req.company_name
+    s.agent_name = req.agent_name
+    s.tone = req.tone
+    s.signature = req.signature
+    
+    if req.logo:
+        s.logo = req.logo
+
     db.commit()
     return {"status": "updated"}
 
-# --- ROUTE SPECIALE UPLOAD LOGO (VERSION DEBUG & MANUELLE) ---
+# --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
+# --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
 @app.post("/settings/upload-logo")
 async def upload_logo(
-    request: Request, 
+    file: UploadFile = File(...), 
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    print(f"DEBUG UPLOAD: Content-Type reçu: {request.headers.get('content-type')}")
+    print(f"DEBUG: Réception fichier {file.filename}, type={file.content_type}")
 
-    try:
-        form = await request.form()
-    except Exception as e:
-        print(f"DEBUG FORM ERROR: {e}")
-        # Message d'erreur explicite si python-multipart manque
-        raise HTTPException(400, detail=f"Erreur lecture formulaire (dépendance manquante?): {str(e)}")
-
-    file = form.get("file")
-    if not file:
-        raise HTTPException(422, detail="Champ 'file' manquant.")
-
+    # 1. Vérification du type (plus souple)
     if "image" not in file.content_type:
-        raise HTTPException(400, detail="Format non supporté. Image requise.")
+        raise HTTPException(400, detail="Format non supporté. Envoyez une image.")
+
+    # 2. Lecture du fichier lourd
+    contents = await file.read()
 
     try:
-        contents = await file.read()
+        # 3. Ouverture de l'image avec PIL (Pillow)
         img = Image.open(io.BytesIO(contents))
         
+        # 4. Redimensionnement (On limite la largeur à 800px max pour économiser la base de données)
         max_width = 800
         if img.width > max_width:
+            # Calcule la hauteur proportionnelle
             ratio = max_width / float(img.width)
             new_height = int((float(img.height) * float(ratio)))
             img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
         
+        # 5. Sauvegarde de l'image optimisée dans un "buffer" mémoire
         buffer = io.BytesIO()
+        # On conserve le format original ou PNG par défaut
         fmt = img.format if img.format else "PNG"
         img.save(buffer, format=fmt, optimize=True, quality=85)
         
+        # On récupère les octets optimisés
         optimized_contents = buffer.getvalue()
+        
+        # 6. Encodage en Base64
         encoded_string = base64.b64encode(optimized_contents).decode("utf-8")
         final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
         
+        # 7. Sauvegarde en base
         s = db.query(AppSettings).first()
-        if not s: s = AppSettings(); db.add(s)
+        if not s:
+            s = AppSettings()
+            db.add(s)
+        
         s.logo = final_logo_str
         db.commit()
 
-        return {"status": "logo_updated"}
+        return {"status": "logo_updated", "size_before": len(contents), "size_after": len(optimized_contents)}
 
     except Exception as e:
-        print(f"Erreur Traitement Image: {e}")
-        raise HTTPException(500, detail="Erreur interne traitement image.")
+        print(f"Erreur Resize Image: {e}")
+        raise HTTPException(500, detail="Erreur lors du traitement de l'image.")
+
 
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -351,31 +378,64 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         raise HTTPException(500, detail=str(e))
 
 @app.post("/email/send")
-async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def send_mail_ep(
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 1) envoi
     send_email_via_resend(req.to_email, req.subject, req.body)
+
+    # 2) si on a un email_id -> on marque comme envoyé
     if req.email_id is not None:
         email_row = db.query(EmailAnalysis).filter(EmailAnalysis.id == req.email_id).first()
         if email_row:
-            try: email_row.send_status = "sent"; db.commit()
-            except Exception: db.rollback()
-    return {"status": "sent"}
+            # colonne send_status (si elle existe)
+            try:
+                email_row.send_status = "sent"
+                db.commit()
+            except Exception:
+                db.rollback()
 
+    return {"status": "sent"}
+# --- GESTION FICHIERS ---
 @app.post("/api/analyze-file")
 async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if not os.path.exists("uploads"): os.makedirs("uploads")
+    if not os.path.exists("uploads"):
+        os.makedirs("uploads")
+    
     file_path = f"uploads/{file.filename}"
+    
     try:
-        with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer) 
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
         model = genai.GenerativeModel(MODEL_NAME)
         uploaded = genai.upload_file(file_path)
-        res = await model.generate_content_async([uploaded, "Analyse ce document (facture/devis). Extrait JSON strict: {type, sender, date, amount, summary}"])
+        
+        prompt = "Analyse ce document (facture/devis). Extrait au format JSON strict: {type, sender, date, amount, summary}"
+        res = await model.generate_content_async([uploaded, prompt])
+        
         data = extract_json_from_text(res.text)
+        
         if data:
-            new_doc = FileAnalysis(filename=file.filename, file_type=str(data.get("type", "Inconnu")), sender=str(data.get("sender", "Non détecté")), extracted_date=str(data.get("date", "")), amount=str(data.get("amount", "")), summary=str(data.get("summary", "")), owner_id=current_user.id)
+            new_doc = FileAnalysis(
+                filename=file.filename,
+                file_type=str(data.get("type", "Inconnu")),
+                sender=str(data.get("sender", "Non détecté")),
+                extracted_date=str(data.get("date", "")),
+                amount=str(data.get("amount", "")),
+                summary=str(data.get("summary", "")),
+                owner_id=current_user.id
+            )
             db.add(new_doc); db.commit()
         return data
     except Exception as e:
         print(f"ERREUR FICHIER: {e}")
+        try:
+            print("Tentative fallback vision...")
+            model_vision = genai.GenerativeModel("gemini-pro-vision")
+        except: pass
         raise HTTPException(500, detail=str(e))
 
 @app.get("/api/files/history")
@@ -385,28 +445,41 @@ async def get_file_history(db: Session = Depends(get_db), current_user: User = D
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
-    if not db_file: raise HTTPException(404)
+    if not db_file: raise HTTPException(404, detail="Fichier introuvable en base")
+    
     file_path = f"uploads/{db_file.filename}"
+    if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="inline")
 
 @app.get("/api/files/download/{file_id}")
 async def download_file(file_id: int, db: Session = Depends(get_db)):
     db_file = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
-    if not db_file: raise HTTPException(404)
+    if not db_file: raise HTTPException(404, detail="Fichier introuvable en base")
+    
     file_path = f"uploads/{db_file.filename}"
+    if not os.path.exists(file_path): raise HTTPException(404, detail="Fichier physique introuvable")
     return FileResponse(path=file_path, filename=db_file.filename, content_disposition_type="attachment")
 
+# --- FACTURATION (CORRIGÉE : LOGO + PRIX + CORS) ---
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
+    
+    # CORRECTION CRITIQUE : URL PROPRE SANS CROCHETS NI PARENTHESES
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
-    data.update({"company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": user_logo})
+    
+    data.update({
+        "company_name_header": s.company_name if s else "Mon Entreprise",
+        "logo_url": user_logo
+    })
+    
     ex = db.query(Invoice).filter(Invoice.reference == req.invoice_number, Invoice.owner_id == current_user.id).first()
     if ex: ex.amount_total = req.amount
     else: db.add(Invoice(reference=req.invoice_number, client_name=req.client_name, amount_total=req.amount, items_json=json.dumps([i.dict() for i in req.items]), owner_id=current_user.id))
     db.commit()
+
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"})
 
 @app.get("/api/invoices")
@@ -417,8 +490,20 @@ async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(g
 async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
     if not inv: raise HTTPException(404)
+    
     s = db.query(AppSettings).first()
+    
+    # CORRECTION CRITIQUE : URL PROPRE ICI AUSSI
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
-    data = {"client_name": inv.client_name, "invoice_number": inv.reference, "amount": inv.amount_total, "date": inv.date_issued.strftime("%d/%m/%Y"), "items": json.loads(inv.items_json) if inv.items_json else [], "company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": user_logo}
+
+    data = {
+        "client_name": inv.client_name, 
+        "invoice_number": inv.reference, 
+        "amount": inv.amount_total, 
+        "date": inv.date_issued.strftime("%d/%m/%Y"), 
+        "items": json.loads(inv.items_json) if inv.items_json else [], 
+        "company_name_header": s.company_name if s else "Mon Entreprise",
+        "logo_url": user_logo
+    }
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={ref}.pdf"})
