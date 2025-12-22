@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from "../services/api";
 import { FileText, Download, Loader2, AlertCircle } from 'lucide-react';
+// ❌ apiFetch supprimé
+// import { apiFetch } from "../services/api";
 
-const InvoiceGenerator = ({ token }) => {
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+
+const InvoiceGenerator = ({ token, authFetch }) => { // ✅
   const [companySettings, setCompanySettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -16,11 +19,14 @@ const InvoiceGenerator = ({ token }) => {
   });
 
   useEffect(() => {
-    apiFetch("/settings")
+    if (!authFetch) return;
+    
+    // On charge les settings de l'entreprise
+    authFetch(`${API_BASE}/settings`)
       .then((res) => res.json())
       .then((data) => setCompanySettings(data))
       .catch((err) => console.error("Erreur chargement settings:", err));
-  }, []);
+  }, [authFetch]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -37,7 +43,7 @@ const InvoiceGenerator = ({ token }) => {
         company_settings: companySettings,
       };
 
-      const res = await apiFetch("/api/generate-invoice", {
+      const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
         method: "POST",
         body: JSON.stringify(payload),
       });

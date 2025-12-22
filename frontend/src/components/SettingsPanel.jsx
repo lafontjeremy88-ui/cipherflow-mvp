@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { apiFetch } from "../services/api";
 import { Save, Building, User, PenTool, FileSignature, Image as ImageIcon } from 'lucide-react';
+// ❌ On retire apiFetch
+// import { apiFetch } from "../services/api";
 
-const SettingsPanel = ({ token }) => {
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+
+const SettingsPanel = ({ token, authFetch }) => { // ✅ authFetch ajouté
   const [settings, setSettings] = useState({
     company_name: '',
     agent_name: '',
@@ -16,7 +19,8 @@ const SettingsPanel = ({ token }) => {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await apiFetch("/settings");
+        if (!authFetch) return;
+        const res = await authFetch(`${API_BASE}/settings`);
         if (res?.ok) {
           const data = await res.json();
           setSettings(data);
@@ -26,7 +30,7 @@ const SettingsPanel = ({ token }) => {
       }
     };
     load();
-  }, []);
+  }, [authFetch]);
 
   const handleChange = (e) => {
     setSettings({ ...settings, [e.target.name]: e.target.value });
@@ -37,7 +41,7 @@ const SettingsPanel = ({ token }) => {
     setMessage(null);
 
     try {
-      const res = await apiFetch("/settings", {
+      const res = await authFetch(`${API_BASE}/settings`, {
         method: "POST",
         body: JSON.stringify(settings),
       });

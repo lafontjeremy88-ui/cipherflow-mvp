@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { Mail, ArrowLeft, X, Send, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import { apiFetch } from "../services/api";
+// ❌ On supprime l'import de apiFetch
+// import { apiFetch } from "../services/api";
 
-const EmailHistory = ({ initialId }) => {
+const EmailHistory = ({ initialId, authFetch }) => { // ✅ On récupère authFetch ici
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState(null);
 
   const [sending, setSending] = useState(false);
-  const [sendMsg, setSendMsg] = useState(null); // {type:'success'|'error', text:''}
+  const [sendMsg, setSendMsg] = useState(null);
 
   const getReplyText = (email) => {
     if (!email) return "";
@@ -31,7 +32,17 @@ const EmailHistory = ({ initialId }) => {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await apiFetch("/email/history");
+        // ✅ Utilisation de authFetch avec l'URL complète (API_BASE est géré dans App.jsx ou on met le chemin relatif si authFetch gère la base)
+        // Note: Dans ton App.jsx, authFetch attend une URL complète ou gère le fetch. 
+        // Si authFetch dans App.jsx est un simple wrapper de fetch, il faut passer l'URL complète.
+        // Comme authFetch dans App.jsx ne semble pas ajouter l'URL de base automatiquement, on va supposer que tu passes l'URL complète 
+        // OU que tu as modifié authFetch pour gérer l'URL de base.
+        // Pour être sûr, on utilise l'URL relative et on laisse authFetch gérer ou on reconstruit l'URL.
+        // D'après ton App.jsx : `const res = await fetch(url, ...)` -> Il faut l'URL complète.
+        
+        const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+        const res = await authFetch(`${API_BASE}/email/history`);
+        
         if (!res.ok) throw new Error("Erreur chargement historique");
         const data = await res.json();
         setHistory(Array.isArray(data) ? data : []);
@@ -46,8 +57,10 @@ const EmailHistory = ({ initialId }) => {
         setLoading(false);
       }
     };
-    fetchHistory();
-  }, [initialId]);
+    
+    // On ne lance le fetch que si authFetch est disponible
+    if (authFetch) fetchHistory();
+  }, [initialId, authFetch]);
 
   const handleSend = async () => {
     if (!selectedEmail) return;
@@ -65,24 +78,22 @@ const EmailHistory = ({ initialId }) => {
       if (!to_email) throw new Error("Adresse destinataire manquante");
       if (!body || !body.trim()) throw new Error("Réponse IA manquante");
 
-      const res = await apiFetch("/email/send", {
+      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+      const res = await authFetch(`${API_BASE}/email/send`, {
         method: "POST",
         body: JSON.stringify({
-        to_email,
-        subject,
-        body,
-        email_id: selectedEmail.id ?? selectedEmail.email_id ?? null,// ✅ IMPORTANT
-      }),
-    });
-
-
+          to_email,
+          subject,
+          body,
+          email_id: selectedEmail.id ?? selectedEmail.email_id ?? null,
+        }),
+      });
 
       if (!res.ok) {
         const t = await res.text();
         throw new Error(t || "Erreur envoi");
       }
 
-      // ✅ Mise à jour UI (optimiste)
       const updated = { ...selectedEmail, send_status: "sent" };
       setSelectedEmail(updated);
       setHistory((prev) => prev.map((h) => (h.id === updated.id ? updated : h)));

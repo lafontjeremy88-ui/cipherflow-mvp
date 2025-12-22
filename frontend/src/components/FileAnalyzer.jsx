@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiFetch } from "../services/api";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
+// ❌ apiFetch supprimé
+// import { apiFetch } from "../services/api";
 
-const FileAnalyzer = ({ token }) => {
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+
+const FileAnalyzer = ({ token, authFetch }) => { // ✅
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -14,7 +17,8 @@ const FileAnalyzer = ({ token }) => {
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
-      const res = await apiFetch("/api/files/history");
+      if (!authFetch) return;
+      const res = await authFetch(`${API_BASE}/api/files/history`);
       if (res?.ok) setHistory(await res.json());
     } catch (e) {
       console.error("Erreur chargement historique", e);
@@ -25,7 +29,7 @@ const FileAnalyzer = ({ token }) => {
 
   useEffect(() => {
     fetchHistory();
-  }, []);
+  }, [authFetch]);
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -51,8 +55,19 @@ const FileAnalyzer = ({ token }) => {
     formData.append('file', file);
 
     try {
-      const res = await apiFetch("/api/analyze-file", {
+      // ⚠️ CAS PARTICULIER : Pour l'upload, on doit enlever le 'Content-Type': 'application/json'
+      // que authFetch ajoute par défaut.
+      // On le fait en passant un header Content-Type à undefined ou null pour que fetch utilise le multipart/form-data
+      
+      // On utilise fetch direct ici avec le token pour éviter le conflit de Content-Type json
+      // OU on modifie l'appel pour surcharger.
+      // Le plus simple ici est de faire un fetch manuel avec le Token car c'est du FormData
+      const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
+        headers: {
+             "Authorization": `Bearer ${token}` // On utilise le token passé en prop
+             // PAS DE CONTENT-TYPE ICI, le navigateur le mettra pour le FormData
+        },
         body: formData,
       });
 
