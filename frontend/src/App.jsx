@@ -1,294 +1,337 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Download, Loader2, Plus, Trash2, Calendar, Eye, RefreshCw, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
+import {
+  LayoutDashboard, Send, History, Zap, CheckCircle, AlertCircle, Mail,
+  Settings, LogOut, FileText, User, FolderSearch, PieChart
+} from "lucide-react";
+
+import Login from "./components/Login";
+import Register from "./components/Register";
+import FileAnalyzer from "./components/FileAnalyzer";
+import InvoiceGenerator from "./components/InvoiceGenerator";
+import EmailHistory from "./components/EmailHistory";
+import SettingsPanel from "./components/SettingsPanel";
+import DashboardPage from "./pages/Dashboard";
+import OAuthCallback from "./pages/OAuthCallback";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
-const InvoiceGenerator = ({ token, authFetch }) => {
-  const [loading, setLoading] = useState(false);
-  const [viewLoading, setViewLoading] = useState(false);
-  const [history, setHistory] = useState([]); // ✅ État pour l'historique
-  const [companySettings, setCompanySettings] = useState({
-    company_name: "Mon Entreprise",
-    logo: "",
-    signature: ""
-  });
+// Clés LS uniformisées
+const LS_TOKEN = "cipherflow_token";
+const LS_EMAIL = "cipherflow_email";
 
-  const [invoice, setInvoice] = useState({
-    number: `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
-    date: new Date().toISOString().split('T')[0],
-    clientName: "",
-    items: [{ description: "Prestation de service", price: 0 }]
-  });
+function App() {
+  const [token, setToken] = useState(localStorage.getItem(LS_TOKEN));
+  const [userEmail, setUserEmail] = useState(localStorage.getItem(LS_EMAIL));
+  const [showRegister, setShowRegister] = useState(false);
 
-  // Chargement initial (Settings + Historique)
-  useEffect(() => {
-    if (authFetch) {
-      // 1. Charger les settings
-      authFetch(`${API_BASE}/settings`)
-        .then(res => res.json())
-        .then(data => { if (data) setCompanySettings(data); })
-        .catch(err => console.error("Erreur settings", err));
+  const handleAuthSuccess = (newToken, email) => {
+    localStorage.setItem(LS_TOKEN, newToken);
+    if (email) localStorage.setItem(LS_EMAIL, email);
 
-      // 2. Charger l'historique
-      fetchHistory();
-    }
-  }, [authFetch]);
+    setToken(newToken);
+    if (email) setUserEmail(email);
 
-  // Fonction pour rafraîchir l'historique
-  const fetchHistory = async () => {
-    try {
-      const res = await authFetch(`${API_BASE}/api/invoices`);
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data);
-      }
-    } catch (e) {
-      console.error("Erreur historique", e);
-    }
+    setShowRegister(false);
   };
 
-  const handleChange = (field, value) => {
-    setInvoice(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleItemChange = (index, field, value) => {
-    const newItems = [...invoice.items];
-    newItems[index][field] = value;
-    setInvoice(prev => ({ ...prev, items: newItems }));
-  };
-
-  const addItem = () => {
-    setInvoice(prev => ({ ...prev, items: [...prev.items, { description: "Nouvelle prestation", price: 0 }] }));
-  };
-
-  const removeItem = (index) => {
-    const newItems = invoice.items.filter((_, i) => i !== index);
-    setInvoice(prev => ({ ...prev, items: newItems }));
-  };
-
-  const total = invoice.items.reduce((acc, item) => acc + Number(item.price || 0), 0);
-
-  const getPayload = () => ({
-    client_name: invoice.clientName || "Client",
-    invoice_number: invoice.number,
-    amount: total,
-    date: new Date(invoice.date).toLocaleDateString("fr-FR"),
-    items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
-  });
-
-  // Action : Visionner PDF
-  const handleView = async () => {
-    if (!authFetch) return alert("Erreur: Authentification manquante");
-    setViewLoading(true);
-    try {
-      const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
-        method: "POST",
-        body: JSON.stringify(getPayload()),
-      });
-      if (!res.ok) throw new Error("Erreur génération PDF");
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      fetchHistory(); // ✅ Mise à jour auto de l'historique
-    } catch (e) {
-      alert("Erreur génération aperçu");
-    } finally {
-      setViewLoading(false);
-    }
-  };
-
-  // Action : Télécharger PDF
-  const handleDownload = async () => {
-    if (!authFetch) return alert("Erreur: Authentification manquante");
-    setLoading(true);
-    try {
-      const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
-        method: "POST",
-        body: JSON.stringify(getPayload()),
-      });
-      if (!res.ok) throw new Error("Erreur génération PDF");
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Facture-${invoice.number}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-      fetchHistory(); // ✅ Mise à jour auto de l'historique
-    } catch (e) {
-      alert("Erreur téléchargement");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Action : Ouvrir une ancienne facture depuis l'historique
-  const handleHistoryOpen = async (ref) => {
-    try {
-        // On suppose que le backend a une route pour réimprimer ou on régénère si besoin
-        // Ici on utilise la route de "reprint" existante dans ton backend main.py
-        const res = await authFetch(`${API_BASE}/api/invoices/${ref}/pdf`);
-        if(res.ok) {
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            window.open(url, '_blank');
-        } else {
-            alert("Impossible de récupérer ce PDF");
-        }
-    } catch(e) {
-        console.error(e);
-    }
+  const handleLogout = () => {
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_EMAIL);
+    setToken(null);
+    setUserEmail(null);
+    setShowRegister(false);
   };
 
   return (
-    <div style={{ padding: "2rem", color: "white", maxWidth: "1600px", margin: "0 auto" }}>
-      
-      {/* HEADER */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>Générateur de Factures</h2>
-        <div style={{ display: "flex", gap: "10px" }}>
-            <button onClick={handleView} disabled={viewLoading} className="btn" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px", background: "#3b82f6", color: "white", border: "none", borderRadius: "8px", cursor: "pointer" }}>
-                {viewLoading ? <Loader2 className="spin" size={20} /> : <Eye size={20} />} Visionner PDF
+    <Routes>
+      {/* Callback OAuth Google */}
+      <Route
+        path="/oauth/callback"
+        element={<OAuthCallback onSuccess={handleAuthSuccess} />}
+      />
+
+      {/* Le reste de l'app */}
+      <Route
+        path="/*"
+        element={
+          <AppShell
+            token={token}
+            userEmail={userEmail}
+            showRegister={showRegister}
+            setShowRegister={setShowRegister}
+            onAuthSuccess={handleAuthSuccess}
+            onLogout={handleLogout}
+          />
+        }
+      />
+
+      {/* fallback */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+function AppShell({ token, userEmail, showRegister, setShowRegister, onAuthSuccess, onLogout }) {
+  if (!token) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f172a", padding: "20px" }}>
+        <div style={{ marginBottom: "20px", textAlign: "center" }}>
+          <Zap size={40} color="#6366f1" />
+          <h1 style={{ color: "white", fontSize: "1.5rem", marginTop: "10px" }}>CipherFlow V2</h1>
+        </div>
+
+        <div style={{ width: "100%", maxWidth: "400px", background: "#1e293b", padding: "2rem", borderRadius: "16px", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.5)" }}>
+          {showRegister ? <Register onLogin={onAuthSuccess} /> : <Login onLogin={onAuthSuccess} />}
+
+          <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid #334155", textAlign: "center" }}>
+            <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "10px" }}>
+              {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
+            </p>
+            <button
+              onClick={() => setShowRegister(!showRegister)}
+              style={{ background: "rgba(99, 102, 241, 0.1)", color: "#818cf8", border: "none", padding: "10px 20px", borderRadius: "8px", cursor: "pointer", fontWeight: "bold", width: "100%" }}
+            >
+              {showRegister ? "Se connecter" : "Créer un compte gratuitement"}
             </button>
-            <button onClick={handleDownload} disabled={loading} className="btn" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px", background: "#10b981", color: "white", border: "none", borderRadius: "8px", cursor: "pointer" }}>
-                {loading ? <Loader2 className="spin" size={20} /> : <Download size={20} />} Télécharger
-            </button>
+          </div>
         </div>
       </div>
+    );
+  }
 
-      {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem", marginBottom: "4rem" }}>
-        
-        {/* ÉDITEUR */}
-        <div>
-          <h3 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem", color: "#94a3b8" }}>
-            <FileText size={20} /> Éditeur de Facture
-          </h3>
-          <div className="card" style={{ padding: "2rem", background: "#1e293b", borderRadius: "12px" }}>
-            <h4 style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase", marginBottom: "1rem" }}>Informations</h4>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
-              <div>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Numéro</label>
-                <input type="text" value={invoice.number} onChange={(e) => handleChange("number", e.target.value)} style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white" }} />
-              </div>
-              <div>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Date</label>
-                <div style={{ position: "relative" }}>
-                    <input type="date" value={invoice.date} onChange={(e) => handleChange("date", e.target.value)} style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white" }} />
-                    <Calendar size={16} style={{ position: "absolute", right: "10px", top: "12px", color: "#94a3b8", pointerEvents: "none" }} />
-                </div>
-              </div>
-            </div>
-            <div style={{ marginBottom: "2rem" }}>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Client</label>
-                <input type="text" placeholder="Ex: ACME Corp" value={invoice.clientName} onChange={(e) => handleChange("clientName", e.target.value)} style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                <h4 style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase" }}>Prestations</h4>
-                <button onClick={addItem} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "5px" }}><Plus size={16} /> Ajouter</button>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {invoice.items.map((item, index) => (
-                    <div key={index} style={{ display: "flex", gap: "10px" }}>
-                        <input type="text" value={item.description} onChange={(e) => handleItemChange(index, "description", e.target.value)} style={{ flex: 1, padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white" }} />
-                        <input type="number" value={item.price} onChange={(e) => handleItemChange(index, "price", e.target.value)} style={{ width: "100px", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white", textAlign: "right" }} />
-                        <button onClick={() => removeItem(index)} style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", borderRadius: "8px", width: "40px", cursor: "pointer", display: "grid", placeItems: "center" }}><Trash2 size={16} /></button>
-                    </div>
-                ))}
-            </div>
-            <div style={{ marginTop: "2rem", padding: "1.5rem", background: "#0f172a", borderRadius: "12px", textAlign: "right" }}>
-                <div style={{ color: "#94a3b8", fontSize: "0.8rem", textTransform: "uppercase", marginBottom: "5px" }}>Total Estimé</div>
-                <div style={{ fontSize: "2rem", fontWeight: "bold", color: "#6366f1" }}>{total.toFixed(2)} €</div>
+  return <MainApp token={token} userEmail={userEmail} onLogout={onLogout} />;
+}
+
+function MainApp({ token, userEmail, onLogout }) {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [selectedHistoryId, setSelectedHistoryId] = useState(null);
+
+  const [fromEmail, setFromEmail] = useState("client@example.com");
+  const [subject, setSubject] = useState("Problème de connexion");
+  const [content, setContent] = useState("Bonjour...");
+  const [analyse, setAnalyse] = useState(null);
+
+  // ✅ NOUVEAU : on stocke l'id renvoyé par /email/process
+  const [analysisId, setAnalysisId] = useState(null);
+
+  const [replySubject, setReplySubject] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [infoMessage, setInfoMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (activeTab !== "analyze") {
+      setAnalyse(null);
+      setAnalysisId(null); // ✅ reset aussi l'id
+      setInfoMessage("");
+      setErrorMessage("");
+    }
+  }, [activeTab]);
+
+  const authFetch = async (url, options = {}) => {
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+
+    const res = await fetch(url, { ...options, headers });
+
+    if (res.status === 401) {
+      onLogout();
+      throw new Error("Session expirée");
+    }
+    return res;
+  };
+
+  const handleAnalyse = async () => {
+    setErrorMessage("");
+    setInfoMessage("");
+    setIsAnalyzing(true);
+
+    try {
+      const res = await authFetch(`${API_BASE}/email/process`, {
+        method: "POST",
+        body: JSON.stringify({
+          from_email: fromEmail,
+          subject,
+          content,
+          send_email: false,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Erreur serveur");
+
+      const data = await res.json();
+
+      // ✅ IMPORTANT : on récupère l'id peu importe le nom exact
+      const id = data.id ?? data.email_id ?? data.analysis_id ?? null;
+      setAnalysisId(id);
+
+      setAnalyse(data.analyse);
+      setReplySubject(data.reponse?.subject);
+      setReplyBody(data.reponse?.reply);
+      setInfoMessage("Analyse terminée !");
+    } catch (err) {
+      setErrorMessage(err.message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    setIsSending(true);
+    setErrorMessage("");
+    setInfoMessage("");
+
+    try {
+      const res = await authFetch(`${API_BASE}/email/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          to_email: fromEmail,
+          subject: replySubject,
+          body: replyBody,
+
+          // ✅ NOUVEAU : c'est ça qui permet au backend de marquer "Envoyé" dans l’historique
+          email_id: analysisId ?? null,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Erreur envoi");
+      const data = await res.json();
+      setInfoMessage(data?.status === "sent" ? "Email envoyé ✅" : "Email envoyé");
+      setAnalyse(null);
+      setAnalysisId(null); // ✅ reset
+      setContent("");
+    } catch (err) {
+      setErrorMessage(err.message);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleNavigation = (tabName, id = null) => {
+    if (id) setSelectedHistoryId(id);
+    setActiveTab(tabName);
+  };
+
+  const handleSidebarClick = (tabName) => {
+    setSelectedHistoryId(null);
+    setActiveTab(tabName);
+  };
+
+  return (
+    <div className="app-container">
+      <aside className="sidebar">
+        <div className="logo"><Zap size={28} color="#6366f1" /><span>CipherFlow V2</span></div>
+
+        <div style={{ padding: "0 20px 20px 20px", marginBottom: "20px", borderBottom: "1px solid #334155" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#94a3b8", fontSize: "0.85rem" }}>
+            <div style={{ background: "#334155", padding: "8px", borderRadius: "50%" }}><User size={16} /></div>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div style={{ fontWeight: "bold", color: "white" }}>Connecté</div>
+              <div title={userEmail}>{userEmail}</div>
             </div>
           </div>
         </div>
 
-        {/* APERÇU LIVE */}
-        <div>
-            <div style={{ background: "white", color: "black", width: "100%", minHeight: "800px", padding: "40px", borderRadius: "4px", boxShadow: "0 0 20px rgba(0,0,0,0.5)", position: "relative" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
-                    <div>
-                        <h1 style={{ margin: 0, color: "#2563eb", textTransform: "uppercase", fontSize: "1.5rem" }}>{companySettings.company_name || "Mon Entreprise"}</h1>
-                        <p style={{ margin: "5px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>contact@monentreprise.com</p>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                        <h2 style={{ margin: 0, color: "#94a3b8", textTransform: "uppercase", fontSize: "1.5rem", fontWeight: "bold" }}>Facture</h2>
-                        <div style={{ fontWeight: "bold", marginTop: "5px" }}>{invoice.number}</div>
-                        <div style={{ fontSize: "0.9rem", color: "#64748b" }}>{new Date(invoice.date).toLocaleDateString()}</div>
-                    </div>
-                </div>
-                <div style={{ marginBottom: "60px", padding: "20px", background: "#f8fafc", borderRadius: "8px" }}>
-                    <div style={{ fontSize: "0.8rem", color: "#94a3b8", textTransform: "uppercase", marginBottom: "5px" }}>Facturé à</div>
-                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>{invoice.clientName || "Nom du Client..."}</div>
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "40px" }}>
-                    <thead>
-                        <tr style={{ borderBottom: "2px solid #e2e8f0" }}><th style={{ textAlign: "left", padding: "10px 0", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase" }}>Description</th><th style={{ textAlign: "right", padding: "10px 0", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase" }}>Prix</th></tr>
-                    </thead>
-                    <tbody>
-                        {invoice.items.map((item, i) => (
-                            <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}><td style={{ padding: "15px 0" }}>{item.description}</td><td style={{ padding: "15px 0", textAlign: "right", fontWeight: "bold" }}>{Number(item.price).toFixed(2)} €</td></tr>
-                        ))}
-                    </tbody>
-                </table>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <div style={{ width: "200px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderTop: "2px solid #1e293b", marginTop: "10px" }}><span style={{ fontWeight: "bold" }}>TOTAL NET</span><span style={{ fontWeight: "bold", fontSize: "1.2rem" }}>{total.toFixed(2)} €</span></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-      </div>
+        <nav>
+          <div className={`nav-item ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => handleSidebarClick("dashboard")}><PieChart size={20} /> <span>Vue d'ensemble</span></div>
+          <div className={`nav-item ${activeTab === "analyze" ? "active" : ""}`} onClick={() => handleSidebarClick("analyze")}><LayoutDashboard size={20} /> <span>Traitement Email</span></div>
+          <div className={`nav-item ${activeTab === "invoices" ? "active" : ""}`} onClick={() => handleSidebarClick("invoices")}><FileText size={20} /> <span>Facturation</span></div>
+          <div className={`nav-item ${activeTab === "documents" ? "active" : ""}`} onClick={() => handleSidebarClick("documents")}><FolderSearch size={20} /> <span>Documents</span></div>
+          <div className={`nav-item ${activeTab === "history" ? "active" : ""}`} onClick={() => handleSidebarClick("history")}><History size={20} /> <span>Historique</span></div>
+          <div className={`nav-item ${activeTab === "settings" ? "active" : ""}`} onClick={() => handleSidebarClick("settings")}><Settings size={20} /> <span>Paramètres</span></div>
+          <div className="nav-item" style={{ marginTop: "auto", color: "#f87171" }} onClick={onLogout}><LogOut size={20} /> <span>Déconnexion</span></div>
+        </nav>
+      </aside>
 
-      {/* ZONE HISTORIQUE (Ajoutée ici) */}
-      <div style={{ borderTop: "1px solid #334155", paddingTop: "2rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}>
-            <h3 style={{ fontSize: "1.4rem", fontWeight: "bold" }}>📜 Historique des Factures</h3>
-            <button onClick={fetchHistory} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer" }}><RefreshCw size={18} /></button>
-        </div>
+      <main className="main-content">
+        <header style={{ marginBottom: "2rem" }}>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>
+            {activeTab === "dashboard" && "Tableau de Bord"}
+            {activeTab === "analyze" && "Traitement Intelligent"}
+            {activeTab === "invoices" && "Générateur de Factures"}
+            {activeTab === "documents" && "Analyse de Documents"}
+            {activeTab === "history" && "Historique des Activités"}
+            {activeTab === "settings" && "Paramètres du SaaS"}
+          </h1>
+        </header>
 
-        {history.length === 0 ? (
-            <div style={{ padding: "20px", background: "#1e293b", borderRadius: "8px", textAlign: "center", color: "#94a3b8" }}>Aucune facture générée pour le moment.</div>
-        ) : (
-            <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px" }}>
-                    <thead>
-                        <tr>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Numéro</th>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Date</th>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Client</th>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Montant</th>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Statut</th>
-                            <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {history.map((inv) => (
-                            <tr key={inv.id} style={{ background: "#1e293b" }}>
-                                <td style={{ padding: "15px", borderTopLeftRadius: "8px", borderBottomLeftRadius: "8px", fontWeight: "bold", color: "#6366f1" }}>{inv.reference}</td>
-                                <td style={{ padding: "15px" }}>{new Date(inv.date_issued).toLocaleDateString()}</td>
-                                <td style={{ padding: "15px" }}>{inv.client_name}</td>
-                                <td style={{ padding: "15px", fontWeight: "bold" }}>{inv.amount_total} €</td>
-                                <td style={{ padding: "15px" }}>
-                                    <span style={{ background: "rgba(16,185,129,0.2)", color: "#34d399", padding: "4px 8px", borderRadius: "4px", fontSize: "0.8rem" }}>ÉMISE</span>
-                                </td>
-                                <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
-                                    <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Voir le PDF">
-                                        <Eye size={18} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+        {errorMessage && (
+          <div style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#f87171", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}>
+            <AlertCircle size={20} /> {errorMessage}
+          </div>
         )}
-      </div>
 
+        {infoMessage && (
+          <div style={{ backgroundColor: "rgba(16,185,129,0.2)", color: "#34d399", padding: "1rem", borderRadius: "8px", marginBottom: "1rem", display: "flex", gap: "10px" }}>
+            <CheckCircle size={20} /> {infoMessage}
+          </div>
+        )}
+
+        {activeTab === "dashboard" && (
+           <DashboardPage 
+           token={token} 
+           onNavigate={handleNavigation} 
+           authFetch={authFetch} 
+          />
+       )}
+
+        {activeTab === "analyze" && (
+          <div className="dashboard-grid">
+            <div className="card">
+              <h2 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}>
+                <Mail size={20} color="var(--accent)" /> Email du Client
+              </h2>
+              <div className="form-group"><label>Expéditeur</label><input type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} /></div>
+              <div className="form-group"><label>Sujet</label><input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+              <div className="form-group"><label>Contenu</label><textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} /></div>
+              <button className="btn btn-primary" onClick={handleAnalyse} disabled={isAnalyzing}>
+                {isAnalyzing ? "Analyse..." : "Analyser"} <Zap size={18} />
+              </button>
+            </div>
+
+            {analyse && (
+              <>
+                <div className="card" style={{ borderColor: "var(--accent)" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>📊 Analyse IA</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                    <div><label>Catégorie</label><div className="badge badge-info">{analyse.category}</div></div>
+                    <div><label>Urgence</label><div className={`badge ${analyse.urgency === "haute" ? "badge-danger" : "badge-success"}`}>{analyse.urgency}</div></div>
+                  </div>
+                  <div style={{ marginTop: "1rem" }}><label>Résumé</label><p>{analyse.summary}</p></div>
+                </div>
+
+                <div className="card">
+                  <h3 style={{ marginBottom: "1rem" }}>✍️ Réponse</h3>
+                  <div className="form-group"><label>Objet</label><input type="text" value={replySubject} onChange={(e) => setReplySubject(e.target.value)} /></div>
+                  <div className="form-group"><label>Corps</label><textarea rows={10} value={replyBody} onChange={(e) => setReplyBody(e.target.value)} /></div>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button className="btn btn-success" onClick={handleSendEmail} disabled={isSending}>
+                      {isSending ? "Envoi..." : "Envoyer"} <Send size={18} />
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === "invoices" && (
+          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+             <InvoiceGenerator token={token} authFetch={authFetch} /> {/* 👈 Ajout crucial */}
+          </div>
+        )}
+        {activeTab === "documents" && <FileAnalyzer token={token} />}
+        {activeTab === "history" && <EmailHistory token={token} initialId={selectedHistoryId} />}
+        {activeTab === "settings" && <SettingsPanel token={token} />}
+      </main>
     </div>
   );
-};
+}
 
-export default InvoiceGenerator;
+export default App;
