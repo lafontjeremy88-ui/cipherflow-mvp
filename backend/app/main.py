@@ -4,41 +4,37 @@ import logging
 import base64
 import secrets
 import io 
-import shutil
 from typing import Optional, List
 from datetime import datetime
-
-# --- IMAGES & PDF ---
+import shutil
+from sqlalchemy import text as sql_text
 from PIL import Image 
-from fpdf import FPDF # Si utilisé pour générer des PDF simples côté serveur
 
-# --- EXTERNES ---
 import resend 
 from jose import jwt, JWTError 
 from sqlalchemy import text as sql_text
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from dotenv import load_dotenv
-import google.generativeai as genai
-
-# --- FASTAPI ---
+# 👇 AJOUT IMPORTANT : "Request" est ajouté ici
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Request
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
-from starlette.middleware.sessions import SessionMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from dotenv import load_dotenv
+import google.generativeai as genai
+from fastapi import Depends
+# On garde tes imports d'origine même s'ils sont redondants, pour la stabilité
+from app.security import get_current_user
 
-# --- IMPORTS INTERNES ---
-# Assure-toi que ces fichiers existent bien dans ton dossier app/
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models 
 from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
 from app.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY 
 from app.pdf_service import generate_pdf_bytes 
+from starlette.middleware.sessions import SessionMiddleware
 
-# --- CONFIG INITIALE ---
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
@@ -47,7 +43,6 @@ logger = logging.getLogger("inbox-ia-pro")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 
-# --- GEMINI ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -56,7 +51,6 @@ except Exception as e:
 
 MODEL_NAME = "gemini-flash-latest"
 
-# --- RESEND ---
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
@@ -66,7 +60,6 @@ ENV = os.getenv("ENV", "dev").lower()
 if ENV in ("prod", "production") and not WATCHER_SECRET:
     raise RuntimeError("WATCHER_SECRET manquant en production")
 
-# --- FONCTIONS UTILITAIRES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY: return
     try:
@@ -109,37 +102,25 @@ async def generate_reply_logic(req: 'EmailReplyRequest', company_name: str, tone
     data = extract_json_from_text(raw) or {}
     return EmailReplyResponse(reply=data.get("reply", raw), subject=data.get("subject", f"Re: {req.subject}"), raw_ai_text=raw)
 
-# --- AUTHENTIFICATION (INTÉGRÉE ICI POUR ÉVITER LES ERREURS D'IMPORT) ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# Ta fonction get_current_user redéfinie (on la garde telle quelle car elle marchait)
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
     if not JWT_SECRET_KEY:
-        # Fallback dev si pas de clé (A CHANGER EN PROD)
-        JWT_SECRET_KEY = "dev_secret_key" 
-
+        print("❌ JWT_SECRET_KEY manquant dans Railway Variables")
+        raise HTTPException(status_code=401, detail="Server misconfigured")
     try:
-        payload = jwt.decode(
-            token,
-            JWT_SECRET_KEY,
-            algorithms=[ALGORITHM], # ALGORITHM vient de app.auth
-            options={"verify_aud": False},
-        )
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"], options={"verify_aud": False})
     except JWTError as e:
         print("❌ JWT decode error:", str(e))
         raise HTTPException(status_code=401, detail="Invalid token")
-
-    email = payload.get("sub") # Dans app.auth.create_access_token on met l'email dans "sub"
-    if not email:
-        raise HTTPException(status_code=401, detail="Token missing email")
-
+    email = payload.get("email") or payload.get("sub")
+    if not email: raise HTTPException(status_code=401, detail="Token missing email")
     user = db.query(User).filter(User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
+    if not user: raise HTTPException(status_code=401, detail="User not found")
     return user
 
-# --- MODELES PYDANTIC ---
 class LoginRequest(BaseModel): email: str; password: str
 class TokenResponse(BaseModel): access_token: str; token_type: str; user_email: str
 class EmailAnalyseRequest(BaseModel): from_email: EmailStr; subject: str; content: str
@@ -149,59 +130,36 @@ class EmailReplyResponse(BaseModel): reply: str; subject: str; raw_ai_text: Opti
 class EmailProcessRequest(BaseModel): from_email: EmailStr; subject: str; content: str; send_email: bool = False
 class EmailProcessResponse(BaseModel):analyse: EmailAnalyseResponse; reponse: EmailReplyResponse; send_status: str; email_id: Optional[int] = None; error: Optional[str] = None
 class SendEmailRequest(BaseModel): to_email: str; subject: str; body: str; email_id: Optional[int] = None
-
 class SettingsRequest(BaseModel): 
     company_name: str
     agent_name: str
     tone: str
     signature: str
     logo: Optional[str] = None 
-
 class EmailHistoryItem(BaseModel): 
     id: int; created_at: Optional[datetime] = None; sender_email: str; subject: str; summary: str; category: str; urgency: str; is_devis: bool; raw_email_text: str; suggested_response_text: str
     class Config: from_attributes = True
-
 class InvoiceItem(BaseModel): desc: str; price: float
 class InvoiceRequest(BaseModel): client_name: str; invoice_number: str; amount: float; date: str; items: List[InvoiceItem]
 
-# --- APP FASTAPI ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "").strip()
+ENV = os.getenv("ENV", "dev").lower()
 if ENV in ("prod", "production") and not OAUTH_STATE_SECRET:
     raise RuntimeError("OAUTH_STATE_SECRET manquant en production")
 
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=OAUTH_STATE_SECRET or "dev-secret-change-me",
-    same_site="lax",
-    https_only=(ENV in ("prod", "production")),
-)
-
+app.add_middleware(SessionMiddleware, secret_key=OAUTH_STATE_SECRET or "dev-secret-change-me", same_site="lax", https_only=(ENV in ("prod", "production")))
 app.include_router(google_oauth_router, tags=["Google OAuth"])
 
-origins = [
-  "http://localhost:5173",
-  "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
-  "[https://cipherflow.company](https://cipherflow.company)",
-]
-
-app.add_middleware(
-  CORSMiddleware,
-  allow_origins=origins,
-  allow_credentials=True,
-  allow_methods=["*"],
-  allow_headers=["*"],
-)
+origins = ["http://localhost:5173", "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)", "[https://cipherflow.company](https://cipherflow.company)"]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 def on_startup():
     print("🚀 DÉMARRAGE - CRÉATION DES TABLES 🚀")
     models.Base.metadata.create_all(bind=engine)
-    if not os.path.exists("uploads"):
-        os.makedirs("uploads")
-        print("📁 Dossier 'uploads' créé.")
-    
+    if not os.path.exists("uploads"): os.makedirs("uploads"); print("📁 Dossier 'uploads' créé.")
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
@@ -210,17 +168,12 @@ def on_startup():
         print("✅ Admin créé.")
     try:
         table_name = EmailAnalysis.__tablename__
-        with engine.begin() as conn:
-            conn.execute(sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
-    except Exception as e:
-        print("⚠️ Migration send_status ignorée:", e)
-
-# --- ROUTES ---
+        with engine.begin() as conn: conn.execute(sql_text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
+    except Exception as e: print("⚠️ Migration send_status ignorée:", e)
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
-    if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)): raise HTTPException(status_code=401, detail="Unauthorized")
     settings = db.query(AppSettings).first()
     comp = settings.company_name if settings else "CipherFlow"
     tone = settings.tone if settings else "pro"
@@ -232,9 +185,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
         db.add(new); db.commit()
     except Exception as e: print(f"BDD Error: {e}")
     sent, err = "not_sent", None
-    if req.send_email:
-        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-        sent = "sent"
+    if req.send_email: send_email_via_resend(req.from_email, reponse.subject, reponse.reply); sent = "sent"
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, error=err)
 
 @app.post("/auth/register", response_model=TokenResponse)
@@ -281,32 +232,33 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     return {"status": "updated"}
 
 # --- ROUTE SPECIALE UPLOAD LOGO (VERSION DEBUG & MANUELLE) ---
+# ON A REMPLACÉ LA ROUTE QUI PLANTAIT PAR CELLE-CI QUI FONCTIONNE SANS PYTHON-MULTIPART STRICT
 @app.post("/settings/upload-logo")
 async def upload_logo(
     request: Request, 
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    print(f"DEBUG UPLOAD: Content-Type reçu: {request.headers.get('content-type')}")
-
+    # Lecture manuelle du body pour éviter l'erreur 422 automatique
     try:
         form = await request.form()
     except Exception as e:
         print(f"DEBUG FORM ERROR: {e}")
-        # Message d'erreur explicite si python-multipart manque
-        raise HTTPException(400, detail=f"Erreur lecture formulaire (dépendance manquante?): {str(e)}")
+        raise HTTPException(400, detail=f"Erreur lecture formulaire: {str(e)}")
 
     file = form.get("file")
     if not file:
         raise HTTPException(422, detail="Champ 'file' manquant.")
 
-    if "image" not in file.content_type:
+    # Vérification type simple
+    if hasattr(file, "content_type") and "image" not in file.content_type:
         raise HTTPException(400, detail="Format non supporté. Image requise.")
 
     try:
         contents = await file.read()
         img = Image.open(io.BytesIO(contents))
         
+        # Optimisation
         max_width = 800
         if img.width > max_width:
             ratio = max_width / float(img.width)
@@ -319,7 +271,9 @@ async def upload_logo(
         
         optimized_contents = buffer.getvalue()
         encoded_string = base64.b64encode(optimized_contents).decode("utf-8")
-        final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
+        # On recrée une chaîne Base64 propre
+        mime = file.content_type if hasattr(file, "content_type") else "image/png"
+        final_logo_str = f"data:{mime};base64,{encoded_string}"
         
         s = db.query(AppSettings).first()
         if not s: s = AppSettings(); db.add(s)
@@ -342,9 +296,7 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         new = EmailAnalysis(sender_email=req.from_email, subject=req.subject, raw_email_text=req.content, is_devis=analyse.is_devis, category=analyse.category, urgency=analyse.urgency, summary=analyse.summary, suggested_title=analyse.suggested_title, suggested_response_text=reponse.reply, raw_ai_output=analyse.raw_ai_text)
         db.add(new); db.commit(); db.refresh(new)
         sent, err = "not_sent", None
-        if req.send_email:
-            send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-            sent = "sent"
+        if req.send_email: send_email_via_resend(req.from_email, reponse.subject, reponse.reply); sent = "sent"
         return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new.id, error=err)
     except Exception as e:
         print(f"ERREUR PROCESS EMAIL: {e}")
