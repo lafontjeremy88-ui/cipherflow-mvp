@@ -4,7 +4,7 @@ sqlalchemy
 psycopg2-binary
 python-jose[cryptography]
 passlib[bcrypt]
-python-multipart>=0.0.9  <-- ON FORCE UNE VERSION RÉCENTE
+python-multipart>=0.0.9
 python-dotenv
 google-generativeai
 resend
