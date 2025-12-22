@@ -11,8 +11,8 @@ import FileAnalyzer from "./components/FileAnalyzer";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
-import DashboardPage from "./pages/Dashboard";
-import OAuthCallback from "./pages/OAuthCallback";
+import DashboardPage from "./components/Dashboard"; // Attention au chemin (parfois pages/Dashboard)
+import OAuthCallback from "./components/OAuthCallback"; // Idem, vérifie si c'est components ou pages
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -107,14 +107,12 @@ function MainApp({ token, userEmail, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
+  // États pour l'onglet "Analyse"
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
   const [analyse, setAnalyse] = useState(null);
-
-  // ✅ NOUVEAU : on stocke l'id renvoyé par /email/process
   const [analysisId, setAnalysisId] = useState(null);
-
   const [replySubject, setReplySubject] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -125,12 +123,13 @@ function MainApp({ token, userEmail, onLogout }) {
   useEffect(() => {
     if (activeTab !== "analyze") {
       setAnalyse(null);
-      setAnalysisId(null); // ✅ reset aussi l'id
+      setAnalysisId(null);
       setInfoMessage("");
       setErrorMessage("");
     }
   }, [activeTab]);
 
+  // --- FONCTION VITALE : AUTH FETCH ---
   const authFetch = async (url, options = {}) => {
     const headers = {
       "Content-Type": "application/json",
@@ -138,11 +137,16 @@ function MainApp({ token, userEmail, onLogout }) {
       Authorization: `Bearer ${token}`,
     };
 
+    // Si on envoie un FormData (upload fichier), on supprime Content-Type pour laisser le navigateur gérer
+    if (options.body instanceof FormData) {
+        delete headers["Content-Type"];
+    }
+
     const res = await fetch(url, { ...options, headers });
 
     if (res.status === 401) {
       onLogout();
-      throw new Error("Session expirée");
+      throw new Error("Session expirée, veuillez vous reconnecter.");
     }
     return res;
   };
@@ -163,11 +167,9 @@ function MainApp({ token, userEmail, onLogout }) {
         }),
       });
 
-      if (!res.ok) throw new Error("Erreur serveur");
+      if (!res.ok) throw new Error("Erreur serveur lors de l'analyse");
 
       const data = await res.json();
-
-      // ✅ IMPORTANT : on récupère l'id peu importe le nom exact
       const id = data.id ?? data.email_id ?? data.analysis_id ?? null;
       setAnalysisId(id);
 
@@ -194,17 +196,15 @@ function MainApp({ token, userEmail, onLogout }) {
           to_email: fromEmail,
           subject: replySubject,
           body: replyBody,
-
-          // ✅ NOUVEAU : c'est ça qui permet au backend de marquer "Envoyé" dans l’historique
           email_id: analysisId ?? null,
         }),
       });
 
-      if (!res.ok) throw new Error("Erreur envoi");
+      if (!res.ok) throw new Error("Erreur envoi email");
       const data = await res.json();
       setInfoMessage(data?.status === "sent" ? "Email envoyé ✅" : "Email envoyé");
       setAnalyse(null);
-      setAnalysisId(null); // ✅ reset
+      setAnalysisId(null);
       setContent("");
     } catch (err) {
       setErrorMessage(err.message);
@@ -273,13 +273,15 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
+        {/* --- ROUTAGE DES ONGLETS (TOUS CONNECTÉS) --- */}
+        
         {activeTab === "dashboard" && (
            <DashboardPage 
-           token={token} 
-           onNavigate={handleNavigation} 
-           authFetch={authFetch} 
+             token={token} 
+             onNavigate={handleNavigation} 
+             authFetch={authFetch} 
           />
-       )}
+        )}
 
         {activeTab === "analyze" && (
           <div className="dashboard-grid">
@@ -321,14 +323,26 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
+        {/* ✅ FACTURATION RÉPARÉE */}
         {activeTab === "invoices" && (
-          <div style={{ maxWidth: "800px", margin: "0 auto" }}>
-             <InvoiceGenerator token={token} authFetch={authFetch} /> {/* 👈 Ajout crucial */}
+          <div style={{ maxWidth: "1600px", margin: "0 auto" }}>
+             <InvoiceGenerator token={token} authFetch={authFetch} />
           </div>
         )}
-        {activeTab === "documents" && <FileAnalyzer token={token} />}
-        {activeTab === "history" && <EmailHistory token={token} initialId={selectedHistoryId} />}
-        {activeTab === "settings" && <SettingsPanel token={token} />}
+
+        {/* ✅ AUTRES ONGLETS CONNECTÉS */}
+        {activeTab === "documents" && (
+            <FileAnalyzer token={token} authFetch={authFetch} /> 
+        )}
+        
+        {activeTab === "history" && (
+            <EmailHistory token={token} initialId={selectedHistoryId} authFetch={authFetch} />
+        )}
+        
+        {activeTab === "settings" && (
+            <SettingsPanel token={token} authFetch={authFetch} />
+        )}
+
       </main>
     </div>
   );
