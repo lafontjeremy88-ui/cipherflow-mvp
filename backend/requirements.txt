@@ -1,10 +1,10 @@
-fastapi
-uvicorn
+fastapi>=0.109.0
+uvicorn>=0.27.0
 sqlalchemy
 psycopg2-binary
 python-jose[cryptography]
 passlib[bcrypt]
-python-multipart==0.0.9
+python-multipart>=0.0.9  <-- ON FORCE UNE VERSION RÉCENTE
 python-dotenv
 google-generativeai
 resend

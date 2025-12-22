@@ -302,11 +302,18 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     return {"status": "updated"}
 
 # --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
+# --- ROUTE SPECIALE UPLOAD LOGO (INTELLIGENTE : REDIMENSIONNE L'IMAGE) ---
 @app.post("/settings/upload-logo")
-async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. Vérification du type
-    if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
-        raise HTTPException(400, detail="Format non supporté. Utilisez PNG ou JPEG.")
+async def upload_logo(
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    print(f"DEBUG: Réception fichier {file.filename}, type={file.content_type}")
+
+    # 1. Vérification du type (plus souple)
+    if "image" not in file.content_type:
+        raise HTTPException(400, detail="Format non supporté. Envoyez une image.")
 
     # 2. Lecture du fichier lourd
     contents = await file.read()
@@ -325,7 +332,7 @@ async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db
         
         # 5. Sauvegarde de l'image optimisée dans un "buffer" mémoire
         buffer = io.BytesIO()
-        # On conserve le format original (PNG ou JPEG)
+        # On conserve le format original ou PNG par défaut
         fmt = img.format if img.format else "PNG"
         img.save(buffer, format=fmt, optimize=True, quality=85)
         
