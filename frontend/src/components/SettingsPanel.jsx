@@ -50,11 +50,13 @@ const SettingsPanel = ({ token, authFetch }) => {
     formData.append("file", file);
 
     try {
+      console.log("Envoi du logo...", file.name, file.size); // 🔍 Log de contrôle
+
       // On utilise la route spéciale du backend qui redimensionne l'image
       const res = await authFetch(`${API_BASE}/settings/upload-logo`, {
         method: "POST",
         body: formData, 
-        // Note: authFetch détecte FormData et gère les headers automatiquement
+        // Note: authFetch détecte FormData et supprime le Content-Type json automatiquement
       });
 
       if (res.ok) {
@@ -64,7 +66,10 @@ const SettingsPanel = ({ token, authFetch }) => {
         setSettings(data);
         setMessage({ type: "success", text: "Logo mis à jour avec succès !" });
       } else {
-        setMessage({ type: "error", text: "Erreur lors de l'upload du logo." });
+        // On essaie de lire l'erreur renvoyée par le serveur
+        const errData = await res.json().catch(() => ({})); 
+        console.error("Erreur Upload:", errData);
+        setMessage({ type: "error", text: "Erreur serveur lors de l'upload." });
       }
     } catch (err) {
       console.error(err);
