@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, Building, User, PenTool, FileSignature, Image as ImageIcon, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
-const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const SettingsPanel = ({ token, authFetch }) => {
   const [settings, setSettings] = useState({
@@ -36,21 +36,15 @@ const SettingsPanel = ({ token, authFetch }) => {
     setSettings({ ...settings, [e.target.name]: e.target.value });
   };
 
-  // --- GESTION DU LOGO (CONVERSION BASE64 CÔTÉ CLIENT) ---
+  // --- GESTION DU LOGO (JSON BASE64 - SANS LIMITE) ---
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Limite de taille simple (ex: 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-        setMessage({ type: "error", text: "Fichier trop volumineux (Max 2MB)." });
-        return;
-    }
-
     setUploading(true);
     setMessage(null);
 
-    // On utilise FileReader pour transformer l'image en chaîne de caractères
+    // Conversion de l'image en texte (Base64)
     const reader = new FileReader();
     reader.readAsDataURL(file);
 
@@ -60,24 +54,25 @@ const SettingsPanel = ({ token, authFetch }) => {
         try {
             console.log("Envoi du logo en Base64...");
 
-            // On utilise authFetch normalement car c'est du JSON !
+            // On envoie le fichier sous forme de texte JSON
+            // C'est la méthode la plus fiable pour éviter les erreurs 422
             const res = await authFetch(`${API_BASE}/settings/upload-logo`, {
                 method: "POST",
-                // On envoie un objet JSON
                 body: JSON.stringify({ logo_base64: base64Str }), 
             });
 
             if (res.ok) {
+                // On recharge pour voir le résultat
                 const refresh = await authFetch(`${API_BASE}/settings`);
                 if (refresh.ok) {
                     const data = await refresh.json();
                     setSettings(data);
-                    setMessage({ type: "success", text: "Logo mis à jour !" });
+                    setMessage({ type: "success", text: "Logo mis à jour avec succès !" });
                 }
             } else {
                 const errData = await res.json().catch(() => ({})); 
                 console.error("Erreur Upload:", errData);
-                setMessage({ type: "error", text: "Erreur serveur." });
+                setMessage({ type: "error", text: "Erreur serveur lors de l'envoi." });
             }
         } catch (err) {
             console.error(err);
@@ -89,7 +84,7 @@ const SettingsPanel = ({ token, authFetch }) => {
 
     reader.onerror = () => {
         setUploading(false);
-        setMessage({ type: "error", text: "Erreur lecture fichier." });
+        setMessage({ type: "error", text: "Erreur lecture du fichier." });
     };
   };
 
@@ -119,7 +114,7 @@ const SettingsPanel = ({ token, authFetch }) => {
     <div style={{ maxWidth: "1000px", margin: "0 auto", paddingBottom: "4rem" }}>
       <div style={{ marginBottom: "2rem" }}>
         <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white" }}>Paramètres du SaaS</h2>
-        <p style={{ color: "#94a3b8" }}>Personnalisez l'identité de votre assistant IA et vos documents.</p>
+        <p style={{ color: "#94a3b8" }}>Personnalisez l'identité de votre assistant IA.</p>
       </div>
 
       <div style={cardStyle}>
@@ -137,7 +132,7 @@ const SettingsPanel = ({ token, authFetch }) => {
             {settings.logo ? <img src={settings.logo} alt="Logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} /> : <ImageIcon size={40} color="#475569" />}
           </div>
           <div style={{ flex: 1 }}>
-            <label style={labelStyle}>Mettre à jour le logo (Fichier image)</label>
+            <label style={labelStyle}>Mettre à jour le logo</label>
             <div style={{ display: "flex", gap: "10px" }}>
               <label style={{ cursor: "pointer", background: uploading ? "#334155" : "#3b82f6", color: "white", padding: "10px 20px", borderRadius: "8px", display: "inline-flex", alignItems: "center", gap: "10px", fontWeight: "bold", transition: "background 0.2s" }}>
                 {uploading ? <Loader2 className="spin" size={20} /> : <Upload size={20} />}
@@ -145,7 +140,7 @@ const SettingsPanel = ({ token, authFetch }) => {
                 <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleLogoUpload} disabled={uploading} style={{ display: "none" }} />
               </label>
             </div>
-            <p style={{ marginTop: "10px", fontSize: "0.8rem", color: "#64748b" }}>Formats supportés : PNG, JPG. L'image sera automatiquement optimisée par le serveur.</p>
+            <p style={{ marginTop: "10px", fontSize: "0.8rem", color: "#64748b" }}>Formats supportés : PNG, JPG.</p>
           </div>
         </div>
       </div>
@@ -155,16 +150,14 @@ const SettingsPanel = ({ token, authFetch }) => {
         <div style={{ marginBottom: "1.5rem" }}>
           <label style={labelStyle}><PenTool size={18} /> Ton de la réponse</label>
           <select name="tone" value={settings.tone || "pro"} onChange={handleChange} style={{ ...inputStyle, cursor: "pointer" }}>
-            <option value="pro">Professionnel & Formel</option>
-            <option value="amical">Amical & Décontracté</option>
-            <option value="direct">Direct & Concis</option>
-            <option value="commercial">Commercial & Persuasif</option>
-            <option value="emphatique">Empathique & Rassurant</option>
+            <option value="pro">Professionnel</option>
+            <option value="amical">Amical</option>
+            <option value="direct">Direct</option>
           </select>
         </div>
         <div>
-          <label style={labelStyle}><FileSignature size={18} /> Signature d'email automatique</label>
-          <textarea name="signature" value={settings.signature || ""} onChange={handleChange} placeholder="Cordialement, L'équipe..." style={{ ...inputStyle, minHeight: "100px", resize: "vertical" }} />
+          <label style={labelStyle}><FileSignature size={18} /> Signature d'email</label>
+          <textarea name="signature" value={settings.signature || ""} onChange={handleChange} style={{ ...inputStyle, minHeight: "100px", resize: "vertical" }} />
         </div>
       </div>
 
@@ -174,8 +167,8 @@ const SettingsPanel = ({ token, authFetch }) => {
             {message.type === "success" ? <CheckCircle size={20} /> : <AlertCircle size={20} />} {message.text}
           </div>
         ) : (<div style={{ color: "#64748b", fontSize: "0.9rem" }}>Modifications non enregistrées</div>)}
-        <button onClick={handleSave} disabled={loading || uploading} style={{ background: loading ? "#334155" : "#6366f1", border: "none", color: "white", padding: "12px 24px", borderRadius: "8px", cursor: loading ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: "10px", fontSize: "1rem", fontWeight: "bold" }}>
-          <Save size={20} /> {loading ? "Sauvegarde..." : "Sauvegarder les paramètres"}
+        <button onClick={handleSave} disabled={loading || uploading} style={{ background: loading ? "#334155" : "#6366f1", border: "none", color: "white", padding: "12px 24px", borderRadius: "8px", cursor: loading ? "not-allowed" : "pointer" }}>
+          <Save size={20} /> {loading ? "Sauvegarde..." : "Sauvegarder"}
         </button>
       </div>
     </div>
