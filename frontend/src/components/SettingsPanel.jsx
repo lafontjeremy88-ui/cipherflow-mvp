@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, Building, User, PenTool, FileSignature, Image as ImageIcon, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
-const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const SettingsPanel = ({ token, authFetch }) => {
   const [settings, setSettings] = useState({
@@ -36,7 +36,7 @@ const SettingsPanel = ({ token, authFetch }) => {
     setSettings({ ...settings, [e.target.name]: e.target.value });
   };
 
-  // --- GESTION DU LOGO (JSON BASE64 - SANS LIMITE) ---
+  // --- GESTION DU LOGO (CORRIGÉE : BASE64) ---
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -44,25 +44,24 @@ const SettingsPanel = ({ token, authFetch }) => {
     setUploading(true);
     setMessage(null);
 
-    // Conversion de l'image en texte (Base64)
+    // 1. On lit le fichier comme une chaîne de caractères (Data URL)
     const reader = new FileReader();
     reader.readAsDataURL(file);
 
     reader.onload = async () => {
-        const base64Str = reader.result;
+        const base64Str = reader.result; // Ceci contient "data:image/png;base64,..."
 
         try {
-            console.log("Envoi du logo en Base64...");
+            console.log("Envoi du logo en format Base64...");
 
-            // On envoie le fichier sous forme de texte JSON
-            // C'est la méthode la plus fiable pour éviter les erreurs 422
+            // 2. On l'envoie comme du JSON classique
             const res = await authFetch(`${API_BASE}/settings/upload-logo`, {
                 method: "POST",
                 body: JSON.stringify({ logo_base64: base64Str }), 
             });
 
             if (res.ok) {
-                // On recharge pour voir le résultat
+                // 3. Succès : on recharge pour afficher le nouveau logo
                 const refresh = await authFetch(`${API_BASE}/settings`);
                 if (refresh.ok) {
                     const data = await refresh.json();
@@ -84,7 +83,7 @@ const SettingsPanel = ({ token, authFetch }) => {
 
     reader.onerror = () => {
         setUploading(false);
-        setMessage({ type: "error", text: "Erreur lecture du fichier." });
+        setMessage({ type: "error", text: "Erreur lecture fichier local." });
     };
   };
 
