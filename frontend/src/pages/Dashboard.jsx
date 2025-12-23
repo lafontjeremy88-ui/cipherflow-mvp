@@ -31,49 +31,107 @@ const DashboardPage = ({ token, authFetch }) => {
 
   const chartData = stats.charts?.distribution || [];
 
+  // --- STYLES EN LIGNE (POUR FORCER L'AFFICHAGE CORRECT) ---
+  const gridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", // Force 3 colonnes adaptables
+    gap: "20px",
+    marginBottom: "30px"
+  };
+
+  const cardStyle = {
+    background: "#1e293b",
+    padding: "24px",
+    borderRadius: "16px",
+    border: "1px solid #334155",
+    display: "flex",
+    alignItems: "center",
+    gap: "20px",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+  };
+
+  const iconBoxStyle = (color, bg) => ({
+    width: "50px",
+    height: "50px",
+    borderRadius: "12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: color,
+    background: bg
+  });
+
+  const valueStyle = {
+    fontSize: "2rem",
+    fontWeight: "bold",
+    color: "white",
+    lineHeight: "1"
+  };
+
+  const labelStyle = {
+    color: "#94a3b8",
+    fontSize: "0.9rem",
+    marginTop: "5px"
+  };
+
+  const mainCardStyle = {
+    background: "#1e293b",
+    padding: "24px",
+    borderRadius: "16px",
+    border: "1px solid #334155",
+    height: "100%",
+    minHeight: "400px",
+    display: "flex",
+    flexDirection: "column"
+  };
+
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
-      {/* --- CARTES KPI --- */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="icon-wrapper" style={{ background: "rgba(99, 102, 241, 0.1)", color: "#6366f1" }}>
+    <div style={{ maxWidth: "1200px", margin: "0 auto", paddingBottom: "50px" }}>
+      
+      {/* --- CARTES KPI (GRID) --- */}
+      <div style={gridStyle}>
+        
+        {/* CARTE 1 */}
+        <div style={cardStyle}>
+          <div style={iconBoxStyle("#6366f1", "rgba(99, 102, 241, 0.1)")}>
             <Mail size={24} />
           </div>
           <div>
-            <div className="stat-value">{stats.kpis?.total_emails || 0}</div>
-            <div className="stat-label">Emails Traités</div>
+            <div style={valueStyle}>{stats.kpis?.total_emails || 0}</div>
+            <div style={labelStyle}>Emails Traités</div>
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="icon-wrapper" style={{ background: "rgba(245, 158, 11, 0.1)", color: "#f59e0b" }}>
+        {/* CARTE 2 */}
+        <div style={cardStyle}>
+          <div style={iconBoxStyle("#f59e0b", "rgba(245, 158, 11, 0.1)")}>
             <AlertTriangle size={24} />
           </div>
           <div>
-            <div className="stat-value">{stats.kpis?.high_urgency || 0}</div>
-            <div className="stat-label">Urgence Haute</div>
+            <div style={valueStyle}>{stats.kpis?.high_urgency || 0}</div>
+            <div style={labelStyle}>Urgence Haute</div>
           </div>
         </div>
 
-        <div className="stat-card">
-          <div className="icon-wrapper" style={{ background: "rgba(16, 185, 129, 0.1)", color: "#10b981" }}>
+        {/* CARTE 3 */}
+        <div style={cardStyle}>
+          <div style={iconBoxStyle("#10b981", "rgba(16, 185, 129, 0.1)")}>
             <FileText size={24} />
           </div>
           <div>
-            <div className="stat-value">{stats.kpis?.invoices || 0}</div>
-            <div className="stat-label">Factures Générées</div>
+            <div style={valueStyle}>{stats.kpis?.invoices || 0}</div>
+            <div style={labelStyle}>Factures Générées</div>
           </div>
         </div>
       </div>
 
-      {/* --- GRAPHIQUES ET ACTIVITÉ --- */}
-      <div className="dashboard-grid" style={{ marginTop: "2rem" }}>
+      {/* --- GRAPHIQUES ET LISTE (GRID 2 COLONNES) --- */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "20px" }}>
         
-        {/* Graphique avec Hauteur Fixe pour éviter le bug d'affichage */}
-        <div className="card">
-          <h3>Répartition par Catégorie</h3>
-          {/* FIX: On force une hauteur précise ici */}
-          <div style={{ width: "100%", height: "300px", marginTop: "20px" }}>
+        {/* Graphique */}
+        <div style={mainCardStyle}>
+          <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem" }}>Répartition par Catégorie</h3>
+          <div style={{ flex: 1, width: "100%", minHeight: "300px" }}>
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -82,7 +140,7 @@ const DashboardPage = ({ token, authFetch }) => {
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
-                    outerRadius={80}
+                    outerRadius={100} // Radius fixe pour éviter l'écrasement
                     paddingAngle={5}
                     dataKey="value"
                   >
@@ -90,7 +148,7 @@ const DashboardPage = ({ token, authFetch }) => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "none", borderRadius: "8px", color: "#fff" }} />
+                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "#fff" }} />
                   <Legend verticalAlign="bottom" height={36}/>
                 </PieChart>
               </ResponsiveContainer>
@@ -102,16 +160,22 @@ const DashboardPage = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* Liste Activité Récente */}
-        <div className="card">
-          <h3>Activité Récente</h3>
-          <div className="activity-list" style={{ marginTop: "20px" }}>
+        {/* Liste Activité */}
+        <div style={mainCardStyle}>
+          <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem" }}>Activité Récente</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             {stats.recents && stats.recents.length > 0 ? (
               stats.recents.map((item) => (
-                <div key={item.id} className="activity-item">
-                  <div className={`status-dot ${item.urgency === "haute" ? "urgent" : "normal"}`}></div>
+                <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "15px", paddingBottom: "15px", borderBottom: "1px solid #334155" }}>
+                  <div style={{ 
+                    width: "10px", 
+                    height: "10px", 
+                    borderRadius: "50%", 
+                    background: item.urgency === "haute" ? "#ef4444" : "#10b981",
+                    boxShadow: item.urgency === "haute" ? "0 0 10px rgba(239, 68, 68, 0.5)" : "none"
+                  }}></div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: "bold", color: "white" }}>{item.subject}</div>
+                    <div style={{ fontWeight: "bold", color: "white", marginBottom: "4px" }}>{item.subject}</div>
                     <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>{item.category} • {item.date}</div>
                   </div>
                 </div>
@@ -121,6 +185,7 @@ const DashboardPage = ({ token, authFetch }) => {
             )}
           </div>
         </div>
+
       </div>
     </div>
   );
