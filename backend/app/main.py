@@ -223,8 +223,8 @@ app.include_router(google_oauth_router, tags=["Google OAuth"])
 
 origins = [
     "http://localhost:5173",
-    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
-    "[https://cipherflow.company](https://cipherflow.company)"
+    "https://cipherflow-mvp.vercel.app",
+    "https://cipherflow.company"
 ]
 
 app.add_middleware(

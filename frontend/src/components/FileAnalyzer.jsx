@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
 
-// URL Propre et directe
+// URL Propre et directe (Vérifie qu'elle est correcte)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
-const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste le token
+const FileAnalyzer = ({ token }) => { 
+  // NOTE: On n'utilise PAS authFetch ici pour éviter le bug du Content-Type.
+  // On utilise le token passé en props directement.
+  
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -13,7 +16,7 @@ const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste l
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
-  // Fonction autonome pour récupérer l'historique
+  // Fonction pour charger l'historique
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
@@ -52,7 +55,7 @@ const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste l
     setFile(f);
   };
 
-  // --- LE CŒUR DU PROBLÈME RÉSOLU ICI ---
+  // --- C'EST ICI QUE LA MAGIE OPÈRE ---
   const handleAnalyze = async () => {
     if (!file) {
       setError("Choisis un fichier d’abord.");
@@ -64,11 +67,14 @@ const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste l
     setResult(null);
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file); // Le champ doit s'appeler 'file'
 
     try {
-      // ON UTILISE FETCH NATIF DIRECTEMENT
-      // On NE MET PAS de Content-Type, le navigateur le fera tout seul (multipart/form-data)
+      console.log("Envoi du fichier...", file.name);
+
+      // 1. On utilise fetch NATIF
+      // 2. On met le Header Authorization
+      // 3. IMPORTANT: On NE MET PAS "Content-Type". Le navigateur le fera.
       const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
         headers: {
@@ -78,6 +84,7 @@ const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste l
       });
 
       const responseText = await res.text();
+      console.log("Réponse brute:", responseText);
 
       if (!res.ok) {
         try {
@@ -92,7 +99,7 @@ const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste l
       setResult(data);
       await fetchHistory();
     } catch (e) {
-      console.error(e);
+      console.error("Erreur Catch:", e);
       setError(e.message || "Erreur inconnue");
     } finally {
       setLoading(false);
