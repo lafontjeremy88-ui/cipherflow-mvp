@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
 
-// ✅ FIX: URL PROPRE
-const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
+// ✅ CORRECTION : JUSTE L'URL (PAS DE CROCHETS)
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const FileAnalyzer = ({ token, authFetch }) => {
   const [file, setFile] = useState(null);
