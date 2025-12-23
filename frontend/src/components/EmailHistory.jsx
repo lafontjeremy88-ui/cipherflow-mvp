@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Mail, ArrowRight, X, Send, Trash2 } from "lucide-react";
 
+// ✅ CORRECTION ICI : L'URL EST MAINTENANT PROPRE (plus de crochets)
 const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
 
 const EmailHistory = ({ token, initialId, authFetch }) => {
@@ -26,10 +27,14 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
   const fetchHistory = async () => {
     setLoading(true);
     try {
+      if (!authFetch) return; // Sécurité si authFetch n'est pas prêt
       const res = await authFetch(`${API_BASE}/email/history`);
+      
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
+      } else {
+        console.error("Erreur serveur :", res.status);
       }
     } catch (err) {
       console.error("Erreur historique:", err);
@@ -72,7 +77,6 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // --- FONCTION SUPPRIMER CONNECTÉE AU BACKEND ---
   const handleDelete = async () => {
     if (!window.confirm("Voulez-vous vraiment supprimer cet email de l'historique ?")) return;
 

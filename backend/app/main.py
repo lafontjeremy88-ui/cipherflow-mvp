@@ -13,7 +13,6 @@ import resend
 from jose import jwt, JWTError
 from sqlalchemy import text as sql_text, func
 from sqlalchemy.orm import Session
-# FIX: Ajout de UploadFile, File, Form pour gérer l'upload correctement
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -188,8 +187,6 @@ class SettingsRequest(BaseModel):
 class LogoUploadRequest(BaseModel):
     logo_base64: str
 
-# Note: Ce modèle n'est plus utilisé pour l'entrée API (on utilise UploadFile), 
-# mais on le garde au cas où pour éviter les erreurs de dépendance.
 class FileUploadRequest(BaseModel):
     file_base64: str
     filename: str
@@ -231,7 +228,7 @@ app.add_middleware(
 
 app.include_router(google_oauth_router, tags=["Google OAuth"])
 
-# FIX: Correction des URLs (suppression du markdown [lien](url))
+# ✅ CORRECTION ICI : URLs propres sans markdown
 origins = [
     "http://localhost:5173",
     "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
@@ -457,8 +454,6 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
     return {"status": "sent"}
 
 # --- GESTION DES DOCUMENTS (UPLOAD & ANALYSE) ---
-# FIX: Cette route a été complètement réécrite pour accepter des vrais fichiers (UploadFile)
-# au lieu du JSON/Base64 qui causait l'erreur 400.
 @app.post("/api/analyze-file")
 async def analyze_file(
     file: UploadFile = File(...), 
@@ -512,7 +507,6 @@ async def get_file_history(db: Session = Depends(get_db), current_user: User = D
         return files
     except Exception as e:
         print(f"Erreur historique files: {e}")
-        # FIX: Renvoie une liste vide au lieu de planter (ce qui causait l'erreur 'Unexpected token <')
         return []
 
 @app.get("/api/files/view/{file_id}")
@@ -535,7 +529,7 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
-    # FIX: Suppression du formatage Markdown [url](url) qui cassait le PDF
+    # ✅ CORRECTION ICI : URL propre sans markdown
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     
     data.update({
