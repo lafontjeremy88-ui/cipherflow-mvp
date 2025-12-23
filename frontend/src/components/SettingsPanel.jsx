@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save, Building, User, PenTool, FileSignature, Image as ImageIcon, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
 
 const SettingsPanel = ({ token, authFetch }) => {
   const [settings, setSettings] = useState({
