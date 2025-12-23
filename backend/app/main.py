@@ -228,7 +228,7 @@ app.add_middleware(
 
 app.include_router(google_oauth_router, tags=["Google OAuth"])
 
-# ✅ CORRECTION ICI : URLs propres sans markdown
+# ✅ FIX : URLs propres SANS markdown
 origins = [
     "http://localhost:5173",
     "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
@@ -460,6 +460,8 @@ async def analyze_file(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
+    print(f"DEBUG: Réception fichier {file.filename}")
+    
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
     
@@ -469,8 +471,6 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        print(f"Fichier reçu et sauvegardé: {file.filename}")
-
         # 2. Envoi à Gemini
         model = genai.GenerativeModel(MODEL_NAME)
         up = genai.upload_file(file_path)
@@ -497,7 +497,6 @@ async def analyze_file(
             
     except Exception as e:
         print(f"ERREUR DOC: {e}")
-        # On renvoie une 500 propre pour que le frontend comprenne
         raise HTTPException(500, detail=str(e))
 
 @app.get("/api/files/history")
@@ -529,7 +528,7 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
-    # ✅ CORRECTION ICI : URL propre sans markdown
+    # ✅ FIX: URL propre pour le logo
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     
     data.update({

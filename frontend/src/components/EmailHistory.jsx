@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Mail, ArrowRight, X, Send, Trash2 } from "lucide-react";
 
-// ✅ CORRECTION ICI : L'URL EST MAINTENANT PROPRE (plus de crochets)
+// ✅ FIX: URL PROPRE
 const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
 
 const EmailHistory = ({ token, initialId, authFetch }) => {
