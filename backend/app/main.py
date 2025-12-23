@@ -22,7 +22,6 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from starlette.middleware.sessions import SessionMiddleware
 
-# --- IMPORTS INTERNES ---
 from app.security import get_current_user
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
@@ -31,12 +30,10 @@ from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileA
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
 
-# --- CONFIGURATION INITIALE ---
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# Configuration API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 try:
     if GEMINI_API_KEY:
@@ -53,8 +50,6 @@ if RESEND_API_KEY:
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
-
-# --- HELPER FUNCTIONS ---
 
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY:
@@ -122,7 +117,6 @@ async def generate_reply_logic(req, company_name, tone, signature):
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-# --- DATA MODELS ---
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -216,7 +210,6 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
-# --- APP SETUP ---
 app = FastAPI(title="CipherFlow Inbox IA Pro")
 
 app.add_middleware(
@@ -228,7 +221,6 @@ app.add_middleware(
 
 app.include_router(google_oauth_router, tags=["Google OAuth"])
 
-# ✅ FIX : URLs propres SANS markdown
 origins = [
     "http://localhost:5173",
     "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
@@ -267,8 +259,6 @@ def on_startup():
             conn.execute(sql_text(f'ALTER TABLE "{EmailAnalysis.__tablename__}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
     except:
         pass
-
-# --- ROUTES ---
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
@@ -453,16 +443,11 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- GESTION DES DOCUMENTS (UPLOAD & ANALYSE) ---
-# --- MODIFICATION DANS main.py ---
-
 @app.post("/api/analyze-file")
 async def analyze_file(
-    # On enlève temporairement les dépendances DB pour isoler le problème
-    # On garde juste le User pour l'auth
     file: UploadFile = File(...), 
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db) # On déplace db après file, c'est plus sûr
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
 ):
     print(f"DEBUG: Réception fichier {file.filename}")
     
@@ -470,16 +455,13 @@ async def analyze_file(
         os.makedirs("uploads")
     
     try:
-        # 1. Sauvegarde locale
         file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        # 2. Envoi à Gemini
         model = genai.GenerativeModel(MODEL_NAME)
         up = genai.upload_file(file_path)
         
-        # 3. Prompt
         res = await model.generate_content_async([up, "Analyse ce document et retourne un JSON strict avec: type (facture, contrat, devis...), sender, date, amount (si applicable, sinon '0'), summary."])
         
         data = extract_json_from_text(res.text)
@@ -492,7 +474,7 @@ async def analyze_file(
                 extracted_date=str(data.get("date","")),
                 amount=str(data.get("amount","0")),
                 summary=str(data.get("summary","Pas de résumé")),
-                owner_id=current_user.id # Utilise .id directement
+                owner_id=get_user_id(current_user)
             ))
             db.commit()
             return data
@@ -525,8 +507,6 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     if not f or not os.path.exists(f"uploads/{f.filename}"):
         raise HTTPException(404, detail="Fichier introuvable")
     return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="attachment")
-
-# --- GENERATION DE FACTURES ---
 
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

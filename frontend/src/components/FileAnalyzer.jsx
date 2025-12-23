@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History } from 'lucide-react';
 
-// ✅ CORRECTION : JUSTE L'URL (PAS DE CROCHETS)
+// URL de l'API (identique aux autres fichiers)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const FileAnalyzer = ({ token, authFetch }) => {
@@ -13,6 +13,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
+  // Fonction pour charger l'historique des fichiers analysés
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
@@ -21,8 +22,6 @@ const FileAnalyzer = ({ token, authFetch }) => {
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
-      } else {
-        console.error("Erreur historique:", res.status);
       }
     } catch (e) {
       console.error("Erreur chargement historique", e);
@@ -31,12 +30,15 @@ const FileAnalyzer = ({ token, authFetch }) => {
     }
   };
 
+  // Chargement initial de l'historique
   useEffect(() => {
     fetchHistory();
   }, [authFetch]);
 
+  // Gestion du clic sur le bouton "Choisir un fichier"
   const handlePickFile = () => fileInputRef.current?.click();
 
+  // Gestion de la sélection du fichier
   const handleFileChange = (e) => {
     setError("");
     setResult(null);
@@ -45,6 +47,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
     setFile(f);
   };
 
+  // Fonction d'envoi et d'analyse
   const handleAnalyze = async () => {
     if (!file) {
       setError("Choisis un fichier d’abord.");
@@ -59,11 +62,9 @@ const FileAnalyzer = ({ token, authFetch }) => {
     formData.append('file', file);
 
     try {
-      const res = await fetch(`${API_BASE}/api/analyze-file`, {
+      // Utilisation de authFetch : App.jsx détectera le FormData et gérera le Content-Type
+      const res = await authFetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
-        headers: {
-             "Authorization": `Bearer ${token}` 
-        },
         body: formData,
       });
 
@@ -75,6 +76,8 @@ const FileAnalyzer = ({ token, authFetch }) => {
 
       const data = await res.json();
       setResult(data);
+      
+      // Rafraîchir l'historique après une analyse réussie
       await fetchHistory();
     } catch (e) {
       console.error(e);
@@ -84,7 +87,13 @@ const FileAnalyzer = ({ token, authFetch }) => {
     }
   };
 
-  const card = { background: "#111827", color: "white", borderRadius: 12, padding: 16, boxShadow: "0 4px 20px rgba(0,0,0,0.25)" };
+  const cardStyle = { 
+    background: "#111827", 
+    color: "white", 
+    borderRadius: 12, 
+    padding: 16, 
+    boxShadow: "0 4px 20px rgba(0,0,0,0.25)" 
+  };
 
   return (
     <div style={{ padding: 20, color: "white" }}>
@@ -93,27 +102,70 @@ const FileAnalyzer = ({ token, authFetch }) => {
       </h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        
         {/* Carte Upload */}
-        <div style={card}>
+        <div style={cardStyle}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Uploader un fichier</div>
-          <input ref={fileInputRef} type="file" onChange={handleFileChange} style={{ display: "none" }} />
           
-          <button onClick={handlePickFile} style={{ background: "#1f2937", border: "none", color: "white", padding: "10px 14px", borderRadius: 10, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <input 
+            ref={fileInputRef} 
+            type="file" 
+            onChange={handleFileChange} 
+            style={{ display: "none" }} 
+          />
+          
+          <button 
+            onClick={handlePickFile} 
+            style={{ 
+              background: "#1f2937", 
+              border: "none", 
+              color: "white", 
+              padding: "10px 14px", 
+              borderRadius: 10, 
+              cursor: "pointer", 
+              display: "inline-flex", 
+              alignItems: "center", 
+              gap: 8 
+            }}
+          >
             <Upload size={16} /> Choisir un fichier
           </button>
 
-          {file && <div style={{ marginTop: 12, opacity: 0.9 }}>Fichier : <b>{file.name}</b></div>}
+          {file && (
+            <div style={{ marginTop: 12, opacity: 0.9 }}>
+              Fichier : <b>{file.name}</b>
+            </div>
+          )}
 
-          <button onClick={handleAnalyze} disabled={loading} style={{ marginTop: 12, background: loading ? "#374151" : "#3b82f6", border: "none", color: "white", padding: "10px 14px", borderRadius: 10, cursor: loading ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <button 
+            onClick={handleAnalyze} 
+            disabled={loading} 
+            style={{ 
+              marginTop: 12, 
+              background: loading ? "#374151" : "#3b82f6", 
+              border: "none", 
+              color: "white", 
+              padding: "10px 14px", 
+              borderRadius: 10, 
+              cursor: loading ? "not-allowed" : "pointer", 
+              display: "inline-flex", 
+              alignItems: "center", 
+              gap: 8 
+            }}
+          >
             {loading ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
             {loading ? "Analyse..." : "Analyser"}
           </button>
 
-          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word" }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
+          {error && (
+            <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word" }}> 
+              <AlertCircle size={16} style={{ display:'inline', marginRight: 5 }}/> {error}
+            </div>
+          )}
         </div>
 
         {/* Carte Résultat */}
-        <div style={card}>
+        <div style={cardStyle}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Résultat</div>
           {!result ? (
             <div style={{ opacity: 0.8 }}>Aucun résultat pour le moment.</div>
@@ -122,7 +174,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
                 <p><b>Type:</b> {result.type}</p>
                 <p><b>Date:</b> {result.date}</p>
                 <p><b>Montant:</b> {result.amount}</p>
-                <div style={{background: 'rgba(255,255,255,0.1)', padding: 10, borderRadius: 6, marginTop: 10}}>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: 10, borderRadius: 6, marginTop: 10 }}>
                     {result.summary}
                 </div>
             </div>
@@ -130,15 +182,24 @@ const FileAnalyzer = ({ token, authFetch }) => {
         </div>
 
         {/* Carte Historique */}
-        <div style={{ ...card, gridColumn: "span 2" }}>
+        <div style={{ ...cardStyle, gridColumn: "span 2" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontWeight: 900 }}><History size={16} style={{ marginRight: 8 }} /> Historique</div>
-            <button onClick={fetchHistory} style={{ background: "#1f2937", border: "none", color: "white", padding: "8px 12px", borderRadius: 10, cursor: "pointer" }}><Loader2 size={16} /></button>
+            <div style={{ fontWeight: 900 }}>
+              <History size={16} style={{ marginRight: 8 }} /> Historique
+            </div>
+            <button 
+              onClick={fetchHistory} 
+              style={{ background: "#1f2937", border: "none", color: "white", padding: "8px 12px", borderRadius: 10, cursor: "pointer" }}
+            >
+              <Loader2 size={16} className={loadingHistory ? "spin" : ""} />
+            </button>
           </div>
+
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
             {history.length === 0 && <div style={{ opacity: 0.8 }}>Aucun historique disponible.</div>}
+            
             {history.map((h) => (
-              <div key={h.id} style={{ background: "#1f2937", padding: 12, borderRadius: 10, display:'flex', justifyContent:'space-between' }}>
+              <div key={h.id} style={{ background: "#1f2937", padding: 12, borderRadius: 10, display: 'flex', justifyContent: 'space-between' }}>
                 <div>
                     <div style={{ fontWeight: 800 }}>{h.filename}</div>
                     <div style={{ fontSize: 12, opacity: 0.8 }}>{h.file_type} - {h.amount}</div>
@@ -148,6 +209,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
             ))}
           </div>
         </div>
+
       </div>
     </div>
   );
