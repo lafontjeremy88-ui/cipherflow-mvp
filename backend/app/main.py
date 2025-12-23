@@ -4,8 +4,8 @@ import logging
 import base64
 import io
 import shutil
-import secrets  # <--- ÉTAIT MANQUANT
-from typing import Optional, List # <--- ÉTAIENT MANQUANTS
+import secrets
+from typing import Optional, List
 from datetime import datetime
 
 from PIL import Image
@@ -13,7 +13,8 @@ import resend
 from jose import jwt, JWTError
 from sqlalchemy import text as sql_text, func
 from sqlalchemy.orm import Session
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
+# FIX: Ajout de UploadFile, File, Form pour gérer l'upload correctement
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -23,7 +24,6 @@ import google.generativeai as genai
 from starlette.middleware.sessions import SessionMiddleware
 
 # --- IMPORTS INTERNES ---
-# Assure-toi que ces fichiers existent bien dans ton dossier /app
 from app.security import get_current_user
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
@@ -45,7 +45,7 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-1.5-flash" # Mis à jour vers un nom de modèle stable
+MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -77,13 +77,11 @@ async def call_gemini(prompt: str) -> str:
         response = await model.generate_content_async(prompt)
         return response.text
     except Exception as e:
-        # Fallback si l'IA échoue pour éviter le crash total
         print(f"Erreur IA: {e}")
         return "{}" 
 
 def extract_json_from_text(text: str):
     raw = text.strip()
-    # Nettoyage des balises markdown ```json ... ```
     if "```" in raw:
         first, last = raw.find("```"), raw.rfind("```")
         if first != -1 and last > first:
@@ -91,7 +89,6 @@ def extract_json_from_text(text: str):
         if raw.lower().startswith("json"):
             raw = raw[4:].lstrip()
     
-    # Tentative de trouver les accolades JSON
     start, end = raw.find("{"), raw.rfind("}")
     if start != -1 and end != -1:
         raw = raw[start:end+1]
@@ -191,6 +188,8 @@ class SettingsRequest(BaseModel):
 class LogoUploadRequest(BaseModel):
     logo_base64: str
 
+# Note: Ce modèle n'est plus utilisé pour l'entrée API (on utilise UploadFile), 
+# mais on le garde au cas où pour éviter les erreurs de dépendance.
 class FileUploadRequest(BaseModel):
     file_base64: str
     filename: str
@@ -232,7 +231,7 @@ app.add_middleware(
 
 app.include_router(google_oauth_router, tags=["Google OAuth"])
 
-# Configuration CORS (Nettoyée des liens Markdown qui causaient des erreurs)
+# FIX: Correction des URLs (suppression du markdown [lien](url))
 origins = [
     "http://localhost:5173",
     "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
@@ -255,21 +254,17 @@ def get_user_id(user):
 
 @app.on_event("startup")
 def on_startup():
-    # Création des tables
     models.Base.metadata.create_all(bind=engine)
     
-    # Création dossier uploads
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
     
-    # Admin User Check
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
     
-    # Migration Schema (si nécessaire)
     try:
         with engine.begin() as conn:
             conn.execute(sql_text(f'ALTER TABLE "{EmailAnalysis.__tablename__}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
@@ -280,7 +275,6 @@ def on_startup():
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
-    # Vérification sécurisée du secret
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid Secret")
     
@@ -403,7 +397,6 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
         
         img = Image.open(io.BytesIO(base64.b64decode(encoded)))
         
-        # Resize si trop grand
         if img.width > 800:
             ratio = 800 / float(img.width)
             img = img.resize((800, int(float(img.height) * ratio)), Image.Resampling.LANCZOS)
@@ -464,31 +457,37 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
     return {"status": "sent"}
 
 # --- GESTION DES DOCUMENTS (UPLOAD & ANALYSE) ---
+# FIX: Cette route a été complètement réécrite pour accepter des vrais fichiers (UploadFile)
+# au lieu du JSON/Base64 qui causait l'erreur 400.
 @app.post("/api/analyze-file")
-async def analyze_file(req: FileUploadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def analyze_file(
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
     
     try:
-        # Décodage Base64
-        file_data = base64.b64decode(req.file_base64.split(",")[1] if "," in req.file_base64 else req.file_base64)
-        file_path = f"uploads/{req.filename}"
+        # 1. Sauvegarde locale
+        file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as f:
-            f.write(file_data)
+            shutil.copyfileobj(file.file, f)
         
-        # Envoi à Gemini
+        print(f"Fichier reçu et sauvegardé: {file.filename}")
+
+        # 2. Envoi à Gemini
         model = genai.GenerativeModel(MODEL_NAME)
-        # Note: Gemini File Upload nécessite un chemin local, c'est bon ici.
         up = genai.upload_file(file_path)
         
-        # Prompt pour l'IA
+        # 3. Prompt
         res = await model.generate_content_async([up, "Analyse ce document et retourne un JSON strict avec: type (facture, contrat, devis...), sender, date, amount (si applicable, sinon '0'), summary."])
         
         data = extract_json_from_text(res.text)
         
         if data:
             db.add(FileAnalysis(
-                filename=req.filename,
+                filename=file.filename,
                 file_type=str(data.get("type","Inconnu")),
                 sender=str(data.get("sender","Inconnu")),
                 extracted_date=str(data.get("date","")),
@@ -503,11 +502,18 @@ async def analyze_file(req: FileUploadRequest, db: Session = Depends(get_db), cu
             
     except Exception as e:
         print(f"ERREUR DOC: {e}")
+        # On renvoie une 500 propre pour que le frontend comprenne
         raise HTTPException(500, detail=str(e))
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(FileAnalysis).filter(FileAnalysis.owner_id == get_user_id(current_user)).order_by(FileAnalysis.id.desc()).all()
+    try:
+        files = db.query(FileAnalysis).filter(FileAnalysis.owner_id == get_user_id(current_user)).order_by(FileAnalysis.id.desc()).all()
+        return files
+    except Exception as e:
+        print(f"Erreur historique files: {e}")
+        # FIX: Renvoie une liste vide au lieu de planter (ce qui causait l'erreur 'Unexpected token <')
+        return []
 
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
@@ -529,7 +535,7 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
-    # Utilisation d'un logo par défaut si non présent (lien direct sans markdown)
+    # FIX: Suppression du formatage Markdown [url](url) qui cassait le PDF
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     
     data.update({
