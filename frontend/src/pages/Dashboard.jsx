@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { BarChart3, Mail, FileText, AlertTriangle } from "lucide-react";
 
-// Couleurs pour le graphique
+// Couleurs du graphique
 const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444"];
 
 const DashboardPage = ({ token, authFetch }) => {
@@ -29,7 +29,6 @@ const DashboardPage = ({ token, authFetch }) => {
   if (loading) return <div style={{ color: "white", padding: "20px" }}>Chargement des données...</div>;
   if (!stats) return <div style={{ color: "white", padding: "20px" }}>Erreur de chargement.</div>;
 
-  // On prépare les données pour le graphique
   const chartData = stats.charts?.distribution || [];
 
   return (
@@ -70,10 +69,11 @@ const DashboardPage = ({ token, authFetch }) => {
       {/* --- GRAPHIQUES ET ACTIVITÉ --- */}
       <div className="dashboard-grid" style={{ marginTop: "2rem" }}>
         
-        {/* Graphique avec correction de hauteur */}
-        <div className="card" style={{ minHeight: "400px", display: "flex", flexDirection: "column" }}>
+        {/* Graphique avec Hauteur Fixe pour éviter le bug d'affichage */}
+        <div className="card">
           <h3>Répartition par Catégorie</h3>
-          <div style={{ flex: 1, minHeight: "300px", width: "100%" }}>
+          {/* FIX: On force une hauteur précise ici */}
+          <div style={{ width: "100%", height: "300px", marginTop: "20px" }}>
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -90,13 +90,13 @@ const DashboardPage = ({ token, authFetch }) => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "none", borderRadius: "8px" }} />
-                  <Legend />
+                  <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "none", borderRadius: "8px", color: "#fff" }} />
+                  <Legend verticalAlign="bottom" height={36}/>
                 </PieChart>
               </ResponsiveContainer>
             ) : (
               <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-                Pas assez de données
+                Pas assez de données pour afficher le graphique
               </div>
             )}
           </div>
@@ -105,7 +105,7 @@ const DashboardPage = ({ token, authFetch }) => {
         {/* Liste Activité Récente */}
         <div className="card">
           <h3>Activité Récente</h3>
-          <div className="activity-list">
+          <div className="activity-list" style={{ marginTop: "20px" }}>
             {stats.recents && stats.recents.length > 0 ? (
               stats.recents.map((item) => (
                 <div key={item.id} className="activity-item">
