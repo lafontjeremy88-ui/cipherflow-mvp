@@ -1,264 +1,232 @@
 import React, { useEffect, useState } from "react";
-import { Mail, ArrowLeft, X, Send, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-// ❌ On supprime l'import de apiFetch
-// import { apiFetch } from "../services/api";
+import { Mail, Calendar, ArrowRight, X, Send, Trash2 } from "lucide-react";
 
-const EmailHistory = ({ initialId, authFetch }) => { // ✅ On récupère authFetch ici
+const API_BASE = "[https://cipherflow-mvp-production.up.railway.app](https://cipherflow-mvp-production.up.railway.app)";
+
+const EmailHistory = ({ token, initialId, authFetch }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState(null);
-
-  const [sending, setSending] = useState(false);
-  const [sendMsg, setSendMsg] = useState(null);
-
-  const getReplyText = (email) => {
-    if (!email) return "";
-    return (
-      email.suggested_response_text ||
-      email.reply ||
-      email.ai_reply ||
-      email.generated_reply ||
-      ""
-    );
-  };
-
-  const getSendStatus = (email) => {
-    if (!email) return "not_sent";
-    return (email.send_status || "not_sent").toLowerCase();
-  };
-
-  const isSent = (email) => getSendStatus(email) === "sent";
+  
+  // États pour la réponse
+  const [replySubject, setReplySubject] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [message, setMessage] = useState(null);
 
   useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        // ✅ Utilisation de authFetch avec l'URL complète (API_BASE est géré dans App.jsx ou on met le chemin relatif si authFetch gère la base)
-        // Note: Dans ton App.jsx, authFetch attend une URL complète ou gère le fetch. 
-        // Si authFetch dans App.jsx est un simple wrapper de fetch, il faut passer l'URL complète.
-        // Comme authFetch dans App.jsx ne semble pas ajouter l'URL de base automatiquement, on va supposer que tu passes l'URL complète 
-        // OU que tu as modifié authFetch pour gérer l'URL de base.
-        // Pour être sûr, on utilise l'URL relative et on laisse authFetch gérer ou on reconstruit l'URL.
-        // D'après ton App.jsx : `const res = await fetch(url, ...)` -> Il faut l'URL complète.
-        
-        const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
-        const res = await authFetch(`${API_BASE}/email/history`);
-        
-        if (!res.ok) throw new Error("Erreur chargement historique");
-        const data = await res.json();
-        setHistory(Array.isArray(data) ? data : []);
+    fetchHistory();
+  }, [authFetch]);
 
-        if (initialId) {
-          const found = (data || []).find((x) => x.id === initialId);
-          if (found) setSelectedEmail(found);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    // On ne lance le fetch que si authFetch est disponible
-    if (authFetch) fetchHistory();
-  }, [initialId, authFetch]);
+  // Si on reçoit un ID initial (depuis le dashboard), on ouvre l'email directement
+  useEffect(() => {
+    if (initialId && history.length > 0) {
+      const email = history.find(e => e.id === initialId);
+      if (email) handleSelectEmail(email);
+    }
+  }, [initialId, history]);
 
-  const handleSend = async () => {
-    if (!selectedEmail) return;
-    setSending(true);
-    setSendMsg(null);
-
+  const fetchHistory = async () => {
+    setLoading(true);
     try {
-      const to_email = selectedEmail.sender_email || selectedEmail.from_email;
-      const subjectBase = selectedEmail.subject || "";
-      const subject = subjectBase.toLowerCase().startsWith("re:")
-        ? subjectBase
-        : `Re: ${subjectBase}`.trim();
-      const body = getReplyText(selectedEmail);
-
-      if (!to_email) throw new Error("Adresse destinataire manquante");
-      if (!body || !body.trim()) throw new Error("Réponse IA manquante");
-
-      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
-      const res = await authFetch(`${API_BASE}/email/send`, {
-        method: "POST",
-        body: JSON.stringify({
-          to_email,
-          subject,
-          body,
-          email_id: selectedEmail.id ?? selectedEmail.email_id ?? null,
-        }),
-      });
-
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || "Erreur envoi");
+      const res = await authFetch(`${API_BASE}/email/history`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data);
       }
-
-      const updated = { ...selectedEmail, send_status: "sent" };
-      setSelectedEmail(updated);
-      setHistory((prev) => prev.map((h) => (h.id === updated.id ? updated : h)));
-
-      setSendMsg({ type: "success", text: "✅ Email envoyé !" });
-    } catch (e) {
-      console.error(e);
-      setSendMsg({ type: "error", text: e.message || "Erreur inconnue" });
+    } catch (err) {
+      console.error("Erreur historique:", err);
     } finally {
-      setSending(false);
+      setLoading(false);
     }
   };
 
-  if (loading) return <div style={{ padding: "2rem", textAlign: "center" }}>Chargement...</div>;
+  const handleSelectEmail = (email) => {
+    setSelectedEmail(email);
+    // On pré-remplit les champs de réponse avec ce qui a été généré par l'IA (si dispo)
+    // Le sujet IA n'est pas stocké séparément dans l'objet EmailHistoryItem actuel,
+    // on met un Re: par défaut ou on prend le titre suggéré
+    setReplySubject(`Re: ${email.subject}`);
+    setReplyBody(email.suggested_response_text || "");
+    setMessage(null);
+  };
 
-  const badgeStyle = (sent) => ({
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    padding: "4px 10px",
-    borderRadius: 999,
-    background: sent ? "rgba(16,185,129,0.15)" : "rgba(245,158,11,0.15)",
-    color: sent ? "#34d399" : "#fbbf24",
-    border: sent ? "1px solid rgba(16,185,129,0.25)" : "1px solid rgba(245,158,11,0.25)",
-  });
+  const handleClose = () => {
+    setSelectedEmail(null);
+    setMessage(null);
+  };
+
+  const handleSendEmail = async () => {
+    setIsSending(true);
+    setMessage(null);
+    try {
+      const res = await authFetch(`${API_BASE}/email/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          to_email: selectedEmail.sender_email,
+          subject: replySubject,
+          body: replyBody,
+          email_id: selectedEmail.id
+        }),
+      });
+
+      if (res.ok) {
+        setMessage({ type: "success", text: "Email envoyé avec succès !" });
+        // Mettre à jour le statut localement si besoin
+      } else {
+        setMessage({ type: "error", text: "Erreur lors de l'envoi." });
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: "Erreur réseau." });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // --- FONCTION SUPPRIMER ---
+  const handleDelete = async () => {
+    if (!window.confirm("Voulez-vous vraiment supprimer cet email de l'historique ?")) return;
+
+    try {
+      const res = await authFetch(`${API_BASE}/email/history/${selectedEmail.id}`, {
+        method: "DELETE"
+      });
+
+      if (res.ok) {
+        // On retire l'email de la liste locale
+        setHistory(history.filter(h => h.id !== selectedEmail.id));
+        handleClose(); // On ferme la modale
+      } else {
+        alert("Erreur lors de la suppression.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erreur réseau.");
+    }
+  };
+
+  if (loading) return <div style={{ color: "white", padding: "20px" }}>Chargement de l'historique...</div>;
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "2rem", color: "white" }}>
-      <h2 style={{ fontSize: "2rem", fontWeight: 900, marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: 10 }}>
-        <Mail size={28} />
-        Historique Emails
-      </h2>
-
+    <div style={{ maxWidth: "1200px", margin: "0 auto", color: "white" }}>
+      
+      {/* LISTE DES EMAILS */}
       {!selectedEmail ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {history.length === 0 && <div style={{ opacity: 0.8 }}>Aucun email.</div>}
-
-          {history.map((email) => {
-            const sent = isSent(email);
-            return (
-              <div
-                key={email.id}
-                onClick={() => {
-                  setSelectedEmail(email);
-                  setSendMsg(null);
-                }}
-                style={{
-                  background: "#1f2937",
-                  padding: "1rem",
-                  borderRadius: "12px",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 900 }}>
-                      {email.subject || "Sans sujet"}
-                    </div>
-                    <div style={{ opacity: 0.8, marginTop: 4 }}>
-                      {email.sender_email || email.from_email || ""}
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>
-                      {email.created_at || ""}
-                    </div>
-                  </div>
-
-                  <div style={badgeStyle(sent)}>
-                    {sent ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                    {sent ? "Envoyé" : "À envoyer"}
-                  </div>
+        <div style={{ display: "grid", gap: "15px" }}>
+          {history.length === 0 && <div style={{ color: "#94a3b8" }}>Aucun historique disponible.</div>}
+          
+          {history.map((email) => (
+            <div 
+              key={email.id}
+              onClick={() => handleSelectEmail(email)}
+              style={{
+                background: "#1e293b",
+                padding: "20px",
+                borderRadius: "12px",
+                border: "1px solid #334155",
+                cursor: "pointer",
+                transition: "transform 0.2s",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center"
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.borderColor = "#6366f1"}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = "#334155"}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "5px" }}>
+                  <span style={{ 
+                    background: email.urgency === "haute" ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.2)", 
+                    color: email.urgency === "haute" ? "#ef4444" : "#10b981",
+                    padding: "2px 8px", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "bold", textTransform: "uppercase"
+                  }}>
+                    {email.urgency}
+                  </span>
+                  <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>{new Date(email.created_at).toLocaleDateString()}</span>
                 </div>
+                <div style={{ fontWeight: "bold", fontSize: "1.1rem", marginBottom: "5px" }}>{email.subject}</div>
+                <div style={{ color: "#cbd5e1", fontSize: "0.9rem" }}>{email.sender_email}</div>
               </div>
-            );
-          })}
+              <ArrowRight size={20} color="#6366f1" />
+            </div>
+          ))}
         </div>
       ) : (
-        <div style={{ background: "#1f2937", padding: "2rem", borderRadius: "16px" }}>
-          <button
-            onClick={() => {
-              setSelectedEmail(null);
-              setSendMsg(null);
-            }}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "white",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: "1rem",
-            }}
-          >
-            <ArrowLeft size={20} /> Retour
-          </button>
-
-          <h3 style={{ fontSize: "1.5rem", fontWeight: 900 }}>{selectedEmail.subject}</h3>
-          <p style={{ opacity: 0.8 }}>
-            {selectedEmail.sender_email || selectedEmail.from_email || ""}
-          </p>
-
-          <div style={{ marginTop: 16, whiteSpace: "pre-wrap", opacity: 0.9 }}>
-            {selectedEmail.raw_email_text || selectedEmail.content || selectedEmail.body || ""}
+        /* VUE DÉTAILLÉE (MODALE) */
+        <div style={{ background: "#1e293b", borderRadius: "16px", border: "1px solid #334155", overflow: "hidden" }}>
+          
+          {/* Header */}
+          <div style={{ padding: "20px", borderBottom: "1px solid #334155", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0f172a" }}>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: "bold", display: "flex", alignItems: "center", gap: "10px" }}>
+              <Mail size={20} color="#6366f1" /> {selectedEmail.subject}
+            </h2>
+            <button onClick={handleClose} style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}>
+              <X size={24} />
+            </button>
           </div>
 
-          <div style={{ marginTop: 20, padding: 14, borderRadius: 12, background: "#0b1220", border: "1px solid rgba(148,163,184,0.15)" }}>
-            <div style={{ fontWeight: 900, marginBottom: 10 }}>Réponse IA</div>
-            <div style={{ whiteSpace: "pre-wrap", opacity: 0.95 }}>
-              {getReplyText(selectedEmail) || "Aucune réponse IA enregistrée."}
+          <div style={{ padding: "24px" }}>
+            {/* Info Email */}
+            <div style={{ marginBottom: "20px", padding: "15px", background: "rgba(255,255,255,0.03)", borderRadius: "8px" }}>
+              <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "5px" }}>De : {selectedEmail.sender_email}</div>
+              <div style={{ color: "#cbd5e1" }}>{selectedEmail.raw_email_text}</div>
             </div>
 
-            {!isSent(selectedEmail) && getReplyText(selectedEmail) ? (
-              <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
-                <button
-                  onClick={handleSend}
-                  disabled={sending}
-                  style={{
-                    background: sending ? "#374151" : "#10b981",
-                    border: "none",
-                    color: "white",
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    cursor: sending ? "not-allowed" : "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  {sending ? <Loader2 size={16} /> : <Send size={16} />}
-                  {sending ? "Envoi..." : "Envoyer"}
-                </button>
-              </div>
-            ) : (
-              <div style={{ marginTop: 14, opacity: 0.8 }}>
-                {isSent(selectedEmail) ? "✅ Déjà envoyé." : "⚠️ Pas de réponse IA à envoyer."}
+            {/* Zone Réponse */}
+            <h3 style={{ fontSize: "1.1rem", fontWeight: "bold", marginBottom: "15px", color: "#6366f1" }}>Réponse IA</h3>
+            
+            <div style={{ marginBottom: "15px" }}>
+              <label style={{ display: "block", color: "#94a3b8", marginBottom: "5px", fontSize: "0.9rem" }}>Objet</label>
+              <input 
+                value={replySubject}
+                onChange={(e) => setReplySubject(e.target.value)}
+                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "6px", color: "white" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ display: "block", color: "#94a3b8", marginBottom: "5px", fontSize: "0.9rem" }}>Message</label>
+              <textarea 
+                rows={10}
+                value={replyBody}
+                onChange={(e) => setReplyBody(e.target.value)}
+                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "6px", color: "white", lineHeight: "1.5" }}
+              />
+            </div>
+
+            {message && (
+              <div style={{ padding: "10px", borderRadius: "6px", marginBottom: "20px", background: message.type === "success" ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)", color: message.type === "success" ? "#34d399" : "#ef4444" }}>
+                {message.text}
               </div>
             )}
 
-            {sendMsg && (
-              <div style={{ marginTop: 10, color: sendMsg.type === "success" ? "#34d399" : "#fca5a5" }}>
-                {sendMsg.text}
-              </div>
-            )}
+            {/* Actions : Envoyer, Supprimer, Fermer */}
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button 
+                onClick={handleSendEmail} 
+                disabled={isSending}
+                style={{ background: "#10b981", color: "white", border: "none", padding: "10px 20px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSending ? 0.7 : 1 }}
+              >
+                <Send size={18} /> {isSending ? "Envoi..." : "Envoyer"}
+              </button>
+
+              {/* BOUTON SUPPRIMER AJOUTÉ ICI */}
+              <button 
+                onClick={handleDelete} 
+                style={{ background: "#ef4444", color: "white", border: "none", padding: "10px 20px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <Trash2 size={18} /> Supprimer
+              </button>
+
+              <button 
+                onClick={handleClose}
+                style={{ background: "#334155", color: "white", border: "none", padding: "10px 20px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", marginLeft: "auto" }}
+              >
+                Fermer
+              </button>
+            </div>
+
           </div>
-
-          <button
-            onClick={() => setSelectedEmail(null)}
-            style={{
-              marginTop: "1.5rem",
-              background: "#ef4444",
-              border: "none",
-              color: "white",
-              padding: "0.75rem 1.5rem",
-              borderRadius: "12px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <X size={18} />
-            Fermer
-          </button>
         </div>
       )}
     </div>

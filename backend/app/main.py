@@ -470,3 +470,15 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
     user_logo = s.logo if (s and s.logo) else default_logo
     data = {"client_name": inv.client_name, "invoice_number": inv.reference, "amount": inv.amount_total, "date": inv.date_issued.strftime("%d/%m/%Y"), "items": json.loads(inv.items_json) if inv.items_json else [], "company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": user_logo}
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename={ref}.pdf"})
+
+# 👇 NOUVELLE ROUTE POUR SUPPRIMER UN EMAIL DE L'HISTORIQUE
+@app.delete("/email/history/{email_id}")
+async def delete_history(email_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Pour l'instant on supprime par ID. L'idéal serait de vérifier le user_id aussi.
+    item = db.query(EmailAnalysis).filter(EmailAnalysis.id == email_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Email introuvable")
+    
+    db.delete(item)
+    db.commit()
+    return {"status": "deleted"}
