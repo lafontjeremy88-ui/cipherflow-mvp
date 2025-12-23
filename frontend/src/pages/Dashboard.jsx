@@ -5,7 +5,8 @@ import { BarChart3, Mail, FileText, AlertTriangle } from "lucide-react";
 // Couleurs du graphique
 const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444"];
 
-const DashboardPage = ({ token, authFetch }) => {
+// 👇 AJOUT DE 'onNavigate' DANS LES PROPS
+const DashboardPage = ({ token, authFetch, onNavigate }) => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -31,10 +32,10 @@ const DashboardPage = ({ token, authFetch }) => {
 
   const chartData = stats.charts?.distribution || [];
 
-  // --- STYLES EN LIGNE (POUR FORCER L'AFFICHAGE CORRECT) ---
+  // --- STYLES EN LIGNE ---
   const gridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", // Force 3 colonnes adaptables
+    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
     gap: "20px",
     marginBottom: "30px"
   };
@@ -47,7 +48,19 @@ const DashboardPage = ({ token, authFetch }) => {
     display: "flex",
     alignItems: "center",
     gap: "20px",
-    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+    cursor: "pointer", // Curseur main pour indiquer le clic
+    transition: "transform 0.2s ease, border-color 0.2s ease" // Animation fluide
+  };
+
+  // Fonction pour gérer le style au survol (simple via style en ligne)
+  const handleMouseEnter = (e) => {
+    e.currentTarget.style.transform = "translateY(-5px)";
+    e.currentTarget.style.borderColor = "#6366f1";
+  };
+  const handleMouseLeave = (e) => {
+    e.currentTarget.style.transform = "translateY(0)";
+    e.currentTarget.style.borderColor = "#334155";
   };
 
   const iconBoxStyle = (color, bg) => ({
@@ -88,11 +101,16 @@ const DashboardPage = ({ token, authFetch }) => {
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", paddingBottom: "50px" }}>
       
-      {/* --- CARTES KPI (GRID) --- */}
+      {/* --- CARTES KPI (CLIQUABLES) --- */}
       <div style={gridStyle}>
         
-        {/* CARTE 1 */}
-        <div style={cardStyle}>
+        {/* CARTE 1 : EMAILS -> HISTORIQUE */}
+        <div 
+          style={cardStyle} 
+          onClick={() => onNavigate("history")}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#6366f1", "rgba(99, 102, 241, 0.1)")}>
             <Mail size={24} />
           </div>
@@ -102,8 +120,13 @@ const DashboardPage = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* CARTE 2 */}
-        <div style={cardStyle}>
+        {/* CARTE 2 : URGENCE -> ANALYSE (ou Historique) */}
+        <div 
+          style={cardStyle} 
+          onClick={() => onNavigate("history")} // On renvoie vers l'historique pour voir les urgences
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#f59e0b", "rgba(245, 158, 11, 0.1)")}>
             <AlertTriangle size={24} />
           </div>
@@ -113,8 +136,13 @@ const DashboardPage = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* CARTE 3 */}
-        <div style={cardStyle}>
+        {/* CARTE 3 : FACTURES -> FACTURATION */}
+        <div 
+          style={cardStyle} 
+          onClick={() => onNavigate("invoices")} // Redirection vers onglet Factures
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#10b981", "rgba(16, 185, 129, 0.1)")}>
             <FileText size={24} />
           </div>
@@ -125,7 +153,7 @@ const DashboardPage = ({ token, authFetch }) => {
         </div>
       </div>
 
-      {/* --- GRAPHIQUES ET LISTE (GRID 2 COLONNES) --- */}
+      {/* --- GRAPHIQUES ET LISTE --- */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "20px" }}>
         
         {/* Graphique */}
@@ -140,7 +168,7 @@ const DashboardPage = ({ token, authFetch }) => {
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
-                    outerRadius={100} // Radius fixe pour éviter l'écrasement
+                    outerRadius={100}
                     paddingAngle={5}
                     dataKey="value"
                   >
@@ -160,13 +188,17 @@ const DashboardPage = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* Liste Activité */}
+        {/* Liste Activité (Cliquable aussi si besoin) */}
         <div style={mainCardStyle}>
           <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem" }}>Activité Récente</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             {stats.recents && stats.recents.length > 0 ? (
               stats.recents.map((item) => (
-                <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "15px", paddingBottom: "15px", borderBottom: "1px solid #334155" }}>
+                <div 
+                  key={item.id} 
+                  onClick={() => onNavigate("history", item.id)} // Clic sur un email -> ouvre l'historique sur cet email
+                  style={{ display: "flex", alignItems: "center", gap: "15px", paddingBottom: "15px", borderBottom: "1px solid #334155", cursor: "pointer" }}
+                >
                   <div style={{ 
                     width: "10px", 
                     height: "10px", 
