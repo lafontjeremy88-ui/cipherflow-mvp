@@ -12,11 +12,9 @@ import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
 
-// Assure-toi que ces fichiers existent bien dans le dossier 'pages'
 import DashboardPage from "./pages/Dashboard"; 
 import OAuthCallback from "./pages/OAuthCallback"; 
 
-// ✅ URL PROPRE (Sans crochets, sans markdown)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const LS_TOKEN = "cipherflow_token";
@@ -79,7 +77,6 @@ function MainApp({ token, userEmail, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
-  // --- States pour l'analyse email ---
   const [fromEmail, setFromEmail] = useState("client@example.com");
   const [subject, setSubject] = useState("Problème de connexion");
   const [content, setContent] = useState("Bonjour...");
@@ -98,19 +95,18 @@ function MainApp({ token, userEmail, onLogout }) {
     }
   }, [activeTab]);
 
-  // 🔥 CRUCIAL : Cette fonction gère intelligemment le Content-Type
-  // C'est elle qui répare l'erreur 422 lors de l'upload de fichier
+  // 🔥🔥🔥 CORRECTION : Gestion intelligente du Content-Type 🔥🔥🔥
   const authFetch = async (url, options = {}) => {
     const headers = {
-      "Content-Type": "application/json", // Par défaut JSON
       ...options.headers,
       Authorization: `Bearer ${token}`,
     };
 
-    // SI on envoie un fichier (FormData), on DOIT supprimer le Content-Type
-    // pour laisser le navigateur mettre "multipart/form-data; boundary=..."
-    if (options.body instanceof FormData) {
-        delete headers["Content-Type"];
+    // SI le corps de la requête n'est PAS un FormData (donc pas un fichier)
+    // ALORS on ajoute "application/json".
+    // SINON (si c'est un fichier), on ne met RIEN (le navigateur s'en occupe).
+    if (!(options.body instanceof FormData)) {
+        headers["Content-Type"] = "application/json";
     }
 
     const res = await fetch(url, { ...options, headers });
