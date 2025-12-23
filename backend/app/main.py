@@ -122,7 +122,7 @@ class SettingsRequest(BaseModel):
     signature: str
     logo: Optional[str] = None 
 
-# 👇 NOUVEAU MODÈLE POUR L'UPLOAD JSON
+# 👇 NOUVEAU MODÈLE POUR UPLOAD JSON
 class LogoUploadRequest(BaseModel):
     logo_base64: str
 
@@ -159,12 +159,17 @@ origins = [
 app.add_middleware(
   CORSMiddleware,
   allow_origins=origins,
-  # Regex pour autoriser tous les sous-domaines Vercel (previews)
-  allow_origin_regex="https://.*\\.vercel\\.app", 
+  allow_origin_regex="https://.*\\.vercel\\.app",
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
 )
+
+# --- HELPER POUR EVITER LES ERREURS 'DICT' VS 'OBJECT' ---
+def get_user_id(user):
+    if hasattr(user, 'id'): return user.id
+    if isinstance(user, dict): return user.get('id')
+    return None
 
 @app.on_event("startup")
 def on_startup():
@@ -223,9 +228,10 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    user_id = get_user_id(current_user) # 👇 FIX CRITIQUE 500
     total = db.query(EmailAnalysis).count()
     high_urgency = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
-    invoices_generated = db.query(Invoice).filter(Invoice.owner_id == current_user.id).count()
+    invoices_generated = db.query(Invoice).filter(Invoice.owner_id == user_id).count()
     cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).group_by(EmailAnalysis.category).all()
     distribution_data = [{"name": cat[0].replace('_', ' ').capitalize(), "value": cat[1]} for cat in cat_stats]
     recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
@@ -252,8 +258,7 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     return {"status": "updated"}
 
 # --- ROUTE SPECIALE UPLOAD LOGO (VERSION JSON BASE64 - INFAILLIBLE) ---
-# On reçoit un JSON { "logo_base64": "data:image/png;base64,..." }
-# Cela évite totalement les problèmes de "Multipart" et d'erreur 422
+# On évite le multipart pour contourner l'erreur 422 définitivement
 @app.post("/settings/upload-logo")
 async def upload_logo(
     req: LogoUploadRequest, 
@@ -261,45 +266,41 @@ async def upload_logo(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        # 1. On récupère la chaîne Base64
+        # 1. On récupère la string Base64
         img_str = req.logo_base64
         
-        # 2. On sépare le header "data:image/..." du contenu réel s'il existe
+        # 2. Nettoyage du header "data:image/..."
         if "," in img_str:
             header, encoded = img_str.split(",", 1)
         else:
             encoded = img_str
 
-        # 3. Décodage et Traitement
+        # 3. Décodage et traitement
         img_data = base64.b64decode(encoded)
         img = Image.open(io.BytesIO(img_data))
         
-        # 4. Redimensionnement
+        # 4. Resize
         max_width = 800
         if img.width > max_width:
             ratio = max_width / float(img.width)
             new_height = int((float(img.height) * float(ratio)))
             img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
         
-        # 5. Sauvegarde optimisée
+        # 5. Sauvegarde
         buffer = io.BytesIO()
         fmt = img.format if img.format else "PNG"
         img.save(buffer, format=fmt, optimize=True, quality=85)
         
-        # 6. On renvoie en base (on ré-encode proprement)
+        # 6. Ré-encodage propre pour la DB
         optimized_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        # On devine le mime type basique
-        mime = "image/png" 
+        mime = "image/png"
         if fmt.lower() in ["jpg", "jpeg"]: mime = "image/jpeg"
         
         final_logo_str = f"data:{mime};base64,{optimized_b64}"
         
         # 7. Update DB
         s = db.query(AppSettings).first()
-        if not s:
-            s = AppSettings()
-            db.add(s)
-        
+        if not s: s = AppSettings(); db.add(s)
         s.logo = final_logo_str
         db.commit()
 
@@ -343,14 +344,14 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
         os.makedirs("uploads")
     file_path = f"uploads/{file.filename}"
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer) 
         model = genai.GenerativeModel(MODEL_NAME)
         uploaded = genai.upload_file(file_path)
         res = await model.generate_content_async([uploaded, "Analyse ce document (facture/devis). Extrait JSON strict: {type, sender, date, amount, summary}"])
         data = extract_json_from_text(res.text)
         if data:
-            new_doc = FileAnalysis(filename=file.filename, file_type=str(data.get("type", "Inconnu")), sender=str(data.get("sender", "Non détecté")), extracted_date=str(data.get("date", "")), amount=str(data.get("amount", "")), summary=str(data.get("summary", "")), owner_id=current_user.id)
+            user_id = get_user_id(current_user) # 👇 FIX CRITIQUE
+            new_doc = FileAnalysis(filename=file.filename, file_type=str(data.get("type", "Inconnu")), sender=str(data.get("sender", "Non détecté")), extracted_date=str(data.get("date", "")), amount=str(data.get("amount", "")), summary=str(data.get("summary", "")), owner_id=user_id)
             db.add(new_doc); db.commit()
         return data
     except Exception as e:
@@ -359,7 +360,8 @@ async def analyze_file(file: UploadFile = File(...), db: Session = Depends(get_d
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(FileAnalysis).filter(FileAnalysis.owner_id == current_user.id).order_by(FileAnalysis.id.desc()).all()
+    user_id = get_user_id(current_user) # 👇 FIX CRITIQUE
+    return db.query(FileAnalysis).filter(FileAnalysis.owner_id == user_id).order_by(FileAnalysis.id.desc()).all()
 
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
@@ -382,19 +384,23 @@ async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_us
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
     user_logo = s.logo if (s and s.logo) else default_logo
     data.update({"company_name_header": s.company_name if s else "Mon Entreprise", "logo_url": user_logo})
-    ex = db.query(Invoice).filter(Invoice.reference == req.invoice_number, Invoice.owner_id == current_user.id).first()
+    
+    user_id = get_user_id(current_user) # 👇 FIX CRITIQUE
+    ex = db.query(Invoice).filter(Invoice.reference == req.invoice_number, Invoice.owner_id == user_id).first()
     if ex: ex.amount_total = req.amount
-    else: db.add(Invoice(reference=req.invoice_number, client_name=req.client_name, amount_total=req.amount, items_json=json.dumps([i.dict() for i in req.items]), owner_id=current_user.id))
+    else: db.add(Invoice(reference=req.invoice_number, client_name=req.client_name, amount_total=req.amount, items_json=json.dumps([i.dict() for i in req.items]), owner_id=user_id))
     db.commit()
     return Response(content=generate_pdf_bytes(data), media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"})
 
 @app.get("/api/invoices")
 async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(Invoice).filter(Invoice.owner_id == current_user.id).order_by(Invoice.id.desc()).all()
+    user_id = get_user_id(current_user) # 👇 FIX CRITIQUE
+    return db.query(Invoice).filter(Invoice.owner_id == user_id).order_by(Invoice.id.desc()).all()
 
 @app.get("/api/invoices/{ref}/pdf")
 async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == current_user.id).first()
+    user_id = get_user_id(current_user) # 👇 FIX CRITIQUE
+    inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == user_id).first()
     if not inv: raise HTTPException(404)
     s = db.query(AppSettings).first()
     default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
