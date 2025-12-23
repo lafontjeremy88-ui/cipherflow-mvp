@@ -454,11 +454,15 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
     return {"status": "sent"}
 
 # --- GESTION DES DOCUMENTS (UPLOAD & ANALYSE) ---
+# --- MODIFICATION DANS main.py ---
+
 @app.post("/api/analyze-file")
 async def analyze_file(
+    # On enlève temporairement les dépendances DB pour isoler le problème
+    # On garde juste le User pour l'auth
     file: UploadFile = File(...), 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db) # On déplace db après file, c'est plus sûr
 ):
     print(f"DEBUG: Réception fichier {file.filename}")
     
@@ -488,7 +492,7 @@ async def analyze_file(
                 extracted_date=str(data.get("date","")),
                 amount=str(data.get("amount","0")),
                 summary=str(data.get("summary","Pas de résumé")),
-                owner_id=get_user_id(current_user)
+                owner_id=current_user.id # Utilise .id directement
             ))
             db.commit()
             return data
