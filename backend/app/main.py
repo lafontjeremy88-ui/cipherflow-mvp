@@ -3,19 +3,19 @@ import json
 import logging
 import base64
 import secrets
-import io  # <--- GESTION DES FLUX DE DONNÉES
+import io 
 from typing import Optional, List
 from datetime import datetime
 import shutil
-from sqlalchemy import text as sql_text
+
 # --- LIBRAIRIE IMAGE (PILLOW) ---
 from PIL import Image 
 
 import resend 
 from jose import jwt, JWTError 
 from sqlalchemy import text as sql_text
-# 👇 AJOUT DE 'Request' ICI
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Request
+# 👇 RETOUR À LA NORMALE : On utilise UploadFile et File standards
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File
 from fastapi.responses import FileResponse 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -51,7 +51,6 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-###############################################
 MODEL_NAME = "gemini-flash-latest"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -195,7 +194,7 @@ origins = [
 app.add_middleware(
   CORSMiddleware,
   allow_origins=origins,
-  # 👇 Ajout Regex pour autoriser les sous-domaines Vercel (previews) sans tout ouvrir
+  # Regex pour autoriser les sous-domaines Vercel (previews)
   allow_origin_regex="https://.*\\.vercel\\.app",
   allow_credentials=True,
   allow_methods=["*"],
@@ -304,61 +303,62 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     db.commit()
     return {"status": "updated"}
 
-# --- ROUTE SPECIALE UPLOAD LOGO (VERSION DEBUG & MANUELLE) ---
-# ON A REMPLACÉ LA ROUTE QUI PLANTAIT PAR CELLE-CI QUI FONCTIONNE SANS PYTHON-MULTIPART STRICT
+# --- ROUTE SPECIALE UPLOAD LOGO (VERSION STANDARD & STABLE) ---
+# On revient à la méthode standard 'UploadFile' maintenant que l'environnement est propre.
 @app.post("/settings/upload-logo")
 async def upload_logo(
-    request: Request, 
+    file: UploadFile = File(...), 
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Lecture manuelle du body pour éviter l'erreur 422 de FastAPI
-    try:
-        form = await request.form()
-    except Exception as e:
-        print(f"DEBUG FORM ERROR: {e}")
-        raise HTTPException(400, detail=f"Erreur lecture formulaire: {str(e)}")
+    print(f"DEBUG: Réception fichier standard {file.filename}, type={file.content_type}")
 
-    file = form.get("file")
-    if not file:
-        raise HTTPException(422, detail="Champ 'file' manquant.")
+    # 1. Vérification du type (plus souple)
+    if "image" not in file.content_type:
+        raise HTTPException(400, detail="Format non supporté. Envoyez une image.")
 
-    # 2. Vérification type
-    if hasattr(file, "content_type") and "image" not in file.content_type:
-        raise HTTPException(400, detail="Format non supporté. Image requise.")
+    # 2. Lecture du fichier lourd
+    contents = await file.read()
 
     try:
-        contents = await file.read()
+        # 3. Ouverture de l'image avec PIL (Pillow)
         img = Image.open(io.BytesIO(contents))
         
-        # 3. Optimisation
+        # 4. Redimensionnement (On limite la largeur à 800px max pour économiser la base de données)
         max_width = 800
         if img.width > max_width:
+            # Calcule la hauteur proportionnelle
             ratio = max_width / float(img.width)
             new_height = int((float(img.height) * float(ratio)))
             img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
         
+        # 5. Sauvegarde de l'image optimisée dans un "buffer" mémoire
         buffer = io.BytesIO()
+        # On conserve le format original ou PNG par défaut
         fmt = img.format if img.format else "PNG"
         img.save(buffer, format=fmt, optimize=True, quality=85)
         
+        # On récupère les octets optimisés
         optimized_contents = buffer.getvalue()
+        
+        # 6. Encodage en Base64
         encoded_string = base64.b64encode(optimized_contents).decode("utf-8")
+        final_logo_str = f"data:{file.content_type};base64,{encoded_string}"
         
-        # On recrée une chaîne Base64 propre
-        mime = file.content_type if hasattr(file, "content_type") else "image/png"
-        final_logo_str = f"data:{mime};base64,{encoded_string}"
-        
+        # 7. Sauvegarde en base
         s = db.query(AppSettings).first()
-        if not s: s = AppSettings(); db.add(s)
+        if not s:
+            s = AppSettings()
+            db.add(s)
+        
         s.logo = final_logo_str
         db.commit()
 
-        return {"status": "logo_updated"}
+        return {"status": "logo_updated", "size_before": len(contents), "size_after": len(optimized_contents)}
 
     except Exception as e:
-        print(f"Erreur Traitement Image: {e}")
-        raise HTTPException(500, detail="Erreur interne traitement image.")
+        print(f"Erreur Resize Image: {e}")
+        raise HTTPException(500, detail="Erreur lors du traitement de l'image.")
 
 
 @app.post("/email/process", response_model=EmailProcessResponse)
