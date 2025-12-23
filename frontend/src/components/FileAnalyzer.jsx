@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
 
-// ✅ URL PROPRE (Sans crochets)
+// URL de ton backend Railway
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
-const FileAnalyzer = ({ token }) => { 
-  // NOTE: On retire 'authFetch' des props ici pour l'upload, on utilise fetch natif.
-  
+const FileAnalyzer = ({ token, authFetch }) => { 
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -15,28 +13,18 @@ const FileAnalyzer = ({ token }) => {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
-  // Fonction pour charger l'historique
+  // 1. Récupération de l'historique (Ici authFetch est OK car c'est du JSON)
   const fetchHistory = async () => {
-    if (!token) return;
     setLoadingHistory(true);
     try {
-      // Fetch natif pour la lecture (GET)
-      const res = await fetch(`${API_BASE}/api/files/history`, {
-        method: "GET",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json"
-        }
-      });
-      
+      if (!authFetch) return;
+      const res = await authFetch(`${API_BASE}/api/files/history`);
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
-      } else {
-        console.error("Erreur historique:", res.status);
       }
     } catch (e) {
-      console.error("Erreur chargement historique", e);
+      console.error("Erreur historique", e);
     } finally {
       setLoadingHistory(false);
     }
@@ -44,7 +32,7 @@ const FileAnalyzer = ({ token }) => {
 
   useEffect(() => {
     fetchHistory();
-  }, [token]);
+  }, [authFetch]);
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -56,7 +44,7 @@ const FileAnalyzer = ({ token }) => {
     setFile(f);
   };
 
-  // --- C'EST ICI QUE LA CORRECTION OPÈRE ---
+  // 2. C'EST ICI QUE TOUT SE JOUE : L'UPLOAD
   const handleAnalyze = async () => {
     if (!file) {
       setError("Choisis un fichier d’abord.");
@@ -68,14 +56,13 @@ const FileAnalyzer = ({ token }) => {
     setResult(null);
 
     const formData = new FormData();
-    formData.append('file', file); // Le champ DOIT s'appeler 'file'
+    formData.append('file', file); // Le nom 'file' est CRUCIAL
 
     try {
-      console.log("Envoi du fichier...", file.name);
+      console.log("🚀 Envoi du fichier via fetch natif...");
 
-      // 1. On utilise fetch NATIF
-      // 2. On met le Header Authorization
-      // 3. IMPORTANT: On NE MET PAS "Content-Type". Le navigateur le fera tout seul.
+      // ⚠️ ON UTILISE 'fetch' (PAS authFetch)
+      // ⚠️ ON NE MET SURTOUT PAS DE 'Content-Type' (le navigateur le fera)
       const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
         headers: {
@@ -84,27 +71,22 @@ const FileAnalyzer = ({ token }) => {
         body: formData,
       });
 
-      // Lecture de la réponse brute pour éviter le crash JSON immédiat
+      // Lecture de la réponse en texte d'abord pour voir l'erreur si besoin
       const responseText = await res.text();
       console.log("Réponse serveur:", responseText);
 
       if (!res.ok) {
-        // On essaie de parser l'erreur pour l'afficher proprement
         try {
             const errJson = JSON.parse(responseText);
-            // Si le serveur renvoie un détail précis, on l'affiche
-            const detail = errJson.detail || JSON.stringify(errJson);
-            throw new Error(`Erreur serveur : ${detail}`);
+            throw new Error(errJson.detail || JSON.stringify(errJson));
         } catch (parseError) {
-            // Sinon on affiche le texte brut
-            throw new Error(`Erreur ${res.status}: ${responseText}`);
+            throw new Error(`Erreur serveur (${res.status}): ${responseText}`);
         }
       }
 
-      // Si tout est OK
       const data = JSON.parse(responseText);
       setResult(data);
-      await fetchHistory();
+      await fetchHistory(); // Rafraîchir l'historique si succès
     } catch (e) {
       console.error("Erreur Catch:", e);
       setError(e.message || "Erreur inconnue");
@@ -118,8 +100,7 @@ const FileAnalyzer = ({ token }) => {
   return (
     <div style={{ padding: 20, color: "white" }}>
       <h2 style={{ fontSize: 26, fontWeight: 900, marginBottom: 12 }}>
-        <FileText size={20} style={{ marginRight: 8 }} /> Analyse de fichiers
-      </h2>
+        <FileText size={20} style={{ marginRight: 8 }} /> Analyse de fichiers       </h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* Carte Upload */}
@@ -138,7 +119,7 @@ const FileAnalyzer = ({ token }) => {
             {loading ? "Analyse..." : "Analyser"}
           </button>
 
-          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word", padding: 10, background: 'rgba(255,0,0,0.1)', borderRadius: 5 }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
+          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word", background: 'rgba(255,0,0,0.1)', padding: 10, borderRadius: 5 }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
         </div>
 
         {/* Carte Résultat */}
@@ -149,7 +130,6 @@ const FileAnalyzer = ({ token }) => {
           ) : (
             <div style={{ fontSize: 13 }}>
                 <p><b>Type:</b> {result.type}</p>
-                <p><b>Expéditeur:</b> {result.sender}</p>
                 <p><b>Date:</b> {result.date}</p>
                 <p><b>Montant:</b> {result.amount}</p>
                 <div style={{background: 'rgba(255,255,255,0.1)', padding: 10, borderRadius: 6, marginTop: 10}}>
