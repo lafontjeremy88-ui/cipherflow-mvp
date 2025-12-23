@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
 
+// URL Propre et directe
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
-const FileAnalyzer = ({ token, authFetch }) => {
+const FileAnalyzer = ({ token }) => { // On ignore authFetch, on utilise juste le token
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -12,11 +13,18 @@ const FileAnalyzer = ({ token, authFetch }) => {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
+  // Fonction autonome pour récupérer l'historique
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
-      if (!authFetch) return;
-      const res = await authFetch(`${API_BASE}/api/files/history`);
+      const res = await fetch(`${API_BASE}/api/files/history`, {
+        method: "GET",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        }
+      });
+      
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -31,8 +39,8 @@ const FileAnalyzer = ({ token, authFetch }) => {
   };
 
   useEffect(() => {
-    fetchHistory();
-  }, [authFetch]);
+    if (token) fetchHistory();
+  }, [token]);
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -44,6 +52,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
     setFile(f);
   };
 
+  // --- LE CŒUR DU PROBLÈME RÉSOLU ICI ---
   const handleAnalyze = async () => {
     if (!file) {
       setError("Choisis un fichier d’abord.");
@@ -58,21 +67,28 @@ const FileAnalyzer = ({ token, authFetch }) => {
     formData.append('file', file);
 
     try {
-      // ✅ Ici on utilise authFetch. Grâce au correctif dans App.jsx,
-      // le header Content-Type sera automatiquement géré.
-      const res = await authFetch(`${API_BASE}/api/analyze-file`, {
+      // ON UTILISE FETCH NATIF DIRECTEMENT
+      // On NE MET PAS de Content-Type, le navigateur le fera tout seul (multipart/form-data)
+      const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
+        headers: {
+             "Authorization": `Bearer ${token}` 
+        },
         body: formData,
       });
 
+      const responseText = await res.text();
+
       if (!res.ok) {
-        // Lecture sécurisée de l'erreur
-        const errData = await res.json().catch(() => null);
-        const errText = errData ? JSON.stringify(errData) : await res.text();
-        throw new Error(`Erreur serveur (${res.status}): ${errText}`);
+        try {
+            const errJson = JSON.parse(responseText);
+            throw new Error(errJson.detail || JSON.stringify(errJson));
+        } catch (parseError) {
+            throw new Error(`Erreur serveur (${res.status}): ${responseText}`);
+        }
       }
 
-      const data = await res.json();
+      const data = JSON.parse(responseText);
       setResult(data);
       await fetchHistory();
     } catch (e) {
@@ -107,7 +123,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
             {loading ? "Analyse..." : "Analyser"}
           </button>
 
-          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word" }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
+          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word", padding: 10, background: 'rgba(255,0,0,0.1)', borderRadius: 5 }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
         </div>
 
         <div style={card}>
