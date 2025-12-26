@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History } from "lucide-react";
-import { apiFetch } from "../services/api"; // ✅ on utilise apiFetch partout
 
-// ❌ IMPORTANT : on SUPPRIME API_BASE
-// apiFetch ajoute déjà VITE_API_URL devant le path
-// const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+// API Base : idéalement via VITE_API_URL, sinon fallback Railway
+const API_BASE =
+  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
 
-const FileAnalyzer = ({ token }) => {
+const FileAnalyzer = ({ token: tokenProp }) => {
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -15,35 +14,12 @@ const FileAnalyzer = ({ token }) => {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
-  // Fonction pour charger l'historique
-  const fetchHistory = async () => {
-    if (!token) return;
-    setLoadingHistory(true);
-
-    try {
-      // ✅ On passe un path RELATIF
-      const res = await apiFetch("/api/files/history", {
-        method: "GET",
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data);
-      } else {
-        const txt = await res.text();
-        console.error("Erreur historique:", res.status, txt);
-      }
-    } catch (e) {
-      console.error("Erreur historique", e);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  // Token : prop -> localStorage fallback
+  const token =
+    tokenProp ||
+    localStorage.getItem("cipherflow_token") ||
+    localStorage.getItem("token") ||
+    "";
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -55,9 +31,46 @@ const FileAnalyzer = ({ token }) => {
     setFile(f);
   };
 
+  const fetchHistory = async () => {
+    if (!token) return;
+    setLoadingHistory(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/files/history`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || `Erreur historique (${res.status})`);
+      }
+
+      const data = await res.json();
+      setHistory(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Erreur historique", e);
+      // Ne bloque pas l'app si l'historique fail
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const handleAnalyze = async () => {
     if (!file) {
-      setError("Choisis un fichier d’abord.");
+      setError("Choisis un fichier d'abord.");
+      return;
+    }
+    if (!token) {
+      setError("Token manquant : reconnecte-toi.");
       return;
     }
 
@@ -65,198 +78,243 @@ const FileAnalyzer = ({ token }) => {
     setError("");
     setResult(null);
 
-    const formData = new FormData();
-    // ✅ mieux : on fournit aussi le nom
-    formData.append("file", file, file.name);
-
     try {
-      console.log("Envoi du fichier...");
+      const formData = new FormData();
+      formData.append("file", file); // IMPORTANT: le nom doit être "file" (comme FastAPI)
 
-      // ✅ On passe un path RELATIF
-      const res = await apiFetch("/api/analyze-file", {
+      // IMPORTANT: ne mets PAS Content-Type ici !
+      const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
-        // ⚠️ ne PAS mettre Content-Type ici
       });
 
-      const responseText = await res.text();
+      const contentType = res.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json")
+        ? await res.json()
+        : await res.text();
 
       if (!res.ok) {
-        try {
-          const errJson = JSON.parse(responseText);
-          throw new Error(errJson.detail || JSON.stringify(errJson));
-        } catch (parseError) {
-          throw new Error(`Erreur serveur (${res.status}): ${responseText}`);
-        }
+        // FastAPI renvoie souvent {detail:[...]} sur 422
+        const detail =
+          typeof payload === "object"
+            ? payload?.detail
+              ? JSON.stringify(payload.detail)
+              : JSON.stringify(payload)
+            : payload;
+
+        throw new Error(detail || `Erreur serveur (${res.status})`);
       }
 
-      const data = JSON.parse(responseText);
-      setResult(data);
+      setResult(payload);
       await fetchHistory();
     } catch (e) {
-      console.error(e);
-      setError(e.message || "Erreur inconnue");
+      console.error("Erreur analyse fichier", e);
+      setError(String(e.message || e));
     } finally {
       setLoading(false);
     }
   };
 
-  const card = {
-    background: "#111827",
-    color: "white",
-    borderRadius: 12,
-    padding: 16,
-    boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
-  };
-
   return (
-    <div style={{ padding: 20, color: "white" }}>
-      <h2 style={{ fontSize: 26, fontWeight: 900, marginBottom: 12 }}>
-        <FileText size={20} style={{ marginRight: 8 }} /> Analyse de fichiers
-      </h2>
+    <div style={{ padding: 20 }}>
+      <h1 style={{ fontSize: 34, fontWeight: 800, marginBottom: 18 }}>
+        Analyse de Documents
+      </h1>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div style={card}>
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>Uploader un fichier</div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        {/* Upload */}
+        <div
+          style={{
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14,
+            padding: 18,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <FileText size={18} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>
+              Analyse de fichiers
+            </h2>
+          </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-            accept=".pdf,.png,.jpg,.jpeg"
-          />
-
-          <button
-            onClick={handlePickFile}
-            style={{
-              background: "#1f2937",
-              border: "none",
-              color: "white",
-              padding: "10px 14px",
-              borderRadius: 10,
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <Upload size={16} /> Choisir un fichier
-          </button>
-
-          {file && (
-            <div style={{ marginTop: 12, opacity: 0.9 }}>
-              Fichier : <b>{file.name}</b>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>
+              Uploader un fichier
             </div>
-          )}
 
-          <button
-            onClick={handleAnalyze}
-            disabled={loading}
-            style={{
-              marginTop: 12,
-              background: loading ? "#374151" : "#3b82f6",
-              border: "none",
-              color: "white",
-              padding: "10px 14px",
-              borderRadius: 10,
-              cursor: loading ? "not-allowed" : "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            {loading ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-            {loading ? "Analyse..." : "Analyser"}
-          </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              onChange={handleFileChange}
+              style={{ display: "none" }}
+            />
 
-          {error && (
-            <div
+            <button
+              onClick={handlePickFile}
               style={{
-                marginTop: 12,
-                color: "#fca5a5",
-                fontSize: "0.9em",
-                wordBreak: "break-word",
-                padding: 10,
-                background: "rgba(255,0,0,0.1)",
-                borderRadius: 5,
+                width: 190,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                color: "white",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
               }}
             >
-              <AlertCircle size={16} style={{ display: "inline", marginRight: 5 }} /> {error}
-            </div>
-          )}
-        </div>
+              <Upload size={16} /> Choisir un fichier
+            </button>
 
-        <div style={card}>
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>Résultat</div>
-          {!result ? (
-            <div style={{ opacity: 0.8 }}>Aucun résultat pour le moment.</div>
-          ) : (
-            <div style={{ fontSize: 13 }}>
-              <p>
-                <b>Type:</b> {result.type}
-              </p>
-              <p>
-                <b>Date:</b> {result.date}
-              </p>
-              <p>
-                <b>Montant:</b> {result.amount}
-              </p>
-              <div style={{ background: "rgba(255,255,255,0.1)", padding: 10, borderRadius: 6, marginTop: 10 }}>
-                {result.summary}
+            <div style={{ marginTop: 12, opacity: 0.85 }}>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>Fichier :</div>
+              <div style={{ fontWeight: 800 }}>
+                {file ? file.name : "Aucun fichier sélectionné"}
               </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ ...card, gridColumn: "span 2" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontWeight: 900 }}>
-              <History size={16} style={{ marginRight: 8 }} /> Historique
             </div>
 
             <button
-              onClick={fetchHistory}
+              onClick={handleAnalyze}
+              disabled={loading}
               style={{
-                background: "#1f2937",
-                border: "none",
+                marginTop: 14,
+                width: 140,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: loading ? "rgba(59,130,246,0.35)" : "rgba(59,130,246,0.8)",
                 color: "white",
-                padding: "8px 12px",
-                borderRadius: 10,
-                cursor: "pointer",
+                cursor: loading ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
               }}
-              title="Rafraîchir"
             >
-              {loadingHistory ? <Loader2 size={16} className="spin" /> : <Loader2 size={16} />}
+              {loading ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+              Analyser
             </button>
-          </div>
 
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-            {history.length === 0 && <div style={{ opacity: 0.8 }}>Aucun historique disponible.</div>}
-
-            {history.map((h) => (
+            {error ? (
               <div
-                key={h.id}
                 style={{
-                  background: "#1f2937",
+                  marginTop: 14,
                   padding: 12,
-                  borderRadius: 10,
+                  borderRadius: 12,
+                  border: "1px solid rgba(239,68,68,0.35)",
+                  background: "rgba(239,68,68,0.12)",
+                  color: "rgba(255,255,255,0.95)",
                   display: "flex",
-                  justifyContent: "space-between",
+                  gap: 10,
+                  alignItems: "flex-start",
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 800 }}>{h.filename}</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>
-                    {h.file_type} - {h.amount}
-                  </div>
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.6 }}>{h.extracted_date}</div>
+                <AlertCircle size={18} style={{ marginTop: 2 }} />
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{error}</div>
               </div>
-            ))}
+            ) : null}
           </div>
         </div>
+
+        {/* Résultat */}
+        <div
+          style={{
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14,
+            padding: 18,
+          }}
+        >
+          <div style={{ fontWeight: 800, marginBottom: 10 }}>Résultat</div>
+          {!result ? (
+            <div style={{ opacity: 0.7 }}>Aucun résultat pour le moment.</div>
+          ) : (
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                padding: 12,
+                borderRadius: 12,
+                fontSize: 12,
+              }}
+            >
+              {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
+            </pre>
+          )}
+        </div>
       </div>
+
+      {/* Historique */}
+      <div
+        style={{
+          marginTop: 16,
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 14,
+          padding: 18,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <History size={18} />
+          <div style={{ fontWeight: 800 }}>Historique</div>
+          {loadingHistory ? (
+            <span style={{ opacity: 0.7, fontSize: 12 }}>Chargement...</span>
+          ) : null}
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          {history.length === 0 ? (
+            <div style={{ opacity: 0.7 }}>Aucun historique disponible.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {history.map((h) => (
+                <div
+                  key={h.id || `${h.filename}-${h.created_at || ""}`}
+                  style={{
+                    padding: 12,
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(0,0,0,0.18)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 800 }}>{h.filename}</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>
+                      {h.file_type} {h.amount ? `- ${h.amount}` : ""}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.6 }}>{h.extracted_date}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <style>{`
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 };
