@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History, Download } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History } from 'lucide-react';
 
-// URL de ton backend Railway
+// ✅ CORRECTION CRITIQUE : URL PROPRE (Pas de crochets, juste les guillemets)
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
-const FileAnalyzer = ({ token, authFetch }) => { 
+const FileAnalyzer = ({ token }) => { 
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -13,12 +13,19 @@ const FileAnalyzer = ({ token, authFetch }) => {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
-  // 1. Récupération de l'historique (Ici authFetch est OK car c'est du JSON)
+  // Fonction pour charger l'historique
   const fetchHistory = async () => {
+    if (!token) return;
     setLoadingHistory(true);
     try {
-      if (!authFetch) return;
-      const res = await authFetch(`${API_BASE}/api/files/history`);
+      const res = await fetch(`${API_BASE}/api/files/history`, {
+        method: "GET",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        }
+      });
+      
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -32,7 +39,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
 
   useEffect(() => {
     fetchHistory();
-  }, [authFetch]);
+  }, [token]);
 
   const handlePickFile = () => fileInputRef.current?.click();
 
@@ -44,7 +51,6 @@ const FileAnalyzer = ({ token, authFetch }) => {
     setFile(f);
   };
 
-  // 2. C'EST ICI QUE TOUT SE JOUE : L'UPLOAD
   const handleAnalyze = async () => {
     if (!file) {
       setError("Choisis un fichier d’abord.");
@@ -56,13 +62,13 @@ const FileAnalyzer = ({ token, authFetch }) => {
     setResult(null);
 
     const formData = new FormData();
-    formData.append('file', file); // Le nom 'file' est CRUCIAL
+    formData.append('file', file);
 
     try {
-      console.log("🚀 Envoi du fichier via fetch natif...");
+      console.log("Envoi du fichier...");
 
-      // ⚠️ ON UTILISE 'fetch' (PAS authFetch)
-      // ⚠️ ON NE MET SURTOUT PAS DE 'Content-Type' (le navigateur le fera)
+      // 1. On utilise fetch NATIF (pas authFetch)
+      // 2. PAS de Content-Type (le navigateur le gère)
       const res = await fetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
         headers: {
@@ -71,9 +77,7 @@ const FileAnalyzer = ({ token, authFetch }) => {
         body: formData,
       });
 
-      // Lecture de la réponse en texte d'abord pour voir l'erreur si besoin
       const responseText = await res.text();
-      console.log("Réponse serveur:", responseText);
 
       if (!res.ok) {
         try {
@@ -86,9 +90,9 @@ const FileAnalyzer = ({ token, authFetch }) => {
 
       const data = JSON.parse(responseText);
       setResult(data);
-      await fetchHistory(); // Rafraîchir l'historique si succès
+      await fetchHistory();
     } catch (e) {
-      console.error("Erreur Catch:", e);
+      console.error(e);
       setError(e.message || "Erreur inconnue");
     } finally {
       setLoading(false);
@@ -103,7 +107,6 @@ const FileAnalyzer = ({ token, authFetch }) => {
         <FileText size={20} style={{ marginRight: 8 }} /> Analyse de fichiers       </h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Carte Upload */}
         <div style={card}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Uploader un fichier</div>
           <input ref={fileInputRef} type="file" onChange={handleFileChange} style={{ display: "none" }} />
@@ -119,10 +122,9 @@ const FileAnalyzer = ({ token, authFetch }) => {
             {loading ? "Analyse..." : "Analyser"}
           </button>
 
-          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word", background: 'rgba(255,0,0,0.1)', padding: 10, borderRadius: 5 }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
+          {error && <div style={{ marginTop: 12, color: "#fca5a5", fontSize: "0.9em", wordBreak: "break-word", padding: 10, background: 'rgba(255,0,0,0.1)', borderRadius: 5 }}> <AlertCircle size={16} style={{display:'inline', marginRight:5}}/> {error}</div>}
         </div>
 
-        {/* Carte Résultat */}
         <div style={card}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>Résultat</div>
           {!result ? (
@@ -139,7 +141,6 @@ const FileAnalyzer = ({ token, authFetch }) => {
           )}
         </div>
 
-        {/* Carte Historique */}
         <div style={{ ...card, gridColumn: "span 2" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontWeight: 900 }}><History size={16} style={{ marginRight: 8 }} /> Historique</div>
