@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, History } from "lucide-react";
 import { apiFetch } from "../services/api"; // ✅ on utilise apiFetch partout
 
-// ✅ URL backend Railway
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+// ❌ IMPORTANT : on SUPPRIME API_BASE
+// apiFetch ajoute déjà VITE_API_URL devant le path
+// const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
 const FileAnalyzer = ({ token }) => {
   const [file, setFile] = useState(null);
@@ -20,13 +21,9 @@ const FileAnalyzer = ({ token }) => {
     setLoadingHistory(true);
 
     try {
-      const res = await apiFetch(`${API_BASE}/api/files/history`, {
+      // ✅ On passe un path RELATIF
+      const res = await apiFetch("/api/files/history", {
         method: "GET",
-        // options.body absent => apiFetch mettra Content-Type json si besoin, mais sur GET ça n'a pas d'impact
-        headers: {
-          // (optionnel) tu peux enlever content-type ici, apiFetch gère
-          // "Content-Type": "application/json"
-        },
       });
 
       if (res.ok) {
@@ -75,9 +72,8 @@ const FileAnalyzer = ({ token }) => {
     try {
       console.log("Envoi du fichier...");
 
-      // ✅ On passe par apiFetch :
-      // - si body est FormData => apiFetch doit SUPPRIMER Content-Type
-      const res = await apiFetch(`${API_BASE}/api/analyze-file`, {
+      // ✅ On passe un path RELATIF
+      const res = await apiFetch("/api/analyze-file", {
         method: "POST",
         body: formData,
         // ⚠️ ne PAS mettre Content-Type ici
