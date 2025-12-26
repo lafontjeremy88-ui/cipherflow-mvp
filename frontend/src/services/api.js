@@ -22,9 +22,11 @@ export async function apiFetch(path, options = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  // ⚠️ RÈGLE CRITIQUE :
-  // On met Content-Type JSON UNIQUEMENT si ce n’est PAS du FormData
-  if (!isFormData) {
+  // ✅ IMPORTANT : si FormData, on SUPPRIME tout Content-Type existant
+  if (isFormData) {
+    delete headers["Content-Type"];
+    delete headers["content-type"];
+  } else {
     headers["Content-Type"] = "application/json";
   }
 
