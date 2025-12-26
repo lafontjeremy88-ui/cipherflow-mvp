@@ -15,7 +15,7 @@ window.fetch = async (input, init = {}) => {
     const isApiCall = API_BASE && url.startsWith(API_BASE);
 
     if (isApiCall) {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("cipherflow_token");
       const headers = new Headers(init.headers || {});
 
       // Ajoute le JWT si présent et pas déjà défini

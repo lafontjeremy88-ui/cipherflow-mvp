@@ -22,7 +22,7 @@ export default function FileAnalyzer() {
       const formData = new FormData();
       formData.append("file", file); // ⚠️ NOM EXACT requis par FastAPI
 
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("cipherflow_token");
 
       const response = await fetch(`${API_URL}/api/analyze-file`, {
         method: "POST",
