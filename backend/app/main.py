@@ -30,6 +30,17 @@ from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileA
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
 
+##
+from fastapi import File, UploadFile, Depends, HTTPException
+from sqlalchemy.orm import Session
+import os, shutil
+from pathlib import Path
+##
+
+
+
+
+
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
@@ -445,45 +456,67 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
 
 @app.post("/api/analyze-file")
 async def analyze_file(
-    file: UploadFile = File(...), 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    file: UploadFile = File(...),
 ):
-    print(f"DEBUG: Réception fichier {file.filename}")
-    
-    if not os.path.exists("uploads"):
-        os.makedirs("uploads")
-    
+    # ✅ Debug clair
+    print("DEBUG analyze-file:")
+    print(" - filename:", getattr(file, "filename", None))
+    print(" - content_type:", getattr(file, "content_type", None))
+
+    # ✅ Sécurité: éviter les chemins bizarres dans file.filename
+    safe_name = Path(file.filename).name if file and file.filename else "upload.bin"
+
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = uploads_dir / safe_name
+
     try:
-        file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        
+
         model = genai.GenerativeModel(MODEL_NAME)
-        up = genai.upload_file(file_path)
-        
-        res = await model.generate_content_async([up, "Analyse ce document et retourne un JSON strict avec: type (facture, contrat, devis...), sender, date, amount (si applicable, sinon '0'), summary."])
-        
+        up = genai.upload_file(str(file_path))
+
+        prompt = (
+            "Analyse ce document et retourne un JSON strict avec: "
+            "type (facture, contrat, devis...), sender, date, amount "
+            "(si applicable, sinon '0'), summary."
+        )
+
+        res = await model.generate_content_async([up, prompt])
+
         data = extract_json_from_text(res.text)
-        
-        if data:
-            db.add(FileAnalysis(
-                filename=file.filename,
-                file_type=str(data.get("type","Inconnu")),
-                sender=str(data.get("sender","Inconnu")),
-                extracted_date=str(data.get("date","")),
-                amount=str(data.get("amount","0")),
-                summary=str(data.get("summary","Pas de résumé")),
-                owner_id=get_user_id(current_user)
-            ))
-            db.commit()
-            return data
-        else:
+
+        if not data:
             return {"error": "Impossible d'extraire le JSON de l'IA"}
-            
+
+        db.add(FileAnalysis(
+            filename=safe_name,
+            file_type=str(data.get("type", "Inconnu")),
+            sender=str(data.get("sender", "Inconnu")),
+            extracted_date=str(data.get("date", "")),
+            amount=str(data.get("amount", "0")),
+            summary=str(data.get("summary", "Pas de résumé")),
+            owner_id=get_user_id(current_user),
+        ))
+        db.commit()
+
+        return data
+
     except Exception as e:
         print(f"ERREUR DOC: {e}")
-        raise HTTPException(500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # ✅ ferme le fichier uploadé proprement
+        try:
+            await file.close()
+        except Exception:
+            pass
+
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
