@@ -1,8 +1,9 @@
 import { useState } from "react";
 
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL =
+  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
 
-export default function FileAnalyzer() {
+export default function FileAnalyzer({ authFetch }) {
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -20,28 +21,44 @@ export default function FileAnalyzer() {
 
     try {
       const formData = new FormData();
-      formData.append("file", file); // ⚠️ NOM EXACT requis par FastAPI
+      formData.append("file", file); // ✅ NOM EXACT attendu par FastAPI
 
-      const token = localStorage.getItem("cipherflow_token");
+      // ✅ On utilise authFetch si fourni (recommandé), sinon fallback fetch avec token
+      let response;
 
-      const response = await fetch(`${API_URL}/api/analyze-file`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}` // ❗ PAS de Content-Type ici
-        },
-        body: formData
-      });
+      if (typeof authFetch === "function") {
+        response = await authFetch(`${API_URL}/api/analyze-file`, {
+          method: "POST",
+          body: formData, // IMPORTANT: FormData -> authFetch ne doit pas forcer Content-Type
+        });
+      } else {
+        const token = localStorage.getItem("cipherflow_token");
+        if (!token) throw new Error("Token manquant. Déconnecte-toi puis reconnecte-toi.");
+
+        response = await fetch(`${API_URL}/api/analyze-file`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+      }
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(JSON.stringify(err));
+        // Essaie de lire le JSON d'erreur, sinon texte brut
+        let detail = "";
+        try {
+          const errJson = await response.json();
+          detail = errJson?.detail ? JSON.stringify(errJson.detail) : JSON.stringify(errJson);
+        } catch {
+          detail = await response.text();
+        }
+        throw new Error(`Erreur ${response.status}: ${detail || "Erreur inconnue"}`);
       }
 
       const data = await response.json();
       setResult(data);
     } catch (e) {
       console.error("Erreur analyse fichier:", e);
-      setError(e.message);
+      setError(e?.message || "Erreur inconnue");
     } finally {
       setLoading(false);
     }
@@ -52,15 +69,15 @@ export default function FileAnalyzer() {
       <input
         type="file"
         accept=".pdf,.png,.jpg,.jpeg"
-        onChange={(e) => setFile(e.target.files[0])}
+        onChange={(e) => setFile(e.target.files?.[0] || null)}
       />
 
       <button onClick={handleAnalyze} disabled={loading}>
         {loading ? "Analyse..." : "Analyser"}
       </button>
 
-      {error && <pre style={{ color: "red" }}>{error}</pre>}
-      {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+      {error && <pre style={{ color: "red", whiteSpace: "pre-wrap" }}>{error}</pre>}
+      {result && <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(result, null, 2)}</pre>}
     </div>
   );
 }
