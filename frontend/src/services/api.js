@@ -3,34 +3,44 @@ const API_URL = import.meta.env.VITE_API_URL;
 function getToken() {
   return (
     localStorage.getItem("cipherflow_token") ||
-    localStorage.getItem("token") || // fallback si un ancien token existe encore
+    localStorage.getItem("token") ||
     null
   );
 }
 
 export async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("token");
+  const token = getToken();
 
   const isFormData =
     options.body instanceof FormData ||
-    (typeof FormData !== "undefined" && options.body && options.body.constructor?.name === "FormData");
+    (typeof FormData !== "undefined" &&
+      options.body &&
+      options.body.constructor?.name === "FormData");
 
   const headers = {
     ...(options.headers || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    // IMPORTANT:
-    // On ne met PAS Content-Type si c'est un FormData.
-    // Le navigateur le mettra tout seul avec le boundary.
-    ...(!isFormData ? { "Content-Type": "application/json" } : {}),
   };
+
+  // ⚠️ RÈGLE CRITIQUE :
+  // On met Content-Type JSON UNIQUEMENT si ce n’est PAS du FormData
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
 
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
+    body: isFormData
+      ? options.body
+      : options.body
+      ? JSON.stringify(options.body)
+      : undefined,
   });
 
   if (response.status === 401) {
     localStorage.removeItem("token");
+    localStorage.removeItem("cipherflow_token");
     window.location.href = "/login";
     return;
   }
