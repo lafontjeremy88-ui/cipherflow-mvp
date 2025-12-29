@@ -142,38 +142,35 @@ def process_one_email(msg: email.message.Message) -> None:
     if not sender_email:
         sender_email = real_sender
 
+    # ✅ MODIFICATION ICI : On récupère le destinataire pour le routage Multi-Agence
+    recipient = decode_mime_header(msg.get("Delivered-To") or msg.get("To") or "")
+
     body = get_plain_text_body(msg).strip()
     if not body:
         body = "Pas de contenu texte"
 
     log.info(f"👉 Traitement : {subject}")
-    log.info(f"   📨 De : {sender_email}")
+    log.info(f"   📨 De : {sender_email} | Vers : {recipient}")
 
-    # ✅ RÉCUPÉRATION DES PJ
+    # Récupération des PJ
     attachments = get_attachments_for_api(msg)
 
     payload = {
         "from_email": sender_email,
+        "to_email": recipient,  # ✅ On envoie ça au backend
         "subject": subject,
         "content": body,
         "send_email": AUTO_SEND,
-        "attachments": attachments # ✅ ON ENVOIE LES FICHIERS AU BACKEND
+        "attachments": attachments
     }
 
     headers = {"x-watcher-secret": WATCHER_SECRET}
 
     try:
-        # On augmente le timeout car l'upload de fichiers peut prendre un peu plus de temps
         resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
         
         if resp.status_code == 200:
             log.info("   ✅ OK — Analyse terminée par l'IA !")
-            # Petit bonus : on logue le résumé de l'IA si dispo
-            try:
-                summary = resp.json().get("analyse", {}).get("summary", "")
-                log.info(f"   🧠 Résumé IA : {summary}")
-            except:
-                pass
         else:
             log.info(f"   ⚠️ Backend erreur {resp.status_code} — {resp.text[:200]}")
     except Exception as e:

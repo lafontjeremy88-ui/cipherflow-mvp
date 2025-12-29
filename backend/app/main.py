@@ -26,11 +26,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from google import genai
 from google.genai import types
 
-from app.security import get_current_user
+# Imports internes
+from app.security import get_current_user as get_current_user_token
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models
-from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis
+# On importe les nouveaux modèles SaaS
+from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis, Agency, UserRole
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
 
@@ -61,7 +63,20 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
-# --- FONCTIONS ---
+# --- DEPENDANCES SAAS ---
+# Cette fonction remplace get_current_user pour récupérer l'objet DB complet (avec agency_id)
+async def get_current_user_db(token_payload: dict = Depends(get_current_user_token), db: Session = Depends(get_db)) -> User:
+    email = token_payload.get("sub") or token_payload.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="Token invalide")
+    
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Utilisateur introuvable")
+    
+    return user
+
+# --- FONCTIONS UTILITAIRES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY:
         print("Resend API Key manquant")
@@ -102,17 +117,12 @@ def extract_json_from_text(text: str):
     except:
         return None
 
-# --- 🧠 LOGIQUE CENTRALE D'ANALYSE DE DOCUMENT (Reusable) ---
+# --- IA LOGIQUE ---
 async def analyze_document_logic(file_path: str, filename: str):
-    """Fonction qui prend un chemin de fichier et retourne l'analyse JSON de Gemini"""
     if not client:
         return {"summary": "IA non configurée"}
-
     try:
-        # Upload vers Gemini
         uploaded_file = client.files.upload(file=file_path)
-        
-        # Attente du traitement
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
             uploaded_file = client.files.get(name=uploaded_file.name)
@@ -120,15 +130,14 @@ async def analyze_document_logic(file_path: str, filename: str):
         if uploaded_file.state.name == "FAILED":
              raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
-        # Prompt Spécial Immo
         prompt = (
-            "Tu es un expert en vérification de dossiers locataires pour une agence immobilière. "
-            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec les champs suivants :\n"
-            "- type: Choisis EXACTEMENT une de ces valeurs : 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance de loyer', 'Facture', 'Autre'.\n"
-            "- sender: Nom de l'employeur, de l'organisme (ex: DGFIP) ou de l'émetteur.\n"
-            "- date: Date du document (format DD/MM/YYYY).\n"
-            "- amount: Montant clé (ex: Net à payer pour une paie, Revenu fiscal pour un avis d'impôt). Mets '0' si non applicable (ex: CNI).\n"
-            "- summary: Une phrase de synthèse (ex: 'Bulletin de paie Janvier 2023 - CDI confirmé')."
+            "Tu es un expert en vérification de dossiers locataires. "
+            "Analyse ce document et retourne un JSON strict :\n"
+            "- type: 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance', 'Facture', 'Autre'.\n"
+            "- sender: Emetteur (ex: Entreprise, DGFIP).\n"
+            "- date: DD/MM/YYYY.\n"
+            "- amount: Montant principal ou '0'.\n"
+            "- summary: Synthèse courte."
         )
 
         res = client.models.generate_content(
@@ -141,34 +150,31 @@ async def analyze_document_logic(file_path: str, filename: str):
         print(f"Erreur analyse doc: {e}")
         return {"summary": "Erreur analyse", "type": "Erreur"}
 
-# --- LOGIQUE EMAIL + RAG ---
-async def analyze_email_logic(req, company_name, db: Session, attachment_summary=""):
+async def analyze_email_logic(req, company_name, db: Session, agency_id: int, attachment_summary=""):
+    # RAG : On ne regarde que les fichiers DE L'AGENCE
+    last_files = db.query(FileAnalysis).filter(FileAnalysis.agency_id == agency_id).order_by(FileAnalysis.id.desc()).limit(5).all()
     
-    # RAG : Contexte des derniers fichiers (y compris ceux reçus dans cet email)
-    last_files = db.query(FileAnalysis).order_by(FileAnalysis.id.desc()).limit(5).all()
     files_context = ""
     if last_files:
-        files_context = "CONTEXTE DOCUMENTS (Pièces jointes reçues récemment) :\n"
+        files_context = "CONTEXTE DOCUMENTS (Dossiers récents de l'agence) :\n"
         for f in last_files:
-            files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount} | Résumé: {f.summary}\n"
+            files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount}\n"
     
     if attachment_summary:
-        files_context += f"\nNOUVELLES PIÈCES JOINTES DANS CET EMAIL : {attachment_summary}\n"
+        files_context += f"\nNOUVELLES PIÈCES JOINTES : {attachment_summary}\n"
 
     prompt = (
-        f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
-        f"Ton rôle est de trier les emails entrants.\n\n"
+        f"Tu es l'assistant de l'agence immobilière {company_name}. "
         f"{files_context}\n"
         f"Analyse cet email :\n"
         f"De: {req.from_email}\n"
         f"Sujet: {req.subject}\n"
         f"Contenu: {req.content}\n\n"
-        f"INSTRUCTION : Si l'email contient des pièces jointes mentionnées ci-dessus (Bulletins de paie, etc.), prends-les en compte pour valider le dossier.\n\n"
-        f"Retourne un JSON strict avec ces champs :\n"
-        f"- is_devis: 'true' si demande location/dossier.\n"
-        f"- category: 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
-        f"- urgency: 'Haute' (Fuite, Panne, Sécurité), 'Moyenne' (Dossier, Loyer), 'Faible' (Pub, Info).\n"
-        f"- summary: Résumé court incluant les infos des pièces jointes si présentes.\n"
+        f"Retourne un JSON strict :\n"
+        f"- is_devis: 'true' si opportunité commerciale/location.\n"
+        f"- category: 'Candidature', 'Incident', 'Paiement', 'Administratif', 'Autre'.\n"
+        f"- urgency: 'Haute', 'Moyenne', 'Faible'.\n"
+        f"- summary: Résumé court.\n"
         f"- suggested_title: Titre court."
     )
     
@@ -194,10 +200,34 @@ async def generate_reply_logic(req, company_name, tone, signature):
         raw_ai_text=raw
     )
 
-# --- SETUP FASTAPI ---
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# --- CONFIG FASTAPI ---
+app = FastAPI(title="CipherFlow SaaS Multi-Agence")
 
-# MODÈLES
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=OAUTH_STATE_SECRET,
+    same_site="lax",
+    https_only=(ENV in ("prod", "production"))
+)
+
+app.include_router(google_oauth_router, tags=["Google OAuth"])
+
+origins = [
+    "http://localhost:5173",
+    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
+    "[https://cipherflow.company](https://cipherflow.company)"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex="https://.*\\.vercel\\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# --- MODELS Pydantic ---
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -233,18 +263,18 @@ class EmailReplyResponse(BaseModel):
     subject: str
     raw_ai_text: Optional[str] = None
 
-# ✅ NOUVEAU MODÈLE POUR LES PIÈCES JOINTES
 class AttachmentModel(BaseModel):
     filename: str
-    content_base64: str # Contenu du fichier encodé en base64
+    content_base64: str 
     content_type: str
 
 class EmailProcessRequest(BaseModel):
     from_email: EmailStr
+    to_email: Optional[str] = None # Nouveau : pour router vers l'agence
     subject: str
     content: str
     send_email: bool = False
-    attachments: List[AttachmentModel] = [] # ✅ Ajout ici
+    attachments: List[AttachmentModel] = []
 
 class EmailProcessResponse(BaseModel):
     analyse: EmailAnalyseResponse
@@ -294,80 +324,122 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
-app = FastAPI(title="CipherFlow Inbox IA Pro")
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=OAUTH_STATE_SECRET,
-    same_site="lax",
-    https_only=(ENV in ("prod", "production"))
-)
-
-app.include_router(google_oauth_router, tags=["Google OAuth"])
-
-origins = [
-    "http://localhost:5173",
-    "https://cipherflow-mvp.vercel.app",
-    "https://cipherflow.company"
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex="https://.*\\.vercel\\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-def get_user_id(user):
-    if hasattr(user, 'id'): return user.id
-    if isinstance(user, dict): return user.get('id')
-    return None
-
+# --- STARTUP ---
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
+    
+    # Création Super Admin par défaut
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
+        # Créer Agence par défaut
+        default_agency = Agency(name="CipherFlow HQ")
+        db.add(default_agency)
+        db.commit()
+        
         hashed = get_password_hash("admin123")
-        db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
+        admin = User(
+            email="admin@cipherflow.com", 
+            hashed_password=hashed, 
+            role=UserRole.SUPER_ADMIN,
+            agency_id=default_agency.id
+        )
+        db.add(admin)
         db.commit()
 
-# --- 🚀 WEBHOOK INTELLIGENT (EMAIL + PIÈCES JOINTES) ---
+# --- ROUTES AUTH ---
+@app.post("/auth/register", response_model=TokenResponse)
+async def register(req: LoginRequest, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.email == req.email).first():
+        raise HTTPException(status_code=400, detail="Email déjà utilisé")
+    
+    # SAAS AUTO-ONBOARDING :
+    # 1. On crée une agence pour ce nouvel utilisateur
+    agency_name = f"Agence de {req.email.split('@')[0]}"
+    # Check doublon nom agence
+    if db.query(Agency).filter(Agency.name == agency_name).first():
+        agency_name = f"{agency_name} ({int(time.time())})"
+    
+    new_agency = Agency(name=agency_name)
+    db.add(new_agency)
+    db.commit()
+    db.refresh(new_agency)
+    
+    # 2. On crée le User Admin de cette agence
+    new_user = User(
+        email=req.email, 
+        hashed_password=get_password_hash(req.password),
+        agency_id=new_agency.id, # LIEN CRITIQUE
+        role=UserRole.AGENCY_ADMIN
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # 3. On initialise les settings par défaut
+    default_settings = AppSettings(
+        agency_id=new_agency.id,
+        company_name=agency_name,
+        agent_name="Assistant IA",
+        tone="pro"
+    )
+    db.add(default_settings)
+    db.commit()
+    
+    return {"access_token": create_access_token({"sub": new_user.email}), "token_type": "bearer", "user_email": new_user.email}
+
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or not verify_password(req.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Identifiants incorrects")
+    
+    # On pourrait injecter 'aid' (agency_id) dans le token ici si on modifie auth.py
+    return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
+
+# --- WEBHOOK EMAIL (ROUTAGE MULTI-AGENCE) ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid Secret")
     
-    s = db.query(AppSettings).first()
-    comp = s.company_name if s else "CipherFlow"
+    # 1. IDENTIFIER L'AGENCE DESTINATAIRE
+    # Logique simple : on cherche une agence par défaut ou on route selon le 'to_email'
+    target_agency = None
     
-    # 1. TRAITEMENT DES PIÈCES JOINTES (AUTOMATIQUE)
+    # (Futur) Ici on pourra chercher dans la table Agency si 'email_ingestion_alias' == req.to_email
+    
+    # Pour le MVP : On prend la première agence trouvée (ou une par défaut 'HQ')
+    # Ceci est temporaire en attendant le système d'alias complet
+    target_agency = db.query(Agency).first()
+    
+    if not target_agency:
+        # Fallback de sécurité
+        raise HTTPException(500, "Aucune agence configurée pour recevoir les emails.")
+
+    agency_id = target_agency.id
+    
+    # Récupérer les settings de CETTE agence
+    s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
+    comp_name = s.company_name if s else target_agency.name
+    
+    # 2. TRAITEMENT PJ
     attachment_summary_text = ""
     if req.attachments:
-        print(f"📎 {len(req.attachments)} pièces jointes détectées.")
         for att in req.attachments:
             try:
-                # Décoder le fichier
                 file_data = base64.b64decode(att.content_base64)
-                safe_filename = f"{int(time.time())}_{att.filename}"
+                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}" # Prefix avec ID agence
                 file_path = os.path.join("uploads", safe_filename)
                 
                 with open(file_path, "wb") as f:
                     f.write(file_data)
                 
-                # ANALYSE IA DU DOCUMENT (Appel de la fonction partagée)
                 doc_analysis = await analyze_document_logic(file_path, safe_filename)
                 
                 if doc_analysis:
-                    # Sauvegarder dans la DB 'FileAnalysis'
-                    # Note: owner_id est None car c'est un email entrant, on pourra l'assigner plus tard si on gère les users
-                    admin_user = db.query(User).first() # On assigne au premier user par défaut (admin)
-                    owner = admin_user.id if admin_user else None
-
                     new_file = FileAnalysis(
                         filename=safe_filename,
                         file_type=str(doc_analysis.get("type", "Autre")),
@@ -375,27 +447,28 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                         extracted_date=str(doc_analysis.get("date", "")),
                         amount=str(doc_analysis.get("amount", "0")),
                         summary=str(doc_analysis.get("summary", "Reçu par email")),
-                        owner_id=owner
+                        owner_id=None, # Pas de user spécifique, c'est l'agence
+                        agency_id=agency_id # ✅ IMPORTANT
                     )
                     db.add(new_file)
-                    db.commit() # Important pour que l'analyse email le voie tout de suite
-                    
-                    attachment_summary_text += f"- PJ analysée : {att.filename} -> {doc_analysis.get('type')} ({doc_analysis.get('amount')})\n"
-            
+                    db.commit()
+                    attachment_summary_text += f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
             except Exception as e:
-                print(f"Erreur traitement PJ {att.filename}: {e}")
+                print(f"Erreur PJ: {e}")
 
-    # 2. ANALYSE EMAIL AVEC LE CONTEXTE DES PJ
+    # 3. ANALYSE EMAIL
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
-        comp, 
+        comp_name, 
         db,
-        attachment_summary=attachment_summary_text # On passe le résumé des PJ à l'IA
+        agency_id, # ✅ Contexte Agence
+        attachment_summary=attachment_summary_text
     )
     
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
+    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp_name, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
+        agency_id=agency_id, # ✅ CLOISONNEMENT
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -416,42 +489,27 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
 
-@app.post("/auth/register", response_model=TokenResponse)
-async def register(req: LoginRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == req.email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    new_user = User(email=req.email, hashed_password=get_password_hash(req.password))
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return {"access_token": create_access_token({"sub": new_user.email}), "token_type": "bearer", "user_email": new_user.email}
-
-@app.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == req.email).first()
-    if not user or not verify_password(req.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Invalid credentials")
-    return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
+# --- ROUTES DASHBOARD & DATA (PROTEGEES PAR AGENCE) ---
 
 @app.get("/dashboard/stats")
-async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    user_id = get_user_id(current_user)
-    total = db.query(EmailAnalysis).count()
+async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    # FILTRE PAR AGENCE (current_user.agency_id)
+    aid = current_user.agency_id
     
-    # COMPTEUR URGENCES HAUTES (Insensible à la casse)
+    total = db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).count()
+    
     high = db.query(EmailAnalysis).filter(
+        EmailAnalysis.agency_id == aid,
         (func.lower(EmailAnalysis.urgency).contains("haut")) | 
-        (func.lower(EmailAnalysis.urgency).contains("high")) |
-        (func.lower(EmailAnalysis.urgency).contains("urg")) |
-        (func.lower(EmailAnalysis.urgency).contains("criti"))
+        (func.lower(EmailAnalysis.urgency).contains("urg"))
     ).count()
     
-    inv = db.query(Invoice).filter(Invoice.owner_id == user_id).count()
+    inv = db.query(Invoice).filter(Invoice.agency_id == aid).count()
     
-    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).group_by(EmailAnalysis.category).all()
+    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).filter(EmailAnalysis.agency_id == aid).group_by(EmailAnalysis.category).all()
     dist = [{"name": c[0], "value": c[1]} for c in cat_stats]
     
-    recents = db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).limit(5).all()
+    recents = db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).order_by(EmailAnalysis.id.desc()).limit(5).all()
     rec_act = [{
         "id": r.id, 
         "subject": r.subject, 
@@ -463,33 +521,35 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
     return {"kpis": {"total_emails": total, "high_urgency": high, "invoices": inv}, "charts": {"distribution": dist}, "recents": rec_act}
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
-async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(EmailAnalysis).order_by(EmailAnalysis.id.desc()).all()
+async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    # Seuls les emails de SON agence
+    return db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == current_user.agency_id).order_by(EmailAnalysis.id.desc()).all()
 
 @app.delete("/email/history/{email_id}")
-async def delete_history(email_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    item = db.query(EmailAnalysis).filter(EmailAnalysis.id == email_id).first()
+async def delete_history(email_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    item = db.query(EmailAnalysis).filter(EmailAnalysis.id == email_id, EmailAnalysis.agency_id == current_user.agency_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Introuvable")
+        raise HTTPException(status_code=404, detail="Introuvable ou accès refusé")
     db.delete(item)
     db.commit()
     return {"status": "deleted"}
 
 @app.get("/settings")
-async def get_settings_route(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AppSettings).first()
+async def get_settings_route(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    s = db.query(AppSettings).filter(AppSettings.agency_id == current_user.agency_id).first()
     if not s:
-        s = AppSettings()
+        # Création lazy si inexistant
+        s = AppSettings(agency_id=current_user.agency_id, company_name="Mon Agence")
         db.add(s)
         db.commit()
         db.refresh(s)
     return s
 
 @app.post("/settings")
-async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AppSettings).first()
+async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    s = db.query(AppSettings).filter(AppSettings.agency_id == current_user.agency_id).first()
     if not s:
-        s = AppSettings()
+        s = AppSettings(agency_id=current_user.agency_id)
         db.add(s)
     
     s.company_name = req.company_name
@@ -503,7 +563,7 @@ async def update_settings(req: SettingsRequest, db: Session = Depends(get_db), c
     return {"status": "updated"}
 
 @app.post("/settings/upload-logo")
-async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
     try:
         img_str = req.logo_base64
         if "," in img_str:
@@ -512,6 +572,7 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
             encoded = img_str
         
         img = Image.open(io.BytesIO(base64.b64decode(encoded)))
+        # Resize safe
         if img.width > 800:
             ratio = 800 / float(img.width)
             img = img.resize((800, int(float(img.height) * ratio)), Image.Resampling.LANCZOS)
@@ -520,9 +581,9 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
         img.save(buffer, format=fmt, optimize=True)
         final = f"data:image/{'jpeg' if fmt.lower() in ['jpg','jpeg'] else 'png'};base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
         
-        s = db.query(AppSettings).first()
+        s = db.query(AppSettings).filter(AppSettings.agency_id == current_user.agency_id).first()
         if not s:
-            s = AppSettings()
+            s = AppSettings(agency_id=current_user.agency_id)
             db.add(s)
         s.logo = final
         db.commit()
@@ -530,23 +591,23 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
 
-# --- PROCESS MANUEL (MODIFIÉ POUR PASSER LA DB) ---
+# --- PROCESS MANUEL / UPLOAD ---
 @app.post("/email/process", response_model=EmailProcessResponse)
-async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AppSettings).first()
-    comp = s.company_name if s else "CipherFlow"
-    
-    # Même logique pour les pièces jointes que le webhook si besoin
-    # Pour l'instant, on assume que la simulation manuelle n'a pas de PJ (ou à implémenter dans le frontend)
+async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    aid = current_user.agency_id
+    s = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
+    comp = s.company_name if s else "Mon Agence"
     
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
         comp, 
-        db
+        db,
+        aid # Contexte
     )
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
+        agency_id=aid, # ✅
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -567,27 +628,13 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
     
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
 
-@app.post("/email/send")
-async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    send_email_via_resend(req.to_email, req.subject, req.body)
-    if req.email_id:
-        email = db.query(EmailAnalysis).filter(EmailAnalysis.id == req.email_id).first()
-        if email:
-            email.send_status = "sent"
-            db.commit()
-    return {"status": "sent"}
-
-# --- ENDPOINT UPLOAD MANUEL (UTILISE LA NOUVELLE LOGIQUE PARTAGÉE) ---
 @app.post("/api/analyze-file")
 async def analyze_file(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
     db: Session = Depends(get_db),
     file: UploadFile = File(...),
 ):
-    if not client:
-        raise HTTPException(status_code=500, detail="Configuration IA manquante")
-
-    safe_name = Path(file.filename).name if file and file.filename else "document.pdf"
+    safe_name = f"{current_user.agency_id}_{int(time.time())}_{Path(file.filename).name}"
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
     file_path = uploads_dir / safe_name
@@ -596,8 +643,7 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # ✅ APPEL DE LA FONCTION REUSABLE
-        data = await analyze_document_logic(str(file_path), safe_filename)
+        data = await analyze_document_logic(str(file_path), safe_name)
         
         if not data:
             return {"extracted": False, "summary": "Erreur lecture JSON"}
@@ -609,122 +655,92 @@ async def analyze_file(
             extracted_date=str(data.get("date", "")),
             amount=str(data.get("amount", "0")),
             summary=str(data.get("summary", "Pas de résumé")),
-            owner_id=get_user_id(current_user),
+            owner_id=current_user.id,
+            agency_id=current_user.agency_id # ✅
         )
         db.add(new_analysis)
         db.commit()
 
         return data
-
     except Exception as e:
-        print(f"ERREUR DOC: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
     finally:
         await file.close()
 
 @app.get("/api/files/history")
-async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    try:
-        files = db.query(FileAnalysis).filter(FileAnalysis.owner_id == get_user_id(current_user)).order_by(FileAnalysis.id.desc()).all()
-        return files
-    except Exception as e:
-        print(f"Erreur historique files: {e}")
-        return []
+async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    # Voir les fichiers de TOUTE l'agence ou juste les siens ? 
+    # Pour l'instant : TOUTE l'agence.
+    return db.query(FileAnalysis).filter(FileAnalysis.agency_id == current_user.agency_id).order_by(FileAnalysis.id.desc()).all()
+
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id, FileAnalysis.agency_id == current_user.agency_id).first()
+    if not f:
+        raise HTTPException(404, detail="Introuvable")
+    
+    path = os.path.join("uploads", f.filename)
+    if os.path.exists(path):
+        os.remove(path)
+    db.delete(f)
+    db.commit()
+    return {"status": "deleted"}
+
+# --- INVOICES (MULTI-AGENCE) ---
+@app.post("/api/generate-invoice")
+async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    aid = current_user.agency_id
+    s = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
+    
+    data = req.dict()
+    default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    data.update({
+        "company_name_header": s.company_name if s else "Agence",
+        "logo_url": s.logo if (s and s.logo) else default_logo
+    })
+    
+    db.add(Invoice(
+        agency_id=aid, # ✅
+        owner_id=current_user.id,
+        reference=req.invoice_number,
+        client_name=req.client_name,
+        amount_total=req.amount,
+        items_json=json.dumps([i.dict() for i in req.items])
+    ))
+    db.commit()
+    
+    pdf_bytes = generate_pdf_bytes(data)
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"})
+
+@app.get("/api/invoices")
+async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    return db.query(Invoice).filter(Invoice.agency_id == current_user.agency_id).order_by(Invoice.id.desc()).all()
+    
+@app.delete("/api/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    inv = db.query(Invoice).filter(Invoice.id == invoice_id, Invoice.agency_id == current_user.agency_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Quittance introuvable ou accès refusé")
+    db.delete(inv)
+    db.commit()
+    return {"status": "deleted"}
 
 @app.get("/api/files/view/{file_id}")
 async def view_file(file_id: int, db: Session = Depends(get_db)):
-    f = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
+    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id).first()
     if not f or not os.path.exists(f"uploads/{f.filename}"):
         raise HTTPException(404, detail="Fichier introuvable")
     return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="inline")
 
 @app.get("/api/files/download/{file_id}")
 async def download_file(file_id: int, db: Session = Depends(get_db)):
-    f = db.query(models.FileAnalysis).filter(models.FileAnalysis.id == file_id).first()
+    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id).first()
     if not f or not os.path.exists(f"uploads/{f.filename}"):
         raise HTTPException(404, detail="Fichier introuvable")
     return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="attachment")
 
-@app.delete("/api/files/{file_id}")
-async def delete_file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    file_record = db.query(FileAnalysis).filter(FileAnalysis.id == file_id, FileAnalysis.owner_id == get_user_id(current_user)).first()
-    if not file_record:
-        raise HTTPException(status_code=404, detail="Fichier introuvable")
-    
-    file_path = os.path.join("uploads", file_record.filename)
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Erreur suppression fichier physique: {e}")
-
-    db.delete(file_record)
-    db.commit()
-    
-    return {"status": "deleted"}
-
-@app.post("/api/generate-invoice")
-async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AppSettings).first()
-    data = req.dict()
-    default_logo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-    
-    data.update({
-        "company_name_header": s.company_name if s else "Mon Entreprise",
-        "logo_url": s.logo if (s and s.logo) else default_logo
-    })
-    
-    db.add(Invoice(
-        reference=req.invoice_number,
-        client_name=req.client_name,
-        amount_total=req.amount,
-        items_json=json.dumps([i.dict() for i in req.items]),
-        owner_id=get_user_id(current_user)
-    ))
-    db.commit()
-    
-    pdf_bytes = generate_pdf_bytes(data)
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=facture_{req.invoice_number}.pdf"}
-    )
-
-@app.get("/api/invoices")
-async def list_inv(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(Invoice).filter(Invoice.owner_id == get_user_id(current_user)).order_by(Invoice.id.desc()).all()
-
-@app.get("/api/invoices/{ref}/pdf")
-async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    inv = db.query(Invoice).filter(Invoice.reference == ref, Invoice.owner_id == get_user_id(current_user)).first()
-    if not inv:
-        raise HTTPException(404, detail="Facture introuvable")
-    
-    s = db.query(AppSettings).first()
-    default_logo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
-    
-    data = {
-        "client_name": inv.client_name,
-        "invoice_number": inv.reference,
-        "amount": inv.amount_total,
-        "date": inv.date_issued.strftime("%d/%m/%Y"),
-        "items": json.loads(inv.items_json),
-        "company_name_header": s.company_name if s else "Mon Entreprise",
-        "logo_url": s.logo if (s and s.logo) else default_logo
-    }
-    
-    return Response(
-        content=generate_pdf_bytes(data),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename={ref}.pdf"}
-    )
-
-@app.delete("/api/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    inv = db.query(Invoice).filter(Invoice.id == invoice_id, Invoice.owner_id == get_user_id(current_user)).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Quittance introuvable ou accès refusé")
-    db.delete(inv)
-    db.commit()
-    return {"status": "deleted"}
+@app.post("/email/send")
+async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+    # Pas de contrainte forte ici, sauf si on veut limiter le spam par agence
+    send_email_via_resend(req.to_email, req.subject, req.body)
+    return {"status": "sent"}
