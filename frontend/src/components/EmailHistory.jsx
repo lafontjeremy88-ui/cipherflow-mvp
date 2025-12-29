@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Mail, ArrowRight, X, Send, Trash2, Eye, Search, Filter } from "lucide-react";
+import { Mail, ArrowRight, X, Send, Trash2, Eye, Search, Filter, ArrowUpDown } from "lucide-react";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -14,9 +14,12 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // États pour les filtres
+  // États pour les filtres et le tri
   const [filterUrgency, setFilterUrgency] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  
+  // ✅ IMPORTANT : Par défaut, on trie par date descendante (plus récent en haut)
+  const [sortBy, setSortBy] = useState("date_desc");
 
   useEffect(() => {
     fetchHistory();
@@ -48,20 +51,16 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // --- 🧠 FONCTION DE NORMALISATION INTELLIGENTE ---
+  // --- 1. NORMALISATION ---
   const normalizeUrgency = (rawUrgency) => {
     if (!rawUrgency) return "faible";
-    const val = rawUrgency.toLowerCase();
-
-    // Détection des variantes (Anglais/Français/Synonymes)
-    if (val.includes("haut") || val.includes("high") || val.includes("urg") || val.includes("elev")) return "haute";
+    const val = String(rawUrgency).toLowerCase().trim();
+    if (val.includes("haut") || val.includes("high") || val.includes("urg") || val.includes("elev") || val.includes("criti")) return "haute";
     if (val.includes("moyen") || val.includes("medium") || val.includes("mod")) return "moyenne";
-    
-    // Par défaut tout le reste est faible
     return "faible";
   };
 
-  // --- LOGIQUE COULEURS ---
+  // --- 2. STYLES ---
   const getUrgencyStyles = (standardizedUrgency) => {
     switch (standardizedUrgency) {
       case "haute":
@@ -72,6 +71,57 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
         return { bg: "rgba(16, 185, 129, 0.2)", text: "#10b981", border: "1px solid rgba(16, 185, 129, 0.3)" }; // Vert
     }
   };
+
+  // --- 3. LOGIQUE DE TRI ROBUSTE ---
+  const getSortedAndFilteredHistory = () => {
+    // A. Filtrage d'abord
+    let filtered = history.filter(email => {
+      const normalizedU = normalizeUrgency(email.urgency);
+      const matchesUrgency = filterUrgency === "all" || normalizedU === filterUrgency;
+      
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = 
+        (email.subject || "").toLowerCase().includes(searchLower) || 
+        (email.sender_email || "").toLowerCase().includes(searchLower) ||
+        (email.category || "").toLowerCase().includes(searchLower);
+      
+      return matchesUrgency && matchesSearch;
+    });
+
+    // B. Tri ensuite (Sur le Frontend pour être sûr)
+    return filtered.sort((a, b) => {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+
+      // 📅 Tri par DATE (Le plus demandé)
+      if (sortBy === "date_desc") {
+        return dateB - dateA; // Le plus grand (récent) en premier
+      }
+      
+      // 🔥 Tri par URGENCE (+ Date en secondaire)
+      if (sortBy === "urgency_desc" || sortBy === "urgency_asc") {
+        const score = (u) => {
+          const n = normalizeUrgency(u);
+          if (n === "haute") return 3;
+          if (n === "moyenne") return 2;
+          return 1; // Faible
+        };
+        const scoreA = score(a.urgency);
+        const scoreB = score(b.urgency);
+
+        // Si urgence différente, on trie par urgence
+        if (scoreA !== scoreB) {
+          return sortBy === "urgency_desc" ? scoreB - scoreA : scoreA - scoreB;
+        }
+        // Si urgence identique, on trie toujours le plus récent en premier
+        return dateB - dateA;
+      }
+      
+      return 0;
+    });
+  };
+
+  const processedHistory = getSortedAndFilteredHistory();
 
   const handleSelectEmail = (email) => {
     setSelectedEmail(email);
@@ -128,23 +178,6 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // --- FILTRAGE DES DONNÉES AVEC NORMALISATION ---
-  const filteredHistory = history.filter(email => {
-    // 1. On nettoie la donnée brute de l'email
-    const normalizedU = normalizeUrgency(email.urgency);
-
-    // 2. On compare avec le filtre sélectionné
-    const matchesUrgency = filterUrgency === "all" || normalizedU === filterUrgency;
-    
-    const searchLower = searchTerm.toLowerCase();
-    const matchesSearch = 
-      email.subject?.toLowerCase().includes(searchLower) || 
-      email.sender_email?.toLowerCase().includes(searchLower) ||
-      email.category?.toLowerCase().includes(searchLower);
-    
-    return matchesUrgency && matchesSearch;
-  });
-
   if (loading) return <div style={{ color: "white", padding: "20px", display: "flex", gap: "10px" }}><div className="spin">⏳</div> Chargement de l'historique...</div>;
 
   return (
@@ -152,46 +185,63 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
       
       {!selectedEmail ? (
         <>
-          {/* --- BARRE DE FILTRES --- */}
+          {/* --- BARRE D'OUTILS --- */}
           <div style={{ display: "flex", gap: "15px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center", background: "#1e293b", padding: "15px", borderRadius: "12px", border: "1px solid #334155" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1 }}>
+            
+            {/* Recherche */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: "200px" }}>
               <Search size={18} color="#94a3b8" />
               <input 
                 type="text" 
-                placeholder="Rechercher (sujet, email...)" 
+                placeholder="Rechercher..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 style={{ background: "transparent", border: "none", color: "white", outline: "none", width: "100%", fontSize: "0.95rem" }}
               />
             </div>
             
-            <div style={{ width: "1px", height: "24px", background: "#334155" }}></div>
+            <div style={{ width: "1px", height: "24px", background: "#334155", margin: "0 10px" }}></div>
 
+            {/* Filtre Urgence */}
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <Filter size={16} color="#94a3b8" />
               <select 
                 value={filterUrgency} 
                 onChange={(e) => setFilterUrgency(e.target.value)}
-                style={{ background: "#0f172a", color: "white", border: "1px solid #334155", padding: "6px 12px", borderRadius: "6px", outline: "none", cursor: "pointer" }}
+                style={{ background: "#0f172a", color: "white", border: "1px solid #334155", padding: "8px 12px", borderRadius: "6px", outline: "none", cursor: "pointer", fontSize: "0.9rem" }}
               >
-                <option value="all">Toutes urgences</option>
-                <option value="haute">Haute 🔴</option>
-                <option value="moyenne">Moyenne 🟠</option>
-                <option value="faible">Faible 🟢</option>
+                <option value="all">Filtre: Tout</option>
+                <option value="haute">Filtre: Urgences</option>
+                <option value="moyenne">Filtre: Moyenne</option>
+                <option value="faible">Filtre: Faible</option>
               </select>
             </div>
+
+            {/* Tri (Fixé) */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <ArrowUpDown size={16} color="#94a3b8" />
+              <select 
+                value={sortBy} 
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ background: "#0f172a", color: "white", border: "1px solid #334155", padding: "8px 12px", borderRadius: "6px", outline: "none", cursor: "pointer", fontSize: "0.9rem" }}
+              >
+                <option value="date_desc">📅 Plus récents (Défaut)</option>
+                <option value="urgency_desc">🔥 Urgence Haute d'abord</option>
+                <option value="urgency_asc">🌱 Urgence Faible d'abord</option>
+              </select>
+            </div>
+
           </div>
 
           {/* --- LISTE DES EMAILS --- */}
           <div style={{ display: "grid", gap: "12px" }}>
-            {filteredHistory.length === 0 && (
+            {processedHistory.length === 0 && (
               <div style={{ textAlign: "center", padding: "40px", color: "#64748b", background: "#1e293b", borderRadius: "12px" }}>
                 Aucun email ne correspond à vos critères.
               </div>
             )}
 
-            {filteredHistory.map((email) => {
-              // On normalise l'urgence POUR L'AFFICHAGE aussi
+            {processedHistory.map((email) => {
               const standardUrgency = normalizeUrgency(email.urgency);
               const style = getUrgencyStyles(standardUrgency);
               
@@ -208,30 +258,32 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
                     display: "flex", 
                     justifyContent: "space-between", 
                     alignItems: "center",
-                    transition: "transform 0.1s, border-color 0.1s",
+                    transition: "all 0.2s",
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#6366f1"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#334155"; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#6366f1"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#334155"; e.currentTarget.style.transform = "translateY(0)"; }}
                 >
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                       {/* BADGE URGENCE DYNAMIQUE */}
                       <span style={{ 
                         background: style.bg, 
                         color: style.text, 
                         border: style.border,
-                        padding: "2px 8px", 
+                        padding: "4px 10px", 
                         borderRadius: "6px", 
-                        fontSize: "0.7rem", 
+                        fontSize: "0.75rem", 
                         fontWeight: "800", 
                         textTransform: "uppercase",
                         letterSpacing: "0.5px"
                       }}>
                         {standardUrgency}
                       </span>
-                      <span style={{ color: "#64748b", fontSize: "0.85rem" }}>{new Date(email.created_at).toLocaleDateString()} à {new Date(email.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                      <span style={{ color: "#64748b", fontSize: "0.85rem" }}>
+                        {email.created_at ? new Date(email.created_at).toLocaleDateString() + ' à ' + new Date(email.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "Date inconnue"}
+                      </span>
                     </div>
-                    <div style={{ fontWeight: "700", fontSize: "1.05rem", color: "white" }}>{email.subject}</div>
+                    <div style={{ fontWeight: "700", fontSize: "1.1rem", color: "white" }}>{email.subject || "Sans objet"}</div>
                     <div style={{ color: "#94a3b8", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "6px" }}>
                       <Mail size={14} /> {email.sender_email}
                     </div>
@@ -242,14 +294,14 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleSelectEmail(email); }} 
                       title="Voir le détail"
-                      style={{ background: "#3b82f6", color: "white", border: "none", padding: "8px", borderRadius: "8px", cursor: "pointer", display: "grid", placeItems: "center" }}
+                      style={{ background: "#3b82f6", color: "white", border: "none", padding: "10px", borderRadius: "10px", cursor: "pointer", display: "grid", placeItems: "center", transition: "0.2s" }}
                     >
                       <Eye size={18} />
                     </button>
                     <button 
                       onClick={(e) => handleDelete(e, email.id)} 
                       title="Supprimer"
-                      style={{ background: "rgba(239, 68, 68, 0.2)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "8px", borderRadius: "8px", cursor: "pointer", display: "grid", placeItems: "center" }}
+                      style={{ background: "rgba(239, 68, 68, 0.2)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)", padding: "10px", borderRadius: "10px", cursor: "pointer", display: "grid", placeItems: "center", transition: "0.2s" }}
                     >
                       <Trash2 size={18} />
                     </button>
