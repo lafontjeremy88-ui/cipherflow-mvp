@@ -380,7 +380,7 @@ function MainApp({ token, userEmail, onLogout }) {
           <h1 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>
             {activeTab === "dashboard" && "Tableau de Bord"}
             {activeTab === "analyze" && "Traitement Intelligent"}
-            {activeTab === "invoices" && "Générateur de Factures"}
+            {activeTab === "invoices" && "Générateur de Quittances"}
             {activeTab === "documents" && "Analyse de Documents"}
             {activeTab === "history" && "Historique des Activités"}
             {activeTab === "settings" && "Paramètres du SaaS"}
