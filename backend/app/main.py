@@ -45,7 +45,6 @@ client = None
 
 try:
     if GEMINI_API_KEY:
-        # On garde la version v1beta car c'est celle qui détecte tes modèles 2.0
         client = genai.Client(
             api_key=GEMINI_API_KEY, 
             http_options={'api_version': 'v1beta'}
@@ -53,7 +52,6 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Modèle validé
 MODEL_NAME = "gemini-2.0-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -83,7 +81,6 @@ async def call_gemini(prompt: str) -> str:
     if not client:
         return "{}"
     try:
-        # On passe le prompt dans une liste pour robustesse
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=[prompt]
@@ -111,7 +108,7 @@ def extract_json_from_text(text: str):
         return None
 
 async def analyze_email_logic(req, company_name):
-    # --- PROMPT SPÉCIALISÉ IMMOBILIER ---
+    # Prompt Immo pour les emails
     prompt = (
         f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
         f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n"
@@ -427,7 +424,6 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
 
-# ✅✅✅ CETTE FONCTION ÉTAIT MANQUANTE ET EST MAINTENANT RESTAURÉE ✅✅✅
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
@@ -467,7 +463,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD ---
+# --- ENDPOINT UPLOAD (MIS A JOUR POUR L'IMMO) ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -486,10 +482,8 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Upload
         uploaded_file = client.files.upload(file=str(file_path))
 
-        # Attente
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
             uploaded_file = client.files.get(name=uploaded_file.name)
@@ -497,11 +491,15 @@ async def analyze_file(
         if uploaded_file.state.name == "FAILED":
              raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
-        # Génération
+        # ✅ PROMPT MODIFIÉ POUR LES DOSSIERS LOCATAIRES
         prompt = (
-            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec: "
-            "type (facture, contrat, devis...), sender, date (format DD/MM/YYYY), amount "
-            "(format numérique string, ex: '150.00'), summary (court résumé)."
+            "Tu es un expert en vérification de dossiers locataires pour une agence immobilière. "
+            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec les champs suivants :\n"
+            "- type: Choisis EXACTEMENT une de ces valeurs : 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance de loyer', 'Facture', 'Autre'.\n"
+            "- sender: Nom de l'employeur, de l'organisme (ex: DGFIP) ou de l'émetteur.\n"
+            "- date: Date du document (format DD/MM/YYYY).\n"
+            "- amount: Montant clé (ex: Net à payer pour une paie, Revenu fiscal pour un avis d'impôt). Mets '0' si non applicable (ex: CNI).\n"
+            "- summary: Une phrase de synthèse (ex: 'Bulletin de paie Janvier 2023 - CDI confirmé')."
         )
 
         res = client.models.generate_content(
