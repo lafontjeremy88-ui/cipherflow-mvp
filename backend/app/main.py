@@ -23,7 +23,6 @@ from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 
-# --- LIBRAIRIE IA ---
 from google import genai
 from google.genai import types
 
@@ -39,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
@@ -62,7 +61,7 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY:
         print("Resend API Key manquant")
@@ -78,16 +77,12 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
         print(f"Erreur envoi email: {e}")
 
 async def call_gemini(prompt: str) -> str:
-    if not client:
-        return "{}"
+    if not client: return "{}"
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[prompt]
-        )
+        response = client.models.generate_content(model=MODEL_NAME, contents=[prompt])
         return response.text
     except Exception as e:
-        print(f"Erreur IA (call_gemini): {e}")
+        print(f"Erreur IA: {e}")
         return "{}" 
 
 def extract_json_from_text(text: str):
@@ -107,10 +102,49 @@ def extract_json_from_text(text: str):
     except:
         return None
 
-# --- 🧠 CERVEAU ANALYSE EMAIL + RAG (DOCUMENTS) ---
-async def analyze_email_logic(req, company_name, db: Session):
+# --- 🧠 LOGIQUE CENTRALE D'ANALYSE DE DOCUMENT (Reusable) ---
+async def analyze_document_logic(file_path: str, filename: str):
+    """Fonction qui prend un chemin de fichier et retourne l'analyse JSON de Gemini"""
+    if not client:
+        return {"summary": "IA non configurée"}
+
+    try:
+        # Upload vers Gemini
+        uploaded_file = client.files.upload(file=file_path)
+        
+        # Attente du traitement
+        while uploaded_file.state.name == "PROCESSING":
+            time.sleep(1)
+            uploaded_file = client.files.get(name=uploaded_file.name)
+        
+        if uploaded_file.state.name == "FAILED":
+             raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
+
+        # Prompt Spécial Immo
+        prompt = (
+            "Tu es un expert en vérification de dossiers locataires pour une agence immobilière. "
+            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec les champs suivants :\n"
+            "- type: Choisis EXACTEMENT une de ces valeurs : 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance de loyer', 'Facture', 'Autre'.\n"
+            "- sender: Nom de l'employeur, de l'organisme (ex: DGFIP) ou de l'émetteur.\n"
+            "- date: Date du document (format DD/MM/YYYY).\n"
+            "- amount: Montant clé (ex: Net à payer pour une paie, Revenu fiscal pour un avis d'impôt). Mets '0' si non applicable (ex: CNI).\n"
+            "- summary: Une phrase de synthèse (ex: 'Bulletin de paie Janvier 2023 - CDI confirmé')."
+        )
+
+        res = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[uploaded_file, prompt]
+        )
+        return extract_json_from_text(res.text)
+
+    except Exception as e:
+        print(f"Erreur analyse doc: {e}")
+        return {"summary": "Erreur analyse", "type": "Erreur"}
+
+# --- LOGIQUE EMAIL + RAG ---
+async def analyze_email_logic(req, company_name, db: Session, attachment_summary=""):
     
-    # 1. RAG : Récupérer les 5 derniers documents analysés pour donner du contexte
+    # RAG : Contexte des derniers fichiers (y compris ceux reçus dans cet email)
     last_files = db.query(FileAnalysis).order_by(FileAnalysis.id.desc()).limit(5).all()
     files_context = ""
     if last_files:
@@ -118,22 +152,24 @@ async def analyze_email_logic(req, company_name, db: Session):
         for f in last_files:
             files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount} | Résumé: {f.summary}\n"
     
-    # 2. PROMPT ENRICHI
+    if attachment_summary:
+        files_context += f"\nNOUVELLES PIÈCES JOINTES DANS CET EMAIL : {attachment_summary}\n"
+
     prompt = (
         f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
-        f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n\n"
+        f"Ton rôle est de trier les emails entrants.\n\n"
         f"{files_context}\n"
         f"Analyse cet email :\n"
         f"De: {req.from_email}\n"
         f"Sujet: {req.subject}\n"
         f"Contenu: {req.content}\n\n"
-        f"INSTRUCTION IMPORTANTE : Si l'email parle de pièces jointes ou de dossier, vérifie dans le 'CONTEXTE DOCUMENTS' ci-dessus si on a reçu des fichiers correspondants (bulletin de paie, avis d'impôt...) et mentionne-le dans le résumé.\n\n"
-        f"Retourne un JSON strict (sans markdown) avec ces champs :\n"
-        f"- is_devis: Mets 'true' si c'est une demande de location ou un envoi de dossier.\n"
-        f"- category: Choisis PARMI : 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
+        f"INSTRUCTION : Si l'email contient des pièces jointes mentionnées ci-dessus (Bulletins de paie, etc.), prends-les en compte pour valider le dossier.\n\n"
+        f"Retourne un JSON strict avec ces champs :\n"
+        f"- is_devis: 'true' si demande location/dossier.\n"
+        f"- category: 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
         f"- urgency: 'Haute' (Fuite, Panne, Sécurité), 'Moyenne' (Dossier, Loyer), 'Faible' (Pub, Info).\n"
-        f"- summary: Résumé court (ex: 'Dossier complet reçu avec fiche de paie de 1700€').\n"
-        f"- suggested_title: Titre pour le dashboard."
+        f"- summary: Résumé court incluant les infos des pièces jointes si présentes.\n"
+        f"- suggested_title: Titre court."
     )
     
     raw = await call_gemini(prompt)
@@ -161,6 +197,7 @@ async def generate_reply_logic(req, company_name, tone, signature):
 # --- SETUP FASTAPI ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# MODÈLES
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -196,11 +233,18 @@ class EmailReplyResponse(BaseModel):
     subject: str
     raw_ai_text: Optional[str] = None
 
+# ✅ NOUVEAU MODÈLE POUR LES PIÈCES JOINTES
+class AttachmentModel(BaseModel):
+    filename: str
+    content_base64: str # Contenu du fichier encodé en base64
+    content_type: str
+
 class EmailProcessRequest(BaseModel):
     from_email: EmailStr
     subject: str
     content: str
     send_email: bool = False
+    attachments: List[AttachmentModel] = [] # ✅ Ajout ici
 
 class EmailProcessResponse(BaseModel):
     analyse: EmailAnalyseResponse
@@ -224,10 +268,6 @@ class SettingsRequest(BaseModel):
 
 class LogoUploadRequest(BaseModel):
     logo_base64: str
-
-class FileUploadRequest(BaseModel):
-    file_base64: str
-    filename: str
 
 class EmailHistoryItem(BaseModel):
     id: int
@@ -267,8 +307,8 @@ app.include_router(google_oauth_router, tags=["Google OAuth"])
 
 origins = [
     "http://localhost:5173",
-    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
-    "[https://cipherflow.company](https://cipherflow.company)"
+    "https://cipherflow-mvp.vercel.app",
+    "https://cipherflow.company"
 ]
 
 app.add_middleware(
@@ -296,7 +336,7 @@ def on_startup():
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
 
-# --- WEBHOOK MODIFIÉ (PASSE LA DB) ---
+# --- 🚀 WEBHOOK INTELLIGENT (EMAIL + PIÈCES JOINTES) ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
@@ -305,8 +345,54 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
     
-    # On passe db à l'analyseur
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp, db)
+    # 1. TRAITEMENT DES PIÈCES JOINTES (AUTOMATIQUE)
+    attachment_summary_text = ""
+    if req.attachments:
+        print(f"📎 {len(req.attachments)} pièces jointes détectées.")
+        for att in req.attachments:
+            try:
+                # Décoder le fichier
+                file_data = base64.b64decode(att.content_base64)
+                safe_filename = f"{int(time.time())}_{att.filename}"
+                file_path = os.path.join("uploads", safe_filename)
+                
+                with open(file_path, "wb") as f:
+                    f.write(file_data)
+                
+                # ANALYSE IA DU DOCUMENT (Appel de la fonction partagée)
+                doc_analysis = await analyze_document_logic(file_path, safe_filename)
+                
+                if doc_analysis:
+                    # Sauvegarder dans la DB 'FileAnalysis'
+                    # Note: owner_id est None car c'est un email entrant, on pourra l'assigner plus tard si on gère les users
+                    admin_user = db.query(User).first() # On assigne au premier user par défaut (admin)
+                    owner = admin_user.id if admin_user else None
+
+                    new_file = FileAnalysis(
+                        filename=safe_filename,
+                        file_type=str(doc_analysis.get("type", "Autre")),
+                        sender=str(doc_analysis.get("sender", req.from_email)),
+                        extracted_date=str(doc_analysis.get("date", "")),
+                        amount=str(doc_analysis.get("amount", "0")),
+                        summary=str(doc_analysis.get("summary", "Reçu par email")),
+                        owner_id=owner
+                    )
+                    db.add(new_file)
+                    db.commit() # Important pour que l'analyse email le voie tout de suite
+                    
+                    attachment_summary_text += f"- PJ analysée : {att.filename} -> {doc_analysis.get('type')} ({doc_analysis.get('amount')})\n"
+            
+            except Exception as e:
+                print(f"Erreur traitement PJ {att.filename}: {e}")
+
+    # 2. ANALYSE EMAIL AVEC LE CONTEXTE DES PJ
+    analyse = await analyze_email_logic(
+        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
+        comp, 
+        db,
+        attachment_summary=attachment_summary_text # On passe le résumé des PJ à l'IA
+    )
+    
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
@@ -352,7 +438,7 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
     user_id = get_user_id(current_user)
     total = db.query(EmailAnalysis).count()
     
-    # ✅ CORRECTION ICI : On utilise func.lower() pour ignorer les majuscules/minuscules
+    # COMPTEUR URGENCES HAUTES (Insensible à la casse)
     high = db.query(EmailAnalysis).filter(
         (func.lower(EmailAnalysis.urgency).contains("haut")) | 
         (func.lower(EmailAnalysis.urgency).contains("high")) |
@@ -444,14 +530,20 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
 
-# --- PROCESS MANUAL MODIFIÉ (PASSE LA DB) ---
+# --- PROCESS MANUEL (MODIFIÉ POUR PASSER LA DB) ---
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
     
-    # On passe db à l'analyseur
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp, db)
+    # Même logique pour les pièces jointes que le webhook si besoin
+    # Pour l'instant, on assume que la simulation manuelle n'a pas de PJ (ou à implémenter dans le frontend)
+    
+    analyse = await analyze_email_logic(
+        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
+        comp, 
+        db
+    )
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
@@ -485,6 +577,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
+# --- ENDPOINT UPLOAD MANUEL (UTILISE LA NOUVELLE LOGIQUE PARTAGÉE) ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -503,33 +596,11 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        uploaded_file = client.files.upload(file=str(file_path))
-
-        while uploaded_file.state.name == "PROCESSING":
-            time.sleep(1)
-            uploaded_file = client.files.get(name=uploaded_file.name)
-
-        if uploaded_file.state.name == "FAILED":
-             raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
-
-        prompt = (
-            "Tu es un expert en vérification de dossiers locataires pour une agence immobilière. "
-            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec les champs suivants :\n"
-            "- type: Choisis EXACTEMENT une de ces valeurs : 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance de loyer', 'Facture', 'Autre'.\n"
-            "- sender: Nom de l'employeur, de l'organisme (ex: DGFIP) ou de l'émetteur.\n"
-            "- date: Date du document (format DD/MM/YYYY).\n"
-            "- amount: Montant clé (ex: Net à payer pour une paie, Revenu fiscal pour un avis d'impôt). Mets '0' si non applicable (ex: CNI).\n"
-            "- summary: Une phrase de synthèse (ex: 'Bulletin de paie Janvier 2023 - CDI confirmé')."
-        )
-
-        res = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[uploaded_file, prompt]
-        )
+        # ✅ APPEL DE LA FONCTION REUSABLE
+        data = await analyze_document_logic(str(file_path), safe_filename)
         
-        data = extract_json_from_text(res.text)
         if not data:
-            return {"extracted": False, "raw_text": res.text, "summary": "Erreur lecture JSON"}
+            return {"extracted": False, "summary": "Erreur lecture JSON"}
 
         new_analysis = FileAnalysis(
             filename=safe_name,
@@ -648,15 +719,12 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={ref}.pdf"}
     )
+
 @app.delete("/api/invoices/{invoice_id}")
 async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # On vérifie que la facture existe et appartient bien à l'utilisateur connecté
     inv = db.query(Invoice).filter(Invoice.id == invoice_id, Invoice.owner_id == get_user_id(current_user)).first()
-    
     if not inv:
         raise HTTPException(status_code=404, detail="Quittance introuvable ou accès refusé")
-    
     db.delete(inv)
     db.commit()
-    
     return {"status": "deleted"}
