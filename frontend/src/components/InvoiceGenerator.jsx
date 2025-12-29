@@ -14,14 +14,12 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   });
 
   const [invoice, setInvoice] = useState({
-    // ✅ CORRECTION : Préfixe QUIT au lieu de FAC
     number: `QUIT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
     date: new Date().toISOString().split('T')[0],
     clientName: "",
     items: [{ description: "Loyer mensuel", price: 0 }]
   });
 
-  // --- FONCTION POUR CHARGER L'HISTORIQUE ---
   const fetchHistory = useCallback(async () => {
     if (!authFetch) return;
     try {
@@ -75,7 +73,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
   });
 
-  // Action : Visionner PDF (Live)
   const handleView = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setViewLoading(true);
@@ -96,7 +93,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Télécharger PDF (Live)
   const handleDownload = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setLoading(true);
@@ -123,7 +119,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Ouvrir depuis l'historique
   const handleHistoryOpen = async (ref) => {
     if (!authFetch) return;
     try {
@@ -140,7 +135,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Télécharger depuis l'historique
   const handleHistoryDownload = async (ref) => {
     if (!authFetch) return;
     try {
@@ -164,7 +158,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Supprimer
   const handleDelete = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer cette quittance ?")) return;
     try {
@@ -198,10 +191,10 @@ const InvoiceGenerator = ({ token, authFetch }) => {
         </div>
       </div>
 
-      {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU (Layout corrigé) */}
+      {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem", marginBottom: "4rem", alignItems: "start" }}>
         
-        {/* ÉDITEUR (COLONNE GAUCHE) */}
+        {/* ÉDITEUR (GAUCHE) */}
         <div>
           <h3 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem", color: "#94a3b8" }}>
             <FileText size={20} /> Éditeur de Quittances
@@ -245,18 +238,20 @@ const InvoiceGenerator = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* APERÇU LIVE (COLONNE DROITE - FIXÉE) */}
-        <div style={{ position: "sticky", top: "20px" }}>
+        {/* APERÇU LIVE (DROITE - CORRIGÉ) */}
+        <div style={{ position: "sticky", top: "20px", display: "flex", justifyContent: "center" }}>
             <div style={{ 
                 background: "white", 
                 color: "black", 
-                width: "100%", 
-                minHeight: "800px", /* Hauteur minimale type A4 */
+                width: "90%",  // ✅ Moins large pour laisser des marges
+                maxWidth: "800px", // ✅ Max largeur A4
+                minHeight: "1000px", // ✅ Hauteur type A4 plus réaliste
                 padding: "50px", 
                 borderRadius: "2px", 
-                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", /* Ombre forte pour détacher le papier */
+                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", // ✅ Ombre forte
                 position: "relative",
-                border: "1px solid #d1d5db"
+                border: "1px solid #d1d5db",
+                margin: "0 auto" // ✅ Centré dans sa colonne
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
                     <div>
@@ -331,7 +326,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                                 </td>
                                 <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                        {/* ✅ BOUTON VISIONNER EN BLEU CORRECT */}
                                         <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "#3b82f6", color: "white", border: "none", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Voir le PDF">
                                             <Eye size={18} />
                                         </button>
