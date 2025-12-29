@@ -23,7 +23,7 @@ from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 
-# --- NOUVELLE LIBRAIRIE IMPORT ---
+# --- NOUVELLE LIBRAIRIE ---
 from google import genai
 from google.genai import types
 
@@ -39,19 +39,22 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION IA (NOUVELLE MÉTHODE) ---
+# --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
-# On utilise le modèle stable
-MODEL_NAME = "gemini-1.5-flash"
-
+# On force la version v1beta pour le test
 try:
     if GEMINI_API_KEY:
-        # Initialisation du client V2
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = genai.Client(
+            api_key=GEMINI_API_KEY, 
+            http_options={'api_version': 'v1beta'}
+        )
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
+
+# Nom par défaut (sera vérifié au démarrage)
+MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -61,6 +64,7 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
+# --- FONCTIONS ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY:
         print("Resend API Key manquant")
@@ -75,11 +79,8 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
     except Exception as e:
         print(f"Erreur envoi email: {e}")
 
-# --- FONCTION IA MIGRÉE ---
 async def call_gemini(prompt: str) -> str:
-    """Appel IA pour le texte avec la nouvelle librairie"""
     if not client:
-        print("Client Gemini non initialisé")
         return "{}"
     try:
         response = client.models.generate_content(
@@ -99,11 +100,9 @@ def extract_json_from_text(text: str):
             raw = raw[first+3:last].strip()
         if raw.lower().startswith("json"):
             raw = raw[4:].lstrip()
-    
     start, end = raw.find("{"), raw.rfind("}")
     if start != -1 and end != -1:
         raw = raw[start:end+1]
-    
     try:
         return json.loads(raw)
     except:
@@ -132,6 +131,7 @@ async def generate_reply_logic(req, company_name, tone, signature):
         raw_ai_text=raw
     )
 
+# --- SETUP FASTAPI ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 class LoginRequest(BaseModel):
@@ -258,6 +258,7 @@ def get_user_id(user):
     if isinstance(user, dict): return user.get('id')
     return None
 
+# --- STARTUP DIAGNOSTIC ---
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
@@ -271,11 +272,24 @@ def on_startup():
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
     
-    try:
-        with engine.begin() as conn:
-            conn.execute(sql_text(f'ALTER TABLE "{EmailAnalysis.__tablename__}" ADD COLUMN IF NOT EXISTS send_status VARCHAR DEFAULT \'not_sent\''))
-    except:
-        pass
+    # --- LISTE DES MODÈLES DISPONIBLES ---
+    print("="*60)
+    print("🔍 DIAGNOSTIC IA : LISTE DES MODÈLES")
+    if client:
+        try:
+            # On liste tous les modèles disponibles pour cette clé
+            all_models = client.models.list()
+            print("✅ Modèles trouvés :")
+            for m in all_models:
+                # On filtre pour afficher ceux qui nous intéressent
+                if "gemini" in m.name:
+                    print(f" - {m.name} (Méthodes: {m.supported_generation_methods})")
+        except Exception as e:
+            print(f"❌ Erreur lors du listing des modèles : {e}")
+            print("👉 Vérifie ta clé API GEMINI_API_KEY dans Railway.")
+    else:
+        print("❌ Client Gemini non initialisé (Clé manquante ?)")
+    print("="*60)
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
@@ -284,11 +298,9 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
-    tone = s.tone if s else "pro"
-    sign = s.signature if s else "Team"
     
     analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, tone, sign)
+    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
         sender_email=req.from_email,
@@ -305,12 +317,11 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     db.add(new_email)
     db.commit()
     
-    sent_status = "not_sent"
+    sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-        sent_status = "sent"
-        
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent_status)
+    
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
@@ -400,15 +411,12 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
             encoded = img_str
         
         img = Image.open(io.BytesIO(base64.b64decode(encoded)))
-        
         if img.width > 800:
             ratio = 800 / float(img.width)
             img = img.resize((800, int(float(img.height) * ratio)), Image.Resampling.LANCZOS)
-        
         buffer = io.BytesIO()
         fmt = img.format if img.format else "PNG"
         img.save(buffer, format=fmt, optimize=True)
-        
         final = f"data:image/{'jpeg' if fmt.lower() in ['jpg','jpeg'] else 'png'};base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
         
         s = db.query(AppSettings).first()
@@ -421,35 +429,6 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
 
-@app.post("/email/process", response_model=EmailProcessResponse)
-async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    s = db.query(AppSettings).first()
-    comp = s.company_name if s else "CipherFlow"
-    
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
-    
-    new_email = EmailAnalysis(
-        sender_email=req.from_email,
-        subject=req.subject,
-        raw_email_text=req.content,
-        is_devis=analyse.is_devis,
-        category=analyse.category,
-        urgency=analyse.urgency,
-        summary=analyse.summary,
-        suggested_title=analyse.suggested_title,
-        suggested_response_text=reponse.reply,
-        raw_ai_output=analyse.raw_ai_text
-    )
-    db.add(new_email)
-    db.commit()
-    
-    sent = "sent" if req.send_email else "not_sent"
-    if req.send_email:
-        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-    
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
-
 @app.post("/email/send")
 async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     send_email_via_resend(req.to_email, req.subject, req.body)
@@ -460,7 +439,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD MIGRÉ V2 (FIXED & SIMPLIFIED) ---
+# --- ENDPOINT UPLOAD ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -476,15 +455,13 @@ async def analyze_file(
     file_path = uploads_dir / safe_name
 
     try:
-        # 1. Sauvegarde locale
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. Upload vers Gemini
-        # 'file' parameter is correct for new SDK
+        # Upload
         uploaded_file = client.files.upload(file=str(file_path))
 
-        # 3. Attente du traitement (Polling)
+        # Attente
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
             uploaded_file = client.files.get(name=uploaded_file.name)
@@ -492,7 +469,7 @@ async def analyze_file(
         if uploaded_file.state.name == "FAILED":
              raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
-        # 4. Génération du contenu
+        # Génération
         prompt = (
             "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec: "
             "type (facture, contrat, devis...), sender, date (format DD/MM/YYYY), amount "
@@ -505,7 +482,6 @@ async def analyze_file(
         )
         
         data = extract_json_from_text(res.text)
-        
         if not data:
             return {"extracted": False, "raw_text": res.text, "summary": "Erreur lecture JSON"}
 
