@@ -23,7 +23,7 @@ from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 
-# --- NOUVELLE LIBRAIRIE ---
+# --- LIBRAIRIE IA ---
 from google import genai
 from google.genai import types
 
@@ -39,7 +39,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION IA ---
+# --- CONFIGURATION ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
@@ -62,7 +62,7 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
-# --- FONCTIONS ---
+# --- FONCTIONS UTILITAIRES ---
 def send_email_via_resend(to_email: str, subject: str, body: str):
     if not RESEND_API_KEY:
         print("Resend API Key manquant")
@@ -107,20 +107,33 @@ def extract_json_from_text(text: str):
     except:
         return None
 
-async def analyze_email_logic(req, company_name):
+# --- 🧠 CERVEAU ANALYSE EMAIL + RAG (DOCUMENTS) ---
+async def analyze_email_logic(req, company_name, db: Session):
+    
+    # 1. RAG : Récupérer les 5 derniers documents analysés pour donner du contexte
+    last_files = db.query(FileAnalysis).order_by(FileAnalysis.id.desc()).limit(5).all()
+    files_context = ""
+    if last_files:
+        files_context = "CONTEXTE DOCUMENTS (Pièces jointes reçues récemment) :\n"
+        for f in last_files:
+            files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount} | Résumé: {f.summary}\n"
+    
+    # 2. PROMPT ENRICHI
     prompt = (
         f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
-        f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n"
+        f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n\n"
+        f"{files_context}\n"
         f"Analyse cet email :\n"
         f"De: {req.from_email}\n"
         f"Sujet: {req.subject}\n"
         f"Contenu: {req.content}\n\n"
+        f"INSTRUCTION IMPORTANTE : Si l'email parle de pièces jointes ou de dossier, vérifie dans le 'CONTEXTE DOCUMENTS' ci-dessus si on a reçu des fichiers correspondants (bulletin de paie, avis d'impôt...) et mentionne-le dans le résumé.\n\n"
         f"Retourne un JSON strict (sans markdown) avec ces champs :\n"
-        f"- is_devis: Mets 'true' si c'est une demande de location ou un dossier candidat.\n"
-        f"- category: Choisis PARMI CES VALEURS : 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
-        f"- urgency: 'Haute' (Fuite, Panne chauffage, Sécurité), 'Moyenne' (Dossier, Question loyer), 'Faible' (Pub, Info).\n"
-        f"- summary: Résumé très court (ex: 'Fuite d'eau cuisine', 'Dossier M. Dupont T2 Centre').\n"
-        f"- suggested_title: Un titre court pour le dashboard."
+        f"- is_devis: Mets 'true' si c'est une demande de location ou un envoi de dossier.\n"
+        f"- category: Choisis PARMI : 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
+        f"- urgency: 'Haute' (Fuite, Panne, Sécurité), 'Moyenne' (Dossier, Loyer), 'Faible' (Pub, Info).\n"
+        f"- summary: Résumé court (ex: 'Dossier complet reçu avec fiche de paie de 1700€').\n"
+        f"- suggested_title: Titre pour le dashboard."
     )
     
     raw = await call_gemini(prompt)
@@ -275,16 +288,15 @@ def get_user_id(user):
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
-    
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
-    
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
         hashed = get_password_hash("admin123")
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
 
+# --- WEBHOOK MODIFIÉ (PASSE LA DB) ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
@@ -293,7 +305,8 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
     
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+    # On passe db à l'analyseur
+    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp, db)
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
@@ -315,7 +328,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
     
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
@@ -423,12 +436,14 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
 
+# --- PROCESS MANUAL MODIFIÉ (PASSE LA DB) ---
 @app.post("/email/process", response_model=EmailProcessResponse)
 async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     comp = s.company_name if s else "CipherFlow"
     
-    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+    # On passe db à l'analyseur
+    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp, db)
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
@@ -462,7 +477,6 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -553,15 +567,12 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, detail="Fichier introuvable")
     return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="attachment")
 
-# --- ✅ AJOUT : ENDPOINT DE SUPPRESSION DE FICHIER ---
 @app.delete("/api/files/{file_id}")
 async def delete_file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. Récupérer l'entrée en base
     file_record = db.query(FileAnalysis).filter(FileAnalysis.id == file_id, FileAnalysis.owner_id == get_user_id(current_user)).first()
     if not file_record:
         raise HTTPException(status_code=404, detail="Fichier introuvable")
     
-    # 2. Supprimer le fichier physique
     file_path = os.path.join("uploads", file_record.filename)
     if os.path.exists(file_path):
         try:
@@ -569,7 +580,6 @@ async def delete_file(file_id: int, db: Session = Depends(get_db), current_user:
         except Exception as e:
             print(f"Erreur suppression fichier physique: {e}")
 
-    # 3. Supprimer l'entrée DB
     db.delete(file_record)
     db.commit()
     
