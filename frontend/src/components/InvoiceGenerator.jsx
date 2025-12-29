@@ -14,7 +14,8 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   });
 
   const [invoice, setInvoice] = useState({
-    number: `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
+    // ✅ CORRECTION : Préfixe QUIT au lieu de FAC
+    number: `QUIT-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
     date: new Date().toISOString().split('T')[0],
     clientName: "",
     items: [{ description: "Loyer mensuel", price: 0 }]
@@ -34,7 +35,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   }, [authFetch]);
 
-  // Chargement initial
   useEffect(() => {
     if (authFetch) {
       authFetch(`${API_BASE}/settings`)
@@ -75,7 +75,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
   });
 
-  // Action : Visionner PDF (Génération live)
+  // Action : Visionner PDF (Live)
   const handleView = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setViewLoading(true);
@@ -96,7 +96,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Télécharger PDF (Génération live)
+  // Action : Télécharger PDF (Live)
   const handleDownload = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setLoading(true);
@@ -123,7 +123,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Ouvrir une ancienne quittance depuis l'historique
+  // Action : Ouvrir depuis l'historique
   const handleHistoryOpen = async (ref) => {
     if (!authFetch) return;
     try {
@@ -140,7 +140,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // --- FONCTION : TÉLÉCHARGER HISTORIQUE ---
+  // Action : Télécharger depuis l'historique
   const handleHistoryDownload = async (ref) => {
     if (!authFetch) return;
     try {
@@ -198,7 +198,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
         </div>
       </div>
 
-      {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU */}
+      {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU (Layout corrigé) */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem", marginBottom: "4rem", alignItems: "start" }}>
         
         {/* ÉDITEUR (COLONNE GAUCHE) */}
@@ -245,18 +245,18 @@ const InvoiceGenerator = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* APERÇU LIVE (COLONNE DROITE) - EFFET PAPIER AMÉLIORÉ */}
+        {/* APERÇU LIVE (COLONNE DROITE - FIXÉE) */}
         <div style={{ position: "sticky", top: "20px" }}>
             <div style={{ 
                 background: "white", 
                 color: "black", 
                 width: "100%", 
-                minHeight: "800px", // Hauteur type A4
+                minHeight: "800px", /* Hauteur minimale type A4 */
                 padding: "50px", 
-                borderRadius: "2px", // Coins moins ronds pour faire papier
-                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", // Ombre forte pour détacher du fond
+                borderRadius: "2px", 
+                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", /* Ombre forte pour détacher le papier */
                 position: "relative",
-                border: "1px solid #d1d5db" // Petite bordure grise pour définir les limites
+                border: "1px solid #d1d5db"
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
                     <div>
@@ -289,7 +289,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                     </div>
                 </div>
                 
-                {/* Pied de page visuel pour le look "papier" */}
+                {/* Pied de page visuel */}
                 <div style={{ position: "absolute", bottom: "30px", left: "0", width: "100%", textAlign: "center", color: "#94a3b8", fontSize: "0.7rem" }}>
                     Document généré automatiquement par CipherFlow IA
                 </div>
@@ -331,17 +331,15 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                                 </td>
                                 <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                        {/* BOUTON VISIONNER EN BLEU */}
+                                        {/* ✅ BOUTON VISIONNER EN BLEU CORRECT */}
                                         <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "#3b82f6", color: "white", border: "none", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Voir le PDF">
                                             <Eye size={18} />
                                         </button>
                                         
-                                        {/* BOUTON TÉLÉCHARGER */}
                                         <button onClick={() => handleHistoryDownload(inv.reference)} style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Télécharger">
                                             <Download size={18} />
                                         </button>
                                         
-                                        {/* BOUTON SUPPRIMER */}
                                         <button onClick={() => handleDelete(inv.id)} style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Supprimer">
                                             <Trash2 size={18} />
                                         </button>
