@@ -238,20 +238,21 @@ const InvoiceGenerator = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* APERÇU LIVE (DROITE - CORRIGÉ) */}
+        {/* APERÇU LIVE (DROITE - REDIMENSIONNÉ) */}
         <div style={{ position: "sticky", top: "20px", display: "flex", justifyContent: "center" }}>
             <div style={{ 
                 background: "white", 
                 color: "black", 
-                width: "90%",  // ✅ Moins large pour laisser des marges
-                maxWidth: "800px", // ✅ Max largeur A4
-                minHeight: "1000px", // ✅ Hauteur type A4 plus réaliste
-                padding: "50px", 
+                width: "90%",  
+                maxWidth: "800px",
+                minHeight: "750px", // ✅ Hauteur réduite pour éviter le scroll infini
+                padding: "30px",    // ✅ Padding réduit pour l'effet "Zoom Arrière"
                 borderRadius: "2px", 
-                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", // ✅ Ombre forte
+                boxShadow: "0 10px 30px rgba(0,0,0,0.5)", 
                 position: "relative",
                 border: "1px solid #d1d5db",
-                margin: "0 auto" // ✅ Centré dans sa colonne
+                margin: "0 auto",
+                fontSize: "0.8rem"  // ✅ Police réduite pour l'effet "Aperçu"
             }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
                     <div>
@@ -285,7 +286,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                 </div>
                 
                 {/* Pied de page visuel */}
-                <div style={{ position: "absolute", bottom: "30px", left: "0", width: "100%", textAlign: "center", color: "#94a3b8", fontSize: "0.7rem" }}>
+                <div style={{ position: "absolute", bottom: "20px", left: "0", width: "100%", textAlign: "center", color: "#94a3b8", fontSize: "0.7rem" }}>
                     Document généré automatiquement par CipherFlow IA
                 </div>
             </div>
