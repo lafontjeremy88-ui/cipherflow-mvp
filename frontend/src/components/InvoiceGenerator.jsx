@@ -199,14 +199,14 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       </div>
 
       {/* ZONE PRINCIPALE : ÉDITEUR + APERÇU */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem", marginBottom: "4rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3rem", marginBottom: "4rem", alignItems: "start" }}>
         
-        {/* ÉDITEUR */}
+        {/* ÉDITEUR (COLONNE GAUCHE) */}
         <div>
           <h3 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem", color: "#94a3b8" }}>
             <FileText size={20} /> Éditeur de Quittances
           </h3>
-          <div className="card" style={{ padding: "2rem", background: "#1e293b", borderRadius: "12px" }}>
+          <div className="card" style={{ padding: "2rem", background: "#1e293b", borderRadius: "12px", border: "1px solid #334155" }}>
             <h4 style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase", marginBottom: "1rem" }}>Informations</h4>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
               <div>
@@ -245,9 +245,19 @@ const InvoiceGenerator = ({ token, authFetch }) => {
           </div>
         </div>
 
-        {/* APERÇU LIVE */}
-        <div>
-            <div style={{ background: "white", color: "black", width: "100%", minHeight: "800px", padding: "40px", borderRadius: "4px", boxShadow: "0 0 20px rgba(0,0,0,0.5)", position: "relative" }}>
+        {/* APERÇU LIVE (COLONNE DROITE) - EFFET PAPIER AMÉLIORÉ */}
+        <div style={{ position: "sticky", top: "20px" }}>
+            <div style={{ 
+                background: "white", 
+                color: "black", 
+                width: "100%", 
+                minHeight: "800px", // Hauteur type A4
+                padding: "50px", 
+                borderRadius: "2px", // Coins moins ronds pour faire papier
+                boxShadow: "0 20px 50px rgba(0,0,0,0.5)", // Ombre forte pour détacher du fond
+                position: "relative",
+                border: "1px solid #d1d5db" // Petite bordure grise pour définir les limites
+            }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "40px" }}>
                     <div>
                         <h1 style={{ margin: 0, color: "#2563eb", textTransform: "uppercase", fontSize: "1.5rem" }}>{companySettings.company_name || "Mon Entreprise"}</h1>
@@ -277,6 +287,11 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                     <div style={{ width: "200px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderTop: "2px solid #1e293b", marginTop: "10px" }}><span style={{ fontWeight: "bold" }}>TOTAL NET</span><span style={{ fontWeight: "bold", fontSize: "1.2rem" }}>{total.toFixed(2)} €</span></div>
                     </div>
+                </div>
+                
+                {/* Pied de page visuel pour le look "papier" */}
+                <div style={{ position: "absolute", bottom: "30px", left: "0", width: "100%", textAlign: "center", color: "#94a3b8", fontSize: "0.7rem" }}>
+                    Document généré automatiquement par CipherFlow IA
                 </div>
             </div>
         </div>
@@ -316,7 +331,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                                 </td>
                                 <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                        {/* ✅ BOUTON VISIONNER EN BLEU */}
+                                        {/* BOUTON VISIONNER EN BLEU */}
                                         <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "#3b82f6", color: "white", border: "none", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Voir le PDF">
                                             <Eye size={18} />
                                         </button>
