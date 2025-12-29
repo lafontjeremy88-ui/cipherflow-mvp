@@ -108,7 +108,6 @@ def extract_json_from_text(text: str):
         return None
 
 async def analyze_email_logic(req, company_name):
-    # Prompt Immo pour les emails
     prompt = (
         f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
         f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n"
@@ -316,7 +315,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
     
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
@@ -463,7 +462,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD (MIS A JOUR POUR L'IMMO) ---
+# --- ENDPOINT UPLOAD ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -491,7 +490,6 @@ async def analyze_file(
         if uploaded_file.state.name == "FAILED":
              raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
-        # ✅ PROMPT MODIFIÉ POUR LES DOSSIERS LOCATAIRES
         prompt = (
             "Tu es un expert en vérification de dossiers locataires pour une agence immobilière. "
             "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec les champs suivants :\n"
@@ -554,6 +552,28 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
     if not f or not os.path.exists(f"uploads/{f.filename}"):
         raise HTTPException(404, detail="Fichier introuvable")
     return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="attachment")
+
+# --- ✅ AJOUT : ENDPOINT DE SUPPRESSION DE FICHIER ---
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # 1. Récupérer l'entrée en base
+    file_record = db.query(FileAnalysis).filter(FileAnalysis.id == file_id, FileAnalysis.owner_id == get_user_id(current_user)).first()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+    
+    # 2. Supprimer le fichier physique
+    file_path = os.path.join("uploads", file_record.filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Erreur suppression fichier physique: {e}")
+
+    # 3. Supprimer l'entrée DB
+    db.delete(file_record)
+    db.commit()
+    
+    return {"status": "deleted"}
 
 @app.post("/api/generate-invoice")
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

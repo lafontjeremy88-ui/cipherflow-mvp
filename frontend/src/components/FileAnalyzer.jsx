@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, Search, RefreshCw, FileCheck } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, Search, RefreshCw, FileCheck, Trash2 } from "lucide-react";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -65,6 +65,27 @@ const FileAnalysis = ({ token, authFetch }) => {
       alert("Erreur réseau");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // --- NOUVELLE FONCTION SUPPRESSION ---
+  const handleDelete = async (id) => {
+    if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
+
+    try {
+      const res = await authFetch(`${API_BASE}/api/files/${id}`, {
+        method: "DELETE"
+      });
+
+      if (res.ok) {
+        // Mise à jour locale de la liste sans recharger
+        setHistory(history.filter(f => f.id !== id));
+      } else {
+        alert("Erreur lors de la suppression.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erreur réseau.");
     }
   };
 
@@ -243,16 +264,27 @@ const FileAnalysis = ({ token, authFetch }) => {
                       </td>
                       <td style={{ padding: "15px", color: "#cbd5e1" }}>{doc.sender}</td>
                       <td style={{ padding: "15px", fontWeight: "bold", color: "white" }}>{doc.amount}</td>
+                      
+                      {/* ACTIONS : TÉLÉCHARGER + SUPPRIMER */}
                       <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
-                        <a 
-                          href={`${API_BASE}/api/files/download/${doc.id}`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "8px", borderRadius: "6px", display: "inline-block" }}
-                          title="Télécharger"
-                        >
-                          <Download size={16} />
-                        </a>
+                        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                            <a 
+                              href={`${API_BASE}/api/files/download/${doc.id}`} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "8px", borderRadius: "6px", display: "inline-block" }}
+                              title="Télécharger"
+                            >
+                              <Download size={16} />
+                            </a>
+                            <button 
+                              onClick={() => handleDelete(doc.id)} 
+                              style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }}
+                              title="Supprimer"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                        </div>
                       </td>
                     </tr>
                   );
