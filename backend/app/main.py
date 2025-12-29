@@ -351,7 +351,15 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     user_id = get_user_id(current_user)
     total = db.query(EmailAnalysis).count()
-    high = db.query(EmailAnalysis).filter(EmailAnalysis.urgency == "haute").count()
+    
+    # ✅ CORRECTION ICI : On utilise func.lower() pour ignorer les majuscules/minuscules
+    high = db.query(EmailAnalysis).filter(
+        (func.lower(EmailAnalysis.urgency).contains("haut")) | 
+        (func.lower(EmailAnalysis.urgency).contains("high")) |
+        (func.lower(EmailAnalysis.urgency).contains("urg")) |
+        (func.lower(EmailAnalysis.urgency).contains("criti"))
+    ).count()
+    
     inv = db.query(Invoice).filter(Invoice.owner_id == user_id).count()
     
     cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).group_by(EmailAnalysis.category).all()
