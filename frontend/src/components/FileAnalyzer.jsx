@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, Search, RefreshCw, FileCheck, Trash2 } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, RefreshCw, FileCheck, Trash2 } from "lucide-react";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -10,7 +10,6 @@ const FileAnalysis = ({ token, authFetch }) => {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  // Charger l'historique au démarrage
   useEffect(() => {
     fetchHistory();
   }, [authFetch]);
@@ -34,7 +33,7 @@ const FileAnalysis = ({ token, authFetch }) => {
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
-      setAnalysis(null); // Reset l'analyse précédente
+      setAnalysis(null);
     }
   };
 
@@ -50,13 +49,12 @@ const FileAnalysis = ({ token, authFetch }) => {
       const res = await authFetch(`${API_BASE}/api/analyze-file`, {
         method: "POST",
         body: formData,
-        // Ne pas mettre Content-Type header, le navigateur le mettra automatiquement avec le boundary
       });
 
       if (res.ok) {
         const data = await res.json();
         setAnalysis(data);
-        fetchHistory(); // Rafraîchir la liste après analyse
+        fetchHistory();
       } else {
         alert("Erreur lors de l'analyse");
       }
@@ -68,17 +66,11 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
-  // --- NOUVELLE FONCTION SUPPRESSION ---
   const handleDelete = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
-
     try {
-      const res = await authFetch(`${API_BASE}/api/files/${id}`, {
-        method: "DELETE"
-      });
-
+      const res = await authFetch(`${API_BASE}/api/files/${id}`, { method: "DELETE" });
       if (res.ok) {
-        // Mise à jour locale de la liste sans recharger
         setHistory(history.filter(f => f.id !== id));
       } else {
         alert("Erreur lors de la suppression.");
@@ -89,14 +81,62 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
-  // Fonction pour déterminer la couleur du badge selon le type de document
   const getTypeBadgeStyle = (type) => {
     const t = (type || "").toLowerCase();
-    if (t.includes("facture") || t.includes("invoice")) return { bg: "rgba(59, 130, 246, 0.2)", text: "#60a5fa" }; // Bleu
-    if (t.includes("contrat") || t.includes("bail")) return { bg: "rgba(168, 85, 247, 0.2)", text: "#c084fc" }; // Violet
-    if (t.includes("paie") || t.includes("salaire")) return { bg: "rgba(16, 185, 129, 0.2)", text: "#34d399" }; // Vert
-    if (t.includes("impôt") || t.includes("tax")) return { bg: "rgba(245, 158, 11, 0.2)", text: "#fbbf24" }; // Orange
-    return { bg: "rgba(148, 163, 184, 0.2)", text: "#cbd5e1" }; // Gris défaut
+    if (t.includes("facture") || t.includes("invoice")) return { bg: "rgba(59, 130, 246, 0.2)", text: "#60a5fa" };
+    if (t.includes("contrat") || t.includes("bail")) return { bg: "rgba(168, 85, 247, 0.2)", text: "#c084fc" };
+    if (t.includes("paie") || t.includes("salaire") || t.includes("bulletin")) return { bg: "rgba(16, 185, 129, 0.2)", text: "#34d399" };
+    if (t.includes("impôt") || t.includes("tax")) return { bg: "rgba(245, 158, 11, 0.2)", text: "#fbbf24" };
+    return { bg: "rgba(148, 163, 184, 0.2)", text: "#cbd5e1" };
+  };
+
+  // --- 🧠 LOGIQUE INTELLIGENTE : SOLVABILITÉ ---
+  const renderSolvencyBadge = (doc) => {
+    // 1. Nettoyage du montant (enlève les €, espaces, etc)
+    const rawString = String(doc.amount).replace(/[^0-9.,]/g, "").replace(",", ".");
+    const rawAmount = parseFloat(rawString);
+    
+    const type = (doc.file_type || "").toLowerCase();
+    const isIncome = type.includes("paie") || type.includes("salaire") || type.includes("impôt");
+
+    // Si ce n'est pas un revenu ou si le montant est illisible, on affiche juste le texte
+    if (!isIncome || isNaN(rawAmount) || rawAmount === 0) {
+      return <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>;
+    }
+
+    // SCÉNARIO : Loyer fictif de 600€ (Tu pourras le rendre dynamique plus tard)
+    const LOYER_REFERENCE = 600;
+    const ratio = rawAmount / LOYER_REFERENCE;
+
+    // Règle des 3 fois le loyer
+    if (ratio >= 3) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
+          <span style={{ fontSize: "0.7rem", color: "#10b981", background: "rgba(16,185,129,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", display: "inline-flex", alignItems: "center", gap: "4px", border: "1px solid rgba(16,185,129,0.2)" }}>
+            <CheckCircle size={10} /> Solvable ({ratio.toFixed(1)}x)
+          </span>
+        </div>
+      );
+    } else if (ratio >= 2.5) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
+          <span style={{ fontSize: "0.7rem", color: "#f59e0b", background: "rgba(245,158,11,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", border: "1px solid rgba(245,158,11,0.2)" }}>
+            Dossier Juste ({ratio.toFixed(1)}x)
+          </span>
+        </div>
+      );
+    } else {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
+          <span style={{ fontSize: "0.7rem", color: "#ef4444", background: "rgba(239,68,68,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", display: "inline-flex", alignItems: "center", gap: "4px", border: "1px solid rgba(239,68,68,0.2)" }}>
+            <AlertTriangle size={10} /> Risqué ({ratio.toFixed(1)}x)
+          </span>
+        </div>
+      );
+    }
   };
 
   return (
@@ -107,7 +147,7 @@ const FileAnalysis = ({ token, authFetch }) => {
         <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white", display: "flex", alignItems: "center", gap: "10px" }}>
           <FileCheck size={28} color="#6366f1" /> Vérification de Dossiers
         </h2>
-        <p style={{ color: "#94a3b8" }}>Analysez automatiquement les pièces justificatives des locataires (Fiches de paie, Avis d'imposition...).</p>
+        <p style={{ color: "#94a3b8" }}>Analysez automatiquement les pièces justificatives des locataires.</p>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem", marginBottom: "3rem" }}>
@@ -188,7 +228,7 @@ const FileAnalysis = ({ token, authFetch }) => {
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#34d399", fontWeight: "bold", marginBottom: "5px" }}>
                   <CheckCircle size={20} /> Analyse Terminée
                 </div>
-                <p style={{ color: "#e2e8f0", fontSize: "0.9rem" }}>Le document a été traité avec succès par Gemini 2.0.</p>
+                <p style={{ color: "#e2e8f0", fontSize: "0.9rem" }}>Le document a été traité avec succès.</p>
               </div>
 
               <div style={{ display: "grid", gap: "1rem" }}>
@@ -197,16 +237,13 @@ const FileAnalysis = ({ token, authFetch }) => {
                   <span style={{ color: "white", fontWeight: "bold" }}>{analysis.type || "Inconnu"}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Émetteur / Source</span>
+                  <span style={{ color: "#94a3b8" }}>Source</span>
                   <span style={{ color: "white", fontWeight: "bold" }}>{analysis.sender || "Non identifié"}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Date du document</span>
-                  <span style={{ color: "white", fontWeight: "bold" }}>{analysis.extracted_date || analysis.date || "-"}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Montant / Revenu</span>
-                  <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: "1.1rem" }}>{analysis.amount} €</span>
+                  <span style={{ color: "#94a3b8" }}>Revenu / Montant</span>
+                  {/* On utilise aussi la logique ici pour l'affichage live */}
+                  <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: "1.1rem" }}>{analysis.amount}</span>
                 </div>
               </div>
 
@@ -245,7 +282,7 @@ const FileAnalysis = ({ token, authFetch }) => {
                   <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Fichier</th>
                   <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Type Détecté</th>
                   <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Entité</th>
-                  <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Montant</th>
+                  <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Revenus / Analyse</th>
                   <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Actions</th>
                 </tr>
               </thead>
@@ -263,9 +300,12 @@ const FileAnalysis = ({ token, authFetch }) => {
                         </span>
                       </td>
                       <td style={{ padding: "15px", color: "#cbd5e1" }}>{doc.sender}</td>
-                      <td style={{ padding: "15px", fontWeight: "bold", color: "white" }}>{doc.amount}</td>
                       
-                      {/* ACTIONS : TÉLÉCHARGER + SUPPRIMER */}
+                      {/* ✅ COLONNE INTELLIGENTE */}
+                      <td style={{ padding: "15px", textAlign: "right" }}>
+                        {renderSolvencyBadge(doc)}
+                      </td>
+                      
                       <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
                             <a 
