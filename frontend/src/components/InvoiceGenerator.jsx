@@ -17,7 +17,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     number: `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 1000)}`,
     date: new Date().toISOString().split('T')[0],
     clientName: "",
-    items: [{ description: "Prestation de service", price: 0 }]
+    items: [{ description: "Loyer mensuel", price: 0 }]
   });
 
   // --- FONCTION POUR CHARGER L'HISTORIQUE ---
@@ -147,7 +147,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       
       {/* HEADER */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>Générateur de Factures</h2>
+        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>Générateur de Quittances</h2>
         <div style={{ display: "flex", gap: "10px" }}>
             <button onClick={handleView} disabled={viewLoading} className="btn" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 20px", background: "#3b82f6", color: "white", border: "none", borderRadius: "8px", cursor: "pointer" }}>
                 {viewLoading ? <Loader2 className="spin" size={20} /> : <Eye size={20} />} Visionner PDF
@@ -164,7 +164,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
         {/* ÉDITEUR */}
         <div>
           <h3 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem", color: "#94a3b8" }}>
-            <FileText size={20} /> Éditeur de Facture
+            <FileText size={20} /> Éditeur de Quittances
           </h3>
           <div className="card" style={{ padding: "2rem", background: "#1e293b", borderRadius: "12px" }}>
             <h4 style={{ color: "#64748b", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase", marginBottom: "1rem" }}>Informations</h4>
@@ -182,7 +182,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
               </div>
             </div>
             <div style={{ marginBottom: "2rem" }}>
-                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Client</label>
+                <label style={{ fontSize: "0.9rem", marginBottom: "5px", display: "block" }}>Locataires</label>
                 <input type="text" placeholder="Ex: ACME Corp" value={invoice.clientName} onChange={(e) => handleChange("clientName", e.target.value)} style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", color: "white" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
