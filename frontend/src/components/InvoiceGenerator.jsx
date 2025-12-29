@@ -140,19 +140,17 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // --- ✅ NOUVELLE FONCTION : TÉLÉCHARGER HISTORIQUE ---
+  // --- FONCTION : TÉLÉCHARGER HISTORIQUE ---
   const handleHistoryDownload = async (ref) => {
     if (!authFetch) return;
     try {
-        // On réutilise le même endpoint que pour la visualisation
         const res = await authFetch(`${API_BASE}/api/invoices/${ref}/pdf`);
         if(res.ok) {
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
-            // Astuce pour forcer le téléchargement
             const a = document.createElement("a");
             a.href = url;
-            a.download = `Quittance-${ref}.pdf`; // Nom du fichier téléchargé
+            a.download = `Quittance-${ref}.pdf`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -318,18 +316,18 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                                 </td>
                                 <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                                     <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                                        {/* BOUTON VISIONNER */}
-                                        <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Voir le PDF">
+                                        {/* ✅ BOUTON VISIONNER EN BLEU */}
+                                        <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "#3b82f6", color: "white", border: "none", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Voir le PDF">
                                             <Eye size={18} />
                                         </button>
                                         
-                                        {/* ✅ BOUTON TÉLÉCHARGER AJOUTÉ */}
+                                        {/* BOUTON TÉLÉCHARGER */}
                                         <button onClick={() => handleHistoryDownload(inv.reference)} style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Télécharger">
                                             <Download size={18} />
                                         </button>
                                         
                                         {/* BOUTON SUPPRIMER */}
-                                        <button onClick={() => handleDelete(inv.id)} style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Supprimer">
+                                        <button onClick={() => handleDelete(inv.id)} style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "6px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }} title="Supprimer">
                                             <Trash2 size={18} />
                                         </button>
                                     </div>
