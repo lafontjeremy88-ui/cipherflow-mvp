@@ -460,40 +460,60 @@ async def analyze_file(
     db: Session = Depends(get_db),
     file: UploadFile = File(...),
 ):
-    # ✅ Debug clair
-    print("DEBUG analyze-file:")
-    print(" - filename:", getattr(file, "filename", None))
-    print(" - content_type:", getattr(file, "content_type", None))
-
-    # ✅ Sécurité: éviter les chemins bizarres dans file.filename
-    safe_name = Path(file.filename).name if file and file.filename else "upload.bin"
-
+    # Sécurisation du nom de fichier
+    safe_name = Path(file.filename).name if file and file.filename else "document.pdf"
+    
+    # Création du dossier temporaire
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
-
     file_path = uploads_dir / safe_name
 
     try:
+        # Écriture du fichier sur le disque
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        model = genai.GenerativeModel(MODEL_NAME)
-        up = genai.upload_file(str(file_path))
+        # Upload vers Gemini (API Mise à jour)
+        # Note: mime_type est optionnel mais aide l'IA si l'extension est ambiguë
+        mime_type = file.content_type or "application/pdf"
+        uploaded_file = genai.upload_file(path=str(file_path), mime_type=mime_type)
 
+        # Attente que le fichier soit prêt (nécessaire pour les gros fichiers côté Google)
+        import time
+        while uploaded_file.state.name == "PROCESSING":
+            time.sleep(1)
+            uploaded_file = genai.get_file(uploaded_file.name)
+
+        if uploaded_file.state.name == "FAILED":
+             raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
+
+        # Génération du contenu
+        model = genai.GenerativeModel(MODEL_NAME)
         prompt = (
-            "Analyse ce document et retourne un JSON strict avec: "
-            "type (facture, contrat, devis...), sender, date, amount "
-            "(si applicable, sinon '0'), summary."
+            "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec: "
+            "type (facture, contrat, devis...), sender, date (format DD/MM/YYYY), amount "
+            "(format numérique string, ex: '150.00'), summary (court résumé)."
         )
 
-        res = await model.generate_content_async([up, prompt])
-
+        res = await model.generate_content_async([uploaded_file, prompt])
+        
+        # Extraction propre
         data = extract_json_from_text(res.text)
-
+        
         if not data:
-            return {"error": "Impossible d'extraire le JSON de l'IA"}
+            # Fallback si le JSON est malformé mais que le texte existe
+            return {
+                "extracted": False, 
+                "raw_text": res.text, 
+                "summary": "Lecture partielle",
+                "type": "Autre",
+                "amount": "0",
+                "sender": "Inconnu",
+                "date": ""
+            }
 
-        db.add(FileAnalysis(
+        # Sauvegarde en base
+        new_analysis = FileAnalysis(
             filename=safe_name,
             file_type=str(data.get("type", "Inconnu")),
             sender=str(data.get("sender", "Inconnu")),
@@ -501,21 +521,23 @@ async def analyze_file(
             amount=str(data.get("amount", "0")),
             summary=str(data.get("summary", "Pas de résumé")),
             owner_id=get_user_id(current_user),
-        ))
+        )
+        db.add(new_analysis)
         db.commit()
 
         return data
 
     except Exception as e:
         print(f"ERREUR DOC: {e}")
+        # On renvoie 500 pour voir l'erreur dans les logs frontend si besoin
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        # ✅ ferme le fichier uploadé proprement
-        try:
-            await file.close()
-        except Exception:
-            pass
+        # Nettoyage
+        await file.close()
+        # Optionnel : supprimer le fichier local après upload
+        # if os.path.exists(file_path):
+        #    os.remove(file_path)
 
 
 @app.get("/api/files/history")

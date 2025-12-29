@@ -3,7 +3,9 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./index.css";
-const API_BASE = import.meta.env.VITE_API_URL; // doit déjà exister dans ton projet
+
+// On récupère l'URL depuis l'environnement ou on utilise une valeur par défaut vide
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 const originalFetch = window.fetch;
 
@@ -11,8 +13,9 @@ window.fetch = async (input, init = {}) => {
   try {
     const url = typeof input === "string" ? input : input.url;
 
-    // On ne touche qu'aux appels vers ton backend
-    const isApiCall = API_BASE && url.startsWith(API_BASE);
+    // On ne touche qu'aux appels vers ton backend (si API_BASE est défini)
+    // ou si l'URL est relative (commence par /)
+    const isApiCall = (API_BASE && url.startsWith(API_BASE)) || url.startsWith("/");
 
     if (isApiCall) {
       const token = localStorage.getItem("cipherflow_token");
@@ -23,8 +26,12 @@ window.fetch = async (input, init = {}) => {
         headers.set("Authorization", `Bearer ${token}`);
       }
 
-      // Si tu envoies du JSON, on aide un peu
-      if (!headers.get("Content-Type") && init.body) {
+      // CORRECTION ICI :
+      // On ajoute 'application/json' SEULEMENT si ce n'est pas du FormData.
+      // Si c'est du FormData (upload de fichier), on laisse le navigateur gérer (multipart/form-data).
+      const isFormData = init.body instanceof FormData;
+      
+      if (!headers.get("Content-Type") && init.body && !isFormData) {
         headers.set("Content-Type", "application/json");
       }
 
@@ -33,6 +40,7 @@ window.fetch = async (input, init = {}) => {
 
     return originalFetch(input, init);
   } catch (e) {
+    console.error("Fetch error:", e);
     return originalFetch(input, init);
   }
 };
