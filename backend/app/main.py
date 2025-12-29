@@ -39,22 +39,22 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION IA V2 (CORRIGÉE) ---
+# --- CONFIGURATION IA V2 (CORRECTION API VERSION) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
 try:
     if GEMINI_API_KEY:
-        # CORRECTION ICI : On force l'API v1alpha pour voir le modèle Flash
+        # CORRECTION ICI : Passage en v1beta où le modèle Flash est disponible
         client = genai.Client(
             api_key=GEMINI_API_KEY,
-            http_options={'api_version': 'v1alpha'} 
+            http_options={'api_version': 'v1beta'} 
         )
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Utilisation de l'ID stable
-MODEL_NAME = "gemini-1.5-flash-001"
+# Utilisation de l'alias stable
+MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
