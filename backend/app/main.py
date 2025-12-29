@@ -43,15 +43,18 @@ load_dotenv(ENV_PATH)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
-# On configure le client (sans forcer de version pour l'instant)
 try:
     if GEMINI_API_KEY:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        # On garde la version v1beta car c'est celle qui a détecté tes modèles 2.0
+        client = genai.Client(
+            api_key=GEMINI_API_KEY, 
+            http_options={'api_version': 'v1beta'}
+        )
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Nom par défaut (sera vérifié au démarrage)
-MODEL_NAME = "gemini-1.5-flash"
+# ✅ CORRECTION FINALE : On utilise le modèle présent dans ta liste
+MODEL_NAME = "gemini-2.0-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -255,7 +258,6 @@ def get_user_id(user):
     if isinstance(user, dict): return user.get('id')
     return None
 
-# --- STARTUP DIAGNOSTIC ---
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
@@ -268,27 +270,6 @@ def on_startup():
         hashed = get_password_hash("admin123")
         db.add(User(email="admin@cipherflow.com", hashed_password=hashed))
         db.commit()
-    
-    # --- LISTE DES MODÈLES DISPONIBLES ---
-    print("="*60)
-    print("🔍 DIAGNOSTIC IA : LISTE DES MODÈLES")
-    if client:
-        try:
-            # On liste tous les modèles disponibles pour cette clé
-            all_models = client.models.list()
-            print("✅ Modèles trouvés :")
-            for m in all_models:
-                # CORRECTION : On affiche juste le nom pour éviter le crash
-                # On essaie d'attraper le nom de plusieurs façons
-                nom = getattr(m, 'name', None) or getattr(m, 'display_name', 'Inconnu')
-                if "gemini" in str(nom).lower():
-                    print(f" - {nom}")
-        except Exception as e:
-            print(f"❌ Erreur lors du listing des modèles : {e}")
-            print("👉 Vérifie ta clé API GEMINI_API_KEY dans Railway.")
-    else:
-        print("❌ Client Gemini non initialisé (Clé manquante ?)")
-    print("="*60)
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
@@ -457,7 +438,7 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Upload vers Gemini (méthode de la nouvelle librairie)
+        # Upload
         uploaded_file = client.files.upload(file=str(file_path))
 
         # Attente
