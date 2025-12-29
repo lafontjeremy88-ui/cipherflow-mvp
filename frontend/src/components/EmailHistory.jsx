@@ -48,15 +48,27 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
+  // --- 🧠 FONCTION DE NORMALISATION INTELLIGENTE ---
+  const normalizeUrgency = (rawUrgency) => {
+    if (!rawUrgency) return "faible";
+    const val = rawUrgency.toLowerCase();
+
+    // Détection des variantes (Anglais/Français/Synonymes)
+    if (val.includes("haut") || val.includes("high") || val.includes("urg") || val.includes("elev")) return "haute";
+    if (val.includes("moyen") || val.includes("medium") || val.includes("mod")) return "moyenne";
+    
+    // Par défaut tout le reste est faible
+    return "faible";
+  };
+
   // --- LOGIQUE COULEURS ---
-  const getUrgencyStyles = (urgency) => {
-    const val = urgency?.toLowerCase() || "faible";
-    switch (val) {
+  const getUrgencyStyles = (standardizedUrgency) => {
+    switch (standardizedUrgency) {
       case "haute":
         return { bg: "rgba(239, 68, 68, 0.2)", text: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)" }; // Rouge
       case "moyenne":
         return { bg: "rgba(249, 115, 22, 0.2)", text: "#f97316", border: "1px solid rgba(249, 115, 22, 0.3)" }; // Orange
-      default:
+      default: // faible
         return { bg: "rgba(16, 185, 129, 0.2)", text: "#10b981", border: "1px solid rgba(16, 185, 129, 0.3)" }; // Vert
     }
   };
@@ -95,11 +107,8 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // Suppression directe depuis la liste ou le détail
   const handleDelete = async (e, id) => {
-    // Empêche le clic de se propager (pour ne pas ouvrir le mail quand on clique sur supprimer)
     if (e) e.stopPropagation(); 
-    
     if (!window.confirm("Voulez-vous vraiment supprimer cet email de l'historique ?")) return;
 
     try {
@@ -119,9 +128,14 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // --- FILTRAGE DES DONNÉES ---
+  // --- FILTRAGE DES DONNÉES AVEC NORMALISATION ---
   const filteredHistory = history.filter(email => {
-    const matchesUrgency = filterUrgency === "all" || email.urgency?.toLowerCase() === filterUrgency;
+    // 1. On nettoie la donnée brute de l'email
+    const normalizedU = normalizeUrgency(email.urgency);
+
+    // 2. On compare avec le filtre sélectionné
+    const matchesUrgency = filterUrgency === "all" || normalizedU === filterUrgency;
+    
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = 
       email.subject?.toLowerCase().includes(searchLower) || 
@@ -177,7 +191,10 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
             )}
 
             {filteredHistory.map((email) => {
-              const style = getUrgencyStyles(email.urgency);
+              // On normalise l'urgence POUR L'AFFICHAGE aussi
+              const standardUrgency = normalizeUrgency(email.urgency);
+              const style = getUrgencyStyles(standardUrgency);
+              
               return (
                 <div 
                   key={email.id}
@@ -210,7 +227,7 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
                         textTransform: "uppercase",
                         letterSpacing: "0.5px"
                       }}>
-                        {email.urgency}
+                        {standardUrgency}
                       </span>
                       <span style={{ color: "#64748b", fontSize: "0.85rem" }}>{new Date(email.created_at).toLocaleDateString()} à {new Date(email.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                     </div>
@@ -256,8 +273,9 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
             {/* Infos IA */}
             <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
                {(() => {
-                  const style = getUrgencyStyles(selectedEmail.urgency);
-                  return <span style={{ background: style.bg, color: style.text, padding: "4px 10px", borderRadius: "6px", fontWeight: "bold", fontSize: "0.8rem", textTransform: "uppercase" }}>Urgence : {selectedEmail.urgency}</span>;
+                  const standardUrgency = normalizeUrgency(selectedEmail.urgency);
+                  const style = getUrgencyStyles(standardUrgency);
+                  return <span style={{ background: style.bg, color: style.text, padding: "4px 10px", borderRadius: "6px", fontWeight: "bold", fontSize: "0.8rem", textTransform: "uppercase" }}>Urgence : {standardUrgency}</span>;
                })()}
                <span style={{ background: "#334155", color: "white", padding: "4px 10px", borderRadius: "6px", fontWeight: "bold", fontSize: "0.8rem", textTransform: "uppercase" }}>Catégorie : {selectedEmail.category}</span>
             </div>
