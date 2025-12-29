@@ -43,13 +43,10 @@ load_dotenv(ENV_PATH)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
-# On force la version v1beta pour le test
+# On configure le client (sans forcer de version pour l'instant)
 try:
     if GEMINI_API_KEY:
-        client = genai.Client(
-            api_key=GEMINI_API_KEY, 
-            http_options={'api_version': 'v1beta'}
-        )
+        client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
@@ -281,9 +278,11 @@ def on_startup():
             all_models = client.models.list()
             print("✅ Modèles trouvés :")
             for m in all_models:
-                # On filtre pour afficher ceux qui nous intéressent
-                if "gemini" in m.name:
-                    print(f" - {m.name} (Méthodes: {m.supported_generation_methods})")
+                # CORRECTION : On affiche juste le nom pour éviter le crash
+                # On essaie d'attraper le nom de plusieurs façons
+                nom = getattr(m, 'name', None) or getattr(m, 'display_name', 'Inconnu')
+                if "gemini" in str(nom).lower():
+                    print(f" - {nom}")
         except Exception as e:
             print(f"❌ Erreur lors du listing des modèles : {e}")
             print("👉 Vérifie ta clé API GEMINI_API_KEY dans Railway.")
@@ -458,7 +457,7 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Upload
+        # Upload vers Gemini (méthode de la nouvelle librairie)
         uploaded_file = client.files.upload(file=str(file_path))
 
         # Attente
