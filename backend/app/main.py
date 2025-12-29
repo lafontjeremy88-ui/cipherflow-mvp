@@ -45,7 +45,7 @@ client = None
 
 try:
     if GEMINI_API_KEY:
-        # On garde la version v1beta car c'est celle qui a détecté tes modèles 2.0
+        # On garde la version v1beta car c'est celle qui détecte tes modèles 2.0
         client = genai.Client(
             api_key=GEMINI_API_KEY, 
             http_options={'api_version': 'v1beta'}
@@ -53,7 +53,7 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# ✅ CORRECTION FINALE : On utilise le modèle présent dans ta liste
+# Modèle validé
 MODEL_NAME = "gemini-2.0-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -83,9 +83,10 @@ async def call_gemini(prompt: str) -> str:
     if not client:
         return "{}"
     try:
+        # On passe le prompt dans une liste pour robustesse
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=prompt
+            contents=[prompt]
         )
         return response.text
     except Exception as e:
@@ -93,6 +94,7 @@ async def call_gemini(prompt: str) -> str:
         return "{}" 
 
 def extract_json_from_text(text: str):
+    if not text: return None
     raw = text.strip()
     if "```" in raw:
         first, last = raw.find("```"), raw.rfind("```")
@@ -408,6 +410,36 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
         return {"status": "logo_updated"}
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
+
+# ✅✅✅ CETTE FONCTION ÉTAIT MANQUANTE ET EST MAINTENANT RESTAURÉE ✅✅✅
+@app.post("/email/process", response_model=EmailProcessResponse)
+async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    s = db.query(AppSettings).first()
+    comp = s.company_name if s else "CipherFlow"
+    
+    analyse = await analyze_email_logic(EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), comp)
+    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
+    
+    new_email = EmailAnalysis(
+        sender_email=req.from_email,
+        subject=req.subject,
+        raw_email_text=req.content,
+        is_devis=analyse.is_devis,
+        category=analyse.category,
+        urgency=analyse.urgency,
+        summary=analyse.summary,
+        suggested_title=analyse.suggested_title,
+        suggested_response_text=reponse.reply,
+        raw_ai_output=analyse.raw_ai_text
+    )
+    db.add(new_email)
+    db.commit()
+    
+    sent = "sent" if req.send_email else "not_sent"
+    if req.send_email:
+        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
+    
+    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
 
 @app.post("/email/send")
 async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
