@@ -39,18 +39,22 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION IA V2 ---
+# --- CONFIGURATION IA V2 (CORRIGÉE) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
 try:
     if GEMINI_API_KEY:
-        # Initialisation du nouveau client
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        # CORRECTION ICI : On force l'API v1alpha pour voir le modèle Flash
+        client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options={'api_version': 'v1alpha'} 
+        )
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-1.5-flash"
+# Utilisation de l'ID stable
+MODEL_NAME = "gemini-1.5-flash-001"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
@@ -81,7 +85,6 @@ async def call_gemini(prompt: str) -> str:
         print("Client Gemini non initialisé")
         return "{}"
     try:
-        # L'appel est synchrone dans le SDK, mais FastAPI le gère dans un thread
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt
@@ -460,7 +463,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD MIGRÉ V2 ---
+# --- ENDPOINT UPLOAD MIGRÉ V2 (FIXED) ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -480,9 +483,9 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. Upload vers Gemini via la NOUVELLE méthode
-        # 'path' doit être un chemin vers un fichier local
-        uploaded_file = client.files.upload(path=str(file_path))
+        # 2. Upload vers Gemini via la NOUVELLE méthode CORRIGÉE
+        # 'path' n'existe plus, il faut utiliser 'file'
+        uploaded_file = client.files.upload(file=str(file_path))
 
         # 3. Attente du traitement (Polling)
         while uploaded_file.state.name == "PROCESSING":
