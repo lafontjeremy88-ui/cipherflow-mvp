@@ -39,21 +39,18 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
-# --- CONFIGURATION IA V2 (CORRECTION API VERSION) ---
+# --- CONFIGURATION IA V2 (SIMPLIFIÉE) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
 
 try:
     if GEMINI_API_KEY:
-        # CORRECTION ICI : Passage en v1beta où le modèle Flash est disponible
-        client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options={'api_version': 'v1beta'} 
-        )
+        # CORRECTION : On laisse la config par défaut (plus stable)
+        client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-# Utilisation de l'alias stable
+# Modèle standard stable
 MODEL_NAME = "gemini-1.5-flash"
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -463,7 +460,7 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
-# --- ENDPOINT UPLOAD MIGRÉ V2 (FIXED) ---
+# --- ENDPOINT UPLOAD MIGRÉ V2 (FIXED & SIMPLIFIED) ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
@@ -483,8 +480,8 @@ async def analyze_file(
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. Upload vers Gemini via la NOUVELLE méthode CORRIGÉE
-        # 'path' n'existe plus, il faut utiliser 'file'
+        # 2. Upload vers Gemini
+        # 'file' parameter is correct for new SDK
         uploaded_file = client.files.upload(file=str(file_path))
 
         # 3. Attente du traitement (Polling)
