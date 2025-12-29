@@ -5,8 +5,10 @@ import base64
 import io
 import shutil
 import secrets
+import time
 from typing import Optional, List
 from datetime import datetime
+from pathlib import Path
 
 from PIL import Image
 import resend
@@ -19,8 +21,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
-import google.generativeai as genai
 from starlette.middleware.sessions import SessionMiddleware
+
+# --- NOUVELLE IMPORTATION IA ---
+from google import genai
+from google.genai import types
 
 from app.security import get_current_user
 from app.google_oauth import router as google_oauth_router
@@ -30,25 +35,18 @@ from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileA
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
 
-##
-from fastapi import File, UploadFile, Depends, HTTPException
-from sqlalchemy.orm import Session
-import os, shutil
-from pathlib import Path
-##
-
-
-
-
-
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
+# --- CONFIGURATION IA V2 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+client = None
+
 try:
     if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
+        # Initialisation du nouveau client
+        client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
@@ -76,13 +74,21 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
     except Exception as e:
         print(f"Erreur envoi email: {e}")
 
+# --- FONCTION IA MIGRÉE ---
 async def call_gemini(prompt: str) -> str:
+    """Nouvelle fonction d'appel IA avec google-genai"""
+    if not client:
+        print("Client Gemini non initialisé")
+        return "{}"
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = await model.generate_content_async(prompt)
+        # L'appel est synchrone dans le SDK, mais FastAPI le gère dans un thread
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         return response.text
     except Exception as e:
-        print(f"Erreur IA: {e}")
+        print(f"Erreur IA (call_gemini): {e}")
         return "{}" 
 
 def extract_json_from_text(text: str):
@@ -234,8 +240,8 @@ app.include_router(google_oauth_router, tags=["Google OAuth"])
 
 origins = [
     "http://localhost:5173",
-    "https://cipherflow-mvp.vercel.app",
-    "https://cipherflow.company"
+    "[https://cipherflow-mvp.vercel.app](https://cipherflow-mvp.vercel.app)",
+    "[https://cipherflow.company](https://cipherflow.company)"
 ]
 
 app.add_middleware(
@@ -454,65 +460,55 @@ async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), cur
             db.commit()
     return {"status": "sent"}
 
+# --- ENDPOINT UPLOAD MIGRÉ V2 ---
 @app.post("/api/analyze-file")
 async def analyze_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     file: UploadFile = File(...),
 ):
-    # Sécurisation du nom de fichier
+    if not client:
+        raise HTTPException(status_code=500, detail="Configuration IA manquante")
+
     safe_name = Path(file.filename).name if file and file.filename else "document.pdf"
-    
-    # Création du dossier temporaire
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
     file_path = uploads_dir / safe_name
 
     try:
-        # Écriture du fichier sur le disque
+        # 1. Sauvegarde locale
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Upload vers Gemini (API Mise à jour)
-        # Note: mime_type est optionnel mais aide l'IA si l'extension est ambiguë
-        mime_type = file.content_type or "application/pdf"
-        uploaded_file = genai.upload_file(path=str(file_path), mime_type=mime_type)
+        # 2. Upload vers Gemini via la NOUVELLE méthode
+        # 'path' doit être un chemin vers un fichier local
+        uploaded_file = client.files.upload(path=str(file_path))
 
-        # Attente que le fichier soit prêt (nécessaire pour les gros fichiers côté Google)
-        import time
+        # 3. Attente du traitement (Polling)
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
-            uploaded_file = genai.get_file(uploaded_file.name)
+            uploaded_file = client.files.get(name=uploaded_file.name)
 
         if uploaded_file.state.name == "FAILED":
              raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
-        # Génération du contenu
-        model = genai.GenerativeModel(MODEL_NAME)
+        # 4. Génération du contenu
         prompt = (
             "Analyse ce document et retourne un JSON strict (sans markdown ```json) avec: "
             "type (facture, contrat, devis...), sender, date (format DD/MM/YYYY), amount "
             "(format numérique string, ex: '150.00'), summary (court résumé)."
         )
 
-        res = await model.generate_content_async([uploaded_file, prompt])
+        res = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[uploaded_file, prompt]
+        )
         
-        # Extraction propre
         data = extract_json_from_text(res.text)
         
         if not data:
-            # Fallback si le JSON est malformé mais que le texte existe
-            return {
-                "extracted": False, 
-                "raw_text": res.text, 
-                "summary": "Lecture partielle",
-                "type": "Autre",
-                "amount": "0",
-                "sender": "Inconnu",
-                "date": ""
-            }
+            return {"extracted": False, "raw_text": res.text, "summary": "Erreur lecture JSON"}
 
-        # Sauvegarde en base
         new_analysis = FileAnalysis(
             filename=safe_name,
             file_type=str(data.get("type", "Inconnu")),
@@ -529,16 +525,10 @@ async def analyze_file(
 
     except Exception as e:
         print(f"ERREUR DOC: {e}")
-        # On renvoie 500 pour voir l'erreur dans les logs frontend si besoin
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        # Nettoyage
         await file.close()
-        # Optionnel : supprimer le fichier local après upload
-        # if os.path.exists(file_path):
-        #    os.remove(file_path)
-
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -567,8 +557,7 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     s = db.query(AppSettings).first()
     data = req.dict()
-    # ✅ FIX: URL propre pour le logo
-    default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    default_logo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
     
     data.update({
         "company_name_header": s.company_name if s else "Mon Entreprise",
@@ -602,7 +591,7 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
         raise HTTPException(404, detail="Facture introuvable")
     
     s = db.query(AppSettings).first()
-    default_logo = "[https://cdn-icons-png.flaticon.com/512/3135/3135715.png](https://cdn-icons-png.flaticon.com/512/3135/3135715.png)"
+    default_logo = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"
     
     data = {
         "client_name": inv.client_name,

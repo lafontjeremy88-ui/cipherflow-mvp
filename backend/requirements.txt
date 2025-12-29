@@ -6,8 +6,7 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-multipart>=0.0.9
 python-dotenv
-# MODIFICATION ICI : On passe à la 0.8.3 minimum pour gemini-1.5-flash
-google-generativeai>=0.8.3
+google-genai
 resend
 requests
 fpdf2
