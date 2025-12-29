@@ -6,7 +6,7 @@ const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 const InvoiceGenerator = ({ token, authFetch }) => {
   const [loading, setLoading] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
-  const [history, setHistory] = useState([]); // ✅ État pour stocker l'historique
+  const [history, setHistory] = useState([]); 
   const [companySettings, setCompanySettings] = useState({
     company_name: "Mon Entreprise",
     logo: "",
@@ -37,13 +37,11 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   // Chargement initial
   useEffect(() => {
     if (authFetch) {
-      // 1. Charger les settings
       authFetch(`${API_BASE}/settings`)
         .then(res => res.json())
         .then(data => { if (data) setCompanySettings(data); })
         .catch(err => console.error("Erreur settings", err));
 
-      // 2. Charger l'historique
       fetchHistory();
     }
   }, [authFetch, fetchHistory]);
@@ -77,7 +75,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     items: invoice.items.map(i => ({ desc: i.description, price: Number(i.price) }))
   });
 
-  // Action : Visionner PDF
   const handleView = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setViewLoading(true);
@@ -90,7 +87,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       window.open(url, '_blank');
-      fetchHistory(); // ✅ Mise à jour auto de l'historique après génération
+      fetchHistory(); 
     } catch (e) {
       alert("Erreur génération aperçu");
     } finally {
@@ -98,7 +95,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Télécharger PDF
   const handleDownload = async () => {
     if (!authFetch) return alert("Erreur: Authentification manquante");
     setLoading(true);
@@ -117,7 +113,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      fetchHistory(); // ✅ Mise à jour auto de l'historique après téléchargement
+      fetchHistory(); 
     } catch (e) {
       alert("Erreur téléchargement");
     } finally {
@@ -125,7 +121,6 @@ const InvoiceGenerator = ({ token, authFetch }) => {
     }
   };
 
-  // Action : Ouvrir une ancienne facture depuis l'historique
   const handleHistoryOpen = async (ref) => {
     if (!authFetch) return;
     try {
@@ -139,6 +134,24 @@ const InvoiceGenerator = ({ token, authFetch }) => {
         }
     } catch(e) {
         console.error(e);
+    }
+  };
+
+  // --- ✅ NOUVELLE FONCTION SUPPRESSION ---
+  const handleDelete = async (id) => {
+    if (!window.confirm("Voulez-vous vraiment supprimer cette quittance ?")) return;
+    try {
+        const res = await authFetch(`${API_BASE}/api/invoices/${id}`, {
+            method: "DELETE"
+        });
+        if (res.ok) {
+            setHistory(history.filter(item => item.id !== id));
+        } else {
+            alert("Erreur lors de la suppression.");
+        }
+    } catch (e) {
+        console.error("Erreur delete:", e);
+        alert("Erreur réseau.");
     }
   };
 
@@ -214,16 +227,14 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                         <p style={{ margin: "5px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>contact@monentreprise.com</p>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                        {/* MODIFICATION ICI */}
                         <h2 style={{ margin: 0, color: "#94a3b8", textTransform: "uppercase", fontSize: "1.5rem", fontWeight: "bold" }}>QUITTANCE</h2>
                         <div style={{ fontWeight: "bold", marginTop: "5px" }}>{invoice.number}</div>
                         <div style={{ fontSize: "0.9rem", color: "#64748b" }}>{new Date(invoice.date).toLocaleDateString()}</div>
                     </div>
                 </div>
                 <div style={{ marginBottom: "60px", padding: "20px", background: "#f8fafc", borderRadius: "8px" }}>
-                    {/* MODIFICATION ICI */}
                     <div style={{ fontSize: "0.8rem", color: "#94a3b8", textTransform: "uppercase", marginBottom: "5px" }}>Locataire</div>
-                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>{invoice.clientName || "Nom du Client..."}</div>
+                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>{invoice.clientName || "Nom du Locataire..."}</div>
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "40px" }}>
                     <thead>
@@ -263,7 +274,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Locataire</th>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Montant</th>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Statut</th>
-                            <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Action</th>
+                            <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -277,9 +288,16 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                                     <span style={{ background: "rgba(16,185,129,0.2)", color: "#34d399", padding: "4px 8px", borderRadius: "4px", fontSize: "0.8rem" }}>ÉMISE</span>
                                 </td>
                                 <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
-                                    <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Voir le PDF">
-                                        <Eye size={18} />
-                                    </button>
+                                    <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                                        <button onClick={() => handleHistoryOpen(inv.reference)} style={{ background: "transparent", border: "1px solid #334155", color: "#94a3b8", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Voir le PDF">
+                                            <Eye size={18} />
+                                        </button>
+                                        
+                                        {/* ✅ BOUTON SUPPRIMER AJOUTÉ */}
+                                        <button onClick={() => handleDelete(inv.id)} style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "6px", borderRadius: "6px", cursor: "pointer" }} title="Supprimer">
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}

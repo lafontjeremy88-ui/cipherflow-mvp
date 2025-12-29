@@ -640,3 +640,15 @@ async def reprint_inv(ref: str, db: Session = Depends(get_db), current_user: Use
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={ref}.pdf"}
     )
+@app.delete("/api/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # On vérifie que la facture existe et appartient bien à l'utilisateur connecté
+    inv = db.query(Invoice).filter(Invoice.id == invoice_id, Invoice.owner_id == get_user_id(current_user)).first()
+    
+    if not inv:
+        raise HTTPException(status_code=404, detail="Quittance introuvable ou accès refusé")
+    
+    db.delete(inv)
+    db.commit()
+    
+    return {"status": "deleted"}
