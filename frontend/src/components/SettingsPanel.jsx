@@ -36,7 +36,7 @@ const SettingsPanel = ({ token, authFetch }) => {
     setSettings({ ...settings, [e.target.name]: e.target.value });
   };
 
-  // --- GESTION DU LOGO (CORRIGÉE : BASE64) ---
+  // --- GESTION DU LOGO ---
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -44,24 +44,19 @@ const SettingsPanel = ({ token, authFetch }) => {
     setUploading(true);
     setMessage(null);
 
-    // 1. On lit le fichier comme une chaîne de caractères (Data URL)
     const reader = new FileReader();
     reader.readAsDataURL(file);
 
     reader.onload = async () => {
-        const base64Str = reader.result; // Ceci contient "data:image/png;base64,..."
+        const base64Str = reader.result; 
 
         try {
-            console.log("Envoi du logo en format Base64...");
-
-            // 2. On l'envoie comme du JSON classique
             const res = await authFetch(`${API_BASE}/settings/upload-logo`, {
                 method: "POST",
                 body: JSON.stringify({ logo_base64: base64Str }), 
             });
 
             if (res.ok) {
-                // 3. Succès : on recharge pour afficher le nouveau logo
                 const refresh = await authFetch(`${API_BASE}/settings`);
                 if (refresh.ok) {
                     const data = await refresh.json();
@@ -69,21 +64,13 @@ const SettingsPanel = ({ token, authFetch }) => {
                     setMessage({ type: "success", text: "Logo mis à jour avec succès !" });
                 }
             } else {
-                const errData = await res.json().catch(() => ({})); 
-                console.error("Erreur Upload:", errData);
                 setMessage({ type: "error", text: "Erreur serveur lors de l'envoi." });
             }
         } catch (err) {
-            console.error(err);
             setMessage({ type: "error", text: "Erreur réseau." });
         } finally {
             setUploading(false);
         }
-    };
-
-    reader.onerror = () => {
-        setUploading(false);
-        setMessage({ type: "error", text: "Erreur lecture fichier local." });
     };
   };
 
@@ -118,7 +105,7 @@ const SettingsPanel = ({ token, authFetch }) => {
 
       <div style={cardStyle}>
         <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.2rem", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>🏢 Identité de l'Entreprise</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
           <div><label style={labelStyle}><Building size={18} /> Nom de l'entreprise</label><input name="company_name" value={settings.company_name || ""} onChange={handleChange} style={inputStyle} placeholder="Ex: Agence Immobilière"/></div>
           <div><label style={labelStyle}><User size={18} /> Nom de l'Agent IA</label><input name="agent_name" value={settings.agent_name || ""} onChange={handleChange} style={inputStyle} placeholder="Ex: Sophie"/></div>
         </div>
@@ -126,7 +113,7 @@ const SettingsPanel = ({ token, authFetch }) => {
 
       <div style={cardStyle}>
         <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.2rem", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>🎨 Branding & Logo</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: "2rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
           <div style={{ width: "120px", height: "120px", background: "#0f172a", borderRadius: "12px", border: "2px dashed #475569", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             {settings.logo ? <img src={settings.logo} alt="Logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} /> : <ImageIcon size={40} color="#475569" />}
           </div>
@@ -139,7 +126,7 @@ const SettingsPanel = ({ token, authFetch }) => {
                 <input type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleLogoUpload} disabled={uploading} style={{ display: "none" }} />
               </label>
             </div>
-            <p style={{ marginTop: "10px", fontSize: "0.8rem", color: "#64748b" }}>Formats supportés : PNG, JPG.</p>
+            <p style={{ marginTop: "10px", fontSize: "0.8rem", color: "#64748b" }}>Ce logo apparaîtra sur vos factures PDF générées.</p>
           </div>
         </div>
       </div>
@@ -149,14 +136,23 @@ const SettingsPanel = ({ token, authFetch }) => {
         <div style={{ marginBottom: "1.5rem" }}>
           <label style={labelStyle}><PenTool size={18} /> Ton de la réponse</label>
           <select name="tone" value={settings.tone || "pro"} onChange={handleChange} style={{ ...inputStyle, cursor: "pointer" }}>
-            <option value="pro">Professionnel</option>
-            <option value="amical">Amical</option>
-            <option value="direct">Direct</option>
+            <option value="Professionnel">👔 Professionnel (Standard)</option>
+            <option value="Amical">👋 Amical & Chaleureux</option>
+            <option value="Direct">⚡ Direct & Concis</option>
+            <option value="Commercial">💼 Commercial & Négociateur</option>
+            <option value="Empathique">❤️ Empathique (Support Client)</option>
+            <option value="Formel">⚖️ Juridique / Formel</option>
           </select>
         </div>
         <div>
-          <label style={labelStyle}><FileSignature size={18} /> Signature d'email</label>
-          <textarea name="signature" value={settings.signature || ""} onChange={handleChange} style={{ ...inputStyle, minHeight: "100px", resize: "vertical" }} />
+          <label style={labelStyle}><FileSignature size={18} /> Signature d'email automatique</label>
+          <textarea 
+            name="signature" 
+            value={settings.signature || ""} 
+            onChange={handleChange} 
+            placeholder="Cordialement,\nL'équipe CipherFlow"
+            style={{ ...inputStyle, minHeight: "100px", resize: "vertical" }} 
+          />
         </div>
       </div>
 
@@ -166,8 +162,8 @@ const SettingsPanel = ({ token, authFetch }) => {
             {message.type === "success" ? <CheckCircle size={20} /> : <AlertCircle size={20} />} {message.text}
           </div>
         ) : (<div style={{ color: "#64748b", fontSize: "0.9rem" }}>Modifications non enregistrées</div>)}
-        <button onClick={handleSave} disabled={loading || uploading} style={{ background: loading ? "#334155" : "#6366f1", border: "none", color: "white", padding: "12px 24px", borderRadius: "8px", cursor: loading ? "not-allowed" : "pointer" }}>
-          <Save size={20} /> {loading ? "Sauvegarde..." : "Sauvegarder"}
+        <button onClick={handleSave} disabled={loading || uploading} style={{ background: loading ? "#334155" : "#6366f1", border: "none", color: "white", padding: "12px 24px", borderRadius: "8px", cursor: loading ? "not-allowed" : "pointer", fontWeight: "bold", display: "flex", gap: "8px", alignItems: "center" }}>
+          <Save size={18} /> {loading ? "Sauvegarde..." : "Sauvegarder"}
         </button>
       </div>
     </div>

@@ -111,15 +111,31 @@ def extract_json_from_text(text: str):
         return None
 
 async def analyze_email_logic(req, company_name):
-    prompt = f"Tu es l'IA de {company_name}. Analyse:\nDe:{req.from_email}\nSujet:{req.subject}\n{req.content}\nRetourne JSON strict: is_devis(bool), category, urgency, summary, suggested_title."
+    # --- PROMPT SPÉCIALISÉ IMMOBILIER ---
+    prompt = (
+        f"Tu es l'assistant IA de l'agence immobilière {company_name}. "
+        f"Ton rôle est de trier les emails entrants pour un gestionnaire locatif.\n"
+        f"Analyse cet email :\n"
+        f"De: {req.from_email}\n"
+        f"Sujet: {req.subject}\n"
+        f"Contenu: {req.content}\n\n"
+        f"Retourne un JSON strict (sans markdown) avec ces champs :\n"
+        f"- is_devis: Mets 'true' si c'est une demande de location ou un dossier candidat.\n"
+        f"- category: Choisis PARMI CES VALEURS : 'Candidature', 'Incident Technique', 'Paiement/Loyer', 'Administratif', 'Autre'.\n"
+        f"- urgency: 'Haute' (Fuite, Panne chauffage, Sécurité), 'Moyenne' (Dossier, Question loyer), 'Faible' (Pub, Info).\n"
+        f"- summary: Résumé très court (ex: 'Fuite d'eau cuisine', 'Dossier M. Dupont T2 Centre').\n"
+        f"- suggested_title: Un titre court pour le dashboard."
+    )
+    
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
+    
     return EmailAnalyseResponse(
         is_devis=bool(data.get("is_devis", False)),
-        category=str(data.get("category", "autre")),
-        urgency=str(data.get("urgency", "moyenne")),
-        summary=str(data.get("summary", req.content[:100])),
-        suggested_title=str(data.get("suggested_title", "Analyse")),
+        category=str(data.get("category", "Autre")),
+        urgency=str(data.get("urgency", "Moyenne")),
+        summary=str(data.get("summary", "Analyse non disponible")),
+        suggested_title=str(data.get("suggested_title", "Nouvel Email")),
         raw_ai_text=raw
     )
 

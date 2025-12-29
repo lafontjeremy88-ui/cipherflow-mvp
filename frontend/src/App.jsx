@@ -345,14 +345,14 @@ function MainApp({ token, userEmail, onLogout }) {
             className={`nav-item ${activeTab === "invoices" ? "active" : ""}`}
             onClick={() => handleSidebarClick("invoices")}
           >
-            <FileText size={20} /> <span>Facturation</span>
+            <FileText size={20} /> <span>Quittances & Loyers</span>
           </div>
 
           <div
             className={`nav-item ${activeTab === "documents" ? "active" : ""}`}
             onClick={() => handleSidebarClick("documents")}
           >
-            <FolderSearch size={20} /> <span>Documents</span>
+            <FolderSearch size={20} /> <span>Dossiers Locataires</span>
           </div>
 
           <div
