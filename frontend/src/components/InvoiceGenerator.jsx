@@ -214,13 +214,15 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                         <p style={{ margin: "5px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>contact@monentreprise.com</p>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                        <h2 style={{ margin: 0, color: "#94a3b8", textTransform: "uppercase", fontSize: "1.5rem", fontWeight: "bold" }}>Facture</h2>
+                        {/* MODIFICATION ICI */}
+                        <h2 style={{ margin: 0, color: "#94a3b8", textTransform: "uppercase", fontSize: "1.5rem", fontWeight: "bold" }}>QUITTANCE</h2>
                         <div style={{ fontWeight: "bold", marginTop: "5px" }}>{invoice.number}</div>
                         <div style={{ fontSize: "0.9rem", color: "#64748b" }}>{new Date(invoice.date).toLocaleDateString()}</div>
                     </div>
                 </div>
                 <div style={{ marginBottom: "60px", padding: "20px", background: "#f8fafc", borderRadius: "8px" }}>
-                    <div style={{ fontSize: "0.8rem", color: "#94a3b8", textTransform: "uppercase", marginBottom: "5px" }}>Facturé à</div>
+                    {/* MODIFICATION ICI */}
+                    <div style={{ fontSize: "0.8rem", color: "#94a3b8", textTransform: "uppercase", marginBottom: "5px" }}>Locataire</div>
                     <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>{invoice.clientName || "Nom du Client..."}</div>
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "40px" }}>
@@ -245,12 +247,12 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       {/* --- NOUVELLE ZONE HISTORIQUE --- */}
       <div style={{ borderTop: "1px solid #334155", paddingTop: "2rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}>
-            <h3 style={{ fontSize: "1.4rem", fontWeight: "bold" }}>📜 Historique des Factures</h3>
+            <h3 style={{ fontSize: "1.4rem", fontWeight: "bold" }}>📜 Historique des Quittances</h3>
             <button onClick={fetchHistory} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer" }}><RefreshCw size={18} /></button>
         </div>
 
         {history.length === 0 ? (
-            <div style={{ padding: "20px", background: "#1e293b", borderRadius: "8px", textAlign: "center", color: "#94a3b8" }}>Aucune facture générée pour le moment.</div>
+            <div style={{ padding: "20px", background: "#1e293b", borderRadius: "8px", textAlign: "center", color: "#94a3b8" }}>Aucune quittance générée pour le moment.</div>
         ) : (
             <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px" }}>
@@ -258,7 +260,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
                         <tr>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Numéro</th>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Date</th>
-                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Client</th>
+                            <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Locataire</th>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Montant</th>
                             <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Statut</th>
                             <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Action</th>

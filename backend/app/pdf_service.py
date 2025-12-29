@@ -2,7 +2,7 @@ from fpdf import FPDF
 from datetime import datetime
 import requests
 import os
-import base64  # <--- AJOUT INDISPENSABLE
+import base64
 
 class PDF(FPDF):
     def __init__(self, header_data):
@@ -92,7 +92,8 @@ def generate_pdf_bytes(data):
     ref = clean_text(data.get('invoice_number', 'FAC-XXXX'))
     date = clean_text(data.get('date', datetime.now().strftime("%d/%m/%Y")))
     
-    pdf.cell(95, 8, f"FACTURE N {ref}", ln=0, align='L')
+    # ✅ MODIFICATION ICI : QUITTANCE
+    pdf.cell(95, 8, f"QUITTANCE DE LOYER N {ref}", ln=0, align='L')
     pdf.set_font("Helvetica", "", 12)
     pdf.cell(95, 8, f"Date : {date}", ln=1, align='R')
     

@@ -72,7 +72,17 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
     }
   };
 
-  // --- 3. LOGIQUE DE TRI ROBUSTE ---
+  // --- 3. FONCTION DE NETTOYAGE (ANTI-HTML) ---
+  const cleanEmailBody = (text) => {
+    if (!text) return "";
+    return text
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "") // Enlève le CSS
+      .replace(/<[^>]+>/g, "") // Enlève les balises HTML <div> <br> etc
+      .replace(/&nbsp;/g, " ") // Remplace les espaces insécables
+      .trim();
+  };
+
+  // --- 4. LOGIQUE DE TRI ROBUSTE ---
   const getSortedAndFilteredHistory = () => {
     // A. Filtrage d'abord
     let filtered = history.filter(email => {
@@ -334,7 +344,10 @@ const EmailHistory = ({ token, initialId, authFetch }) => {
 
             <div style={{ marginBottom: "20px", padding: "20px", background: "rgba(255,255,255,0.03)", borderRadius: "12px", border: "1px solid #334155" }}>
               <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "8px", fontWeight: "bold" }}>De : {selectedEmail.sender_email}</div>
-              <div style={{ color: "#e2e8f0", lineHeight: "1.6", whiteSpace: "pre-wrap" }}>{selectedEmail.raw_email_text}</div>
+              <div style={{ color: "#e2e8f0", lineHeight: "1.6", whiteSpace: "pre-wrap" }}>
+                {/* ✅ FONCTION DE NETTOYAGE APPLIQUÉE ICI */}
+                {cleanEmailBody(selectedEmail.raw_email_text)}
+              </div>
             </div>
 
             <h3 style={{ fontSize: "1.1rem", fontWeight: "bold", marginBottom: "15px", color: "#6366f1", display: "flex", alignItems: "center", gap: "8px" }}>
