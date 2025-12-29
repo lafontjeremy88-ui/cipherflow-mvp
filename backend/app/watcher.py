@@ -6,12 +6,10 @@ from email.utils import parseaddr
 import requests
 import os
 import logging
+import base64  # ✅ NÉCESSAIRE POUR LES PJ
 
 # ============================================================
-# WATCHER — CipherFlow
-# - Surveille Gmail en IMAP (UNSEEN)
-# - Envoie les emails au webhook backend (/webhook/email)
-# - Les secrets sont lus depuis Railway Variables (pas dans le code)
+# WATCHER — CipherFlow V2 (Support des Pièces Jointes)
 # ============================================================
 
 logging.basicConfig(level=logging.INFO, format="[WATCHER] %(message)s")
@@ -19,7 +17,6 @@ log = logging.getLogger("watcher")
 
 # ----------------------------
 # CONFIG via variables Railway
-# (On s'adapte à TES noms actuels)
 # ----------------------------
 IMAP_SERVER = os.getenv("IMAP_HOST", "imap.gmail.com")
 EMAIL_USER = os.getenv("IMAP_USER", "")
@@ -30,26 +27,17 @@ API_URL = f"{BACKEND_URL}/webhook/email"
 
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "")
 
-# AUTO_SEND=true => le backend envoie automatiquement la réponse IA
-# AUTO_SEND=false => le backend prépare mais n'envoie pas (si ton backend gère ce mode)
 AUTO_SEND = os.getenv("AUTO_SEND", "true").lower() == "true"
-
-# Nombre d'emails max par boucle (évite embouteillage)
 MAX_EMAILS_PER_LOOP = int(os.getenv("MAX_EMAILS_PER_LOOP", "3"))
-
-# Pause entre chaque email traité (évite spam / surcharge)
 PAUSE_BETWEEN_EMAILS_SEC = float(os.getenv("PAUSE_BETWEEN_EMAILS_SEC", "2"))
-
-# Pause entre deux scans de la boîte mail
 POLL_INTERVAL_SEC = float(os.getenv("POLL_INTERVAL_SEC", "10"))
 
-# Liste noire expéditeurs / sujets à ignorer (anti-robot)
 BLACKLIST = [
     "railway", "google", "no-reply", "noreply", "postmaster",
     "mailer-daemon", "resend", "daemon", "notification"
 ]
 
-# Vérification config (échoue vite si variable manquante)
+# Vérification config
 missing = []
 if not EMAIL_USER: missing.append("IMAP_USER")
 if not EMAIL_PASS: missing.append("IMAP_PASSWORD")
@@ -78,7 +66,7 @@ def decode_mime_header(value: str) -> str:
 
 
 def get_plain_text_body(msg: email.message.Message) -> str:
-    """Récupère la partie text/plain d'un email, sans les pièces jointes."""
+    """Récupère le texte de l'email."""
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
@@ -98,6 +86,41 @@ def get_plain_text_body(msg: email.message.Message) -> str:
     return ""
 
 
+# ✅ NOUVELLE FONCTION : EXTRACTION DES PIÈCES JOINTES
+def get_attachments_for_api(msg):
+    attachments_list = []
+    for part in msg.walk():
+        # On ignore les conteneurs multipart
+        if part.get_content_maintype() == 'multipart':
+            continue
+        
+        # On vérifie si c'est une pièce jointe
+        content_disposition = str(part.get("Content-Disposition", ""))
+        
+        # Si c'est un fichier attaché ou une image inline
+        if 'attachment' in content_disposition or part.get_filename():
+            filename = part.get_filename()
+            if filename:
+                # Décodage du nom de fichier
+                filename = decode_mime_header(filename)
+                
+                # Lecture du contenu binaire
+                payload = part.get_payload(decode=True)
+                if payload:
+                    # Encodage en Base64 pour l'envoi JSON
+                    b64_content = base64.b64encode(payload).decode('utf-8')
+                    content_type = part.get_content_type()
+                    
+                    attachments_list.append({
+                        "filename": filename,
+                        "content_base64": b64_content,
+                        "content_type": content_type
+                    })
+                    log.info(f"   📎 PJ trouvée : {filename} ({content_type})")
+    
+    return attachments_list
+
+
 def is_blacklisted(sender: str, subject: str) -> bool:
     s = (sender or "").lower()
     sub = (subject or "").lower()
@@ -115,10 +138,8 @@ def process_one_email(msg: email.message.Message) -> None:
         log.info(f"🚫 Ignoré (Blacklist) — {subject}")
         return
 
-    # Nettoie l'adresse expéditeur : "Nom <mail@...>" -> "mail@..."
     _, sender_email = parseaddr(real_sender)
     if not sender_email:
-        # fallback : on envoie quand même la string brute si parseaddr échoue
         sender_email = real_sender
 
     body = get_plain_text_body(msg).strip()
@@ -128,20 +149,31 @@ def process_one_email(msg: email.message.Message) -> None:
     log.info(f"👉 Traitement : {subject}")
     log.info(f"   📨 De : {sender_email}")
 
+    # ✅ RÉCUPÉRATION DES PJ
+    attachments = get_attachments_for_api(msg)
+
     payload = {
         "from_email": sender_email,
         "subject": subject,
-        # ton backend attend "content" (EmailProcessRequest) → on envoie content
         "content": body,
-        "send_email": AUTO_SEND
+        "send_email": AUTO_SEND,
+        "attachments": attachments # ✅ ON ENVOIE LES FICHIERS AU BACKEND
     }
 
     headers = {"x-watcher-secret": WATCHER_SECRET}
 
     try:
-        resp = requests.post(API_URL, json=payload, headers=headers, timeout=30)
+        # On augmente le timeout car l'upload de fichiers peut prendre un peu plus de temps
+        resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
+        
         if resp.status_code == 200:
-            log.info("   ✅ OK — envoyé au backend")
+            log.info("   ✅ OK — Analyse terminée par l'IA !")
+            # Petit bonus : on logue le résumé de l'IA si dispo
+            try:
+                summary = resp.json().get("analyse", {}).get("summary", "")
+                log.info(f"   🧠 Résumé IA : {summary}")
+            except:
+                pass
         else:
             log.info(f"   ⚠️ Backend erreur {resp.status_code} — {resp.text[:200]}")
     except Exception as e:
@@ -162,6 +194,7 @@ def watch_emails():
                 email_ids = []
             else:
                 all_ids = messages[0].split()
+                # On traite les plus récents en dernier
                 email_ids = all_ids[-MAX_EMAILS_PER_LOOP:]
 
             if email_ids:
