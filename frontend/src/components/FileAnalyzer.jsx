@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, RefreshCw, FileCheck, Trash2 } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, RefreshCw, FileCheck, Trash2, Eye } from "lucide-react";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 
@@ -66,6 +66,28 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
+  // --- 👁️ NOUVELLE FONCTION : VISIONNER ---
+  const handleView = async (id) => {
+    if (!authFetch) return;
+    try {
+        // On appelle l'endpoint "view" du backend
+        const res = await authFetch(`${API_BASE}/api/files/view/${id}`);
+        if (res.ok) {
+            // On transforme la réponse en "Blob" (fichier en mémoire)
+            const blob = await res.blob();
+            // On crée une URL temporaire locale
+            const url = window.URL.createObjectURL(blob);
+            // On ouvre cette URL dans un nouvel onglet
+            window.open(url, '_blank');
+        } else {
+            alert("Impossible de visualiser le fichier.");
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Erreur lors de l'ouverture.");
+    }
+  };
+
   const handleDelete = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
     try {
@@ -90,25 +112,21 @@ const FileAnalysis = ({ token, authFetch }) => {
     return { bg: "rgba(148, 163, 184, 0.2)", text: "#cbd5e1" };
   };
 
-  // --- 🧠 LOGIQUE INTELLIGENTE : SOLVABILITÉ ---
+  // --- LOGIQUE SOLVABILITÉ ---
   const renderSolvencyBadge = (doc) => {
-    // 1. Nettoyage du montant (enlève les €, espaces, etc)
     const rawString = String(doc.amount).replace(/[^0-9.,]/g, "").replace(",", ".");
     const rawAmount = parseFloat(rawString);
     
     const type = (doc.file_type || "").toLowerCase();
     const isIncome = type.includes("paie") || type.includes("salaire") || type.includes("impôt");
 
-    // Si ce n'est pas un revenu ou si le montant est illisible, on affiche juste le texte
     if (!isIncome || isNaN(rawAmount) || rawAmount === 0) {
       return <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>;
     }
 
-    // SCÉNARIO : Loyer fictif de 600€ (Tu pourras le rendre dynamique plus tard)
     const LOYER_REFERENCE = 600;
     const ratio = rawAmount / LOYER_REFERENCE;
 
-    // Règle des 3 fois le loyer
     if (ratio >= 3) {
       return (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
@@ -242,7 +260,6 @@ const FileAnalysis = ({ token, authFetch }) => {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
                   <span style={{ color: "#94a3b8" }}>Revenu / Montant</span>
-                  {/* On utilise aussi la logique ici pour l'affichage live */}
                   <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: "1.1rem" }}>{analysis.amount}</span>
                 </div>
               </div>
@@ -301,13 +318,24 @@ const FileAnalysis = ({ token, authFetch }) => {
                       </td>
                       <td style={{ padding: "15px", color: "#cbd5e1" }}>{doc.sender}</td>
                       
-                      {/* ✅ COLONNE INTELLIGENTE */}
+                      {/* COLONNE INTELLIGENTE */}
                       <td style={{ padding: "15px", textAlign: "right" }}>
                         {renderSolvencyBadge(doc)}
                       </td>
                       
+                      {/* ACTIONS */}
                       <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
                         <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                            {/* BOUTON VISIONNER */}
+                            <button 
+                              onClick={() => handleView(doc.id)} 
+                              style={{ background: "#3b82f6", color: "white", border: "none", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }}
+                              title="Visionner"
+                            >
+                              <Eye size={16} />
+                            </button>
+
+                            {/* BOUTON TÉLÉCHARGER */}
                             <a 
                               href={`${API_BASE}/api/files/download/${doc.id}`} 
                               target="_blank" 
@@ -317,6 +345,8 @@ const FileAnalysis = ({ token, authFetch }) => {
                             >
                               <Download size={16} />
                             </a>
+
+                            {/* BOUTON SUPPRIMER */}
                             <button 
                               onClick={() => handleDelete(doc.id)} 
                               style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }}
