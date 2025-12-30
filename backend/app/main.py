@@ -6,6 +6,7 @@ import io
 import shutil
 import secrets
 import time
+import re # ✅ Ajout pour nettoyer l'alias
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +65,6 @@ ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
 # --- DEPENDANCES SAAS ---
-# Cette fonction remplace get_current_user pour récupérer l'objet DB complet (avec agency_id)
 async def get_current_user_db(token_payload: dict = Depends(get_current_user_token), db: Session = Depends(get_db)) -> User:
     email = token_payload.get("sub") or token_payload.get("email")
     if not email:
@@ -151,7 +151,6 @@ async def analyze_document_logic(file_path: str, filename: str):
         return {"summary": "Erreur analyse", "type": "Erreur"}
 
 async def analyze_email_logic(req, company_name, db: Session, agency_id: int, attachment_summary=""):
-    # RAG : On ne regarde que les fichiers DE L'AGENCE
     last_files = db.query(FileAnalysis).filter(FileAnalysis.agency_id == agency_id).order_by(FileAnalysis.id.desc()).limit(5).all()
     
     files_context = ""
@@ -334,8 +333,8 @@ def on_startup():
     # Création Super Admin par défaut
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
-        # Créer Agence par défaut
-        default_agency = Agency(name="CipherFlow HQ")
+        # Créer Agence par défaut (Admin)
+        default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
         db.add(default_agency)
         db.commit()
         
@@ -356,29 +355,36 @@ async def register(req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
     
     # SAAS AUTO-ONBOARDING :
-    # 1. On crée une agence pour ce nouvel utilisateur
     agency_name = f"Agence de {req.email.split('@')[0]}"
+    
+    # ✅ GÉNÉRATION ALIAS AUTOMATIQUE
+    # On prend le début de l'email, on nettoie les caractères spéciaux
+    clean_alias = re.sub(r'[^a-zA-Z0-9]', '', req.email.split('@')[0]).lower()
+    
+    # On vérifie si l'alias est pris, sinon on ajoute un timestamp
+    if db.query(Agency).filter(Agency.email_alias == clean_alias).first():
+        clean_alias = f"{clean_alias}{int(time.time())}"
+
     # Check doublon nom agence
     if db.query(Agency).filter(Agency.name == agency_name).first():
         agency_name = f"{agency_name} ({int(time.time())})"
     
-    new_agency = Agency(name=agency_name)
+    # Ajout de l'alias
+    new_agency = Agency(name=agency_name, email_alias=clean_alias)
     db.add(new_agency)
     db.commit()
     db.refresh(new_agency)
     
-    # 2. On crée le User Admin de cette agence
     new_user = User(
         email=req.email, 
         hashed_password=get_password_hash(req.password),
-        agency_id=new_agency.id, # LIEN CRITIQUE
+        agency_id=new_agency.id,
         role=UserRole.AGENCY_ADMIN
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     
-    # 3. On initialise les settings par défaut
     default_settings = AppSettings(
         agency_id=new_agency.id,
         company_name=agency_name,
@@ -396,7 +402,6 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
     
-    # On pourrait injecter 'aid' (agency_id) dans le token ici si on modifie auth.py
     return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
 
 # --- WEBHOOK EMAIL (ROUTAGE MULTI-AGENCE) ---
@@ -405,19 +410,33 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid Secret")
     
-    # 1. IDENTIFIER L'AGENCE DESTINATAIRE
-    # Logique simple : on cherche une agence par défaut ou on route selon le 'to_email'
+    # 1. IDENTIFIER L'AGENCE DESTINATAIRE (ROUTAGE INTELLIGENT)
     target_agency = None
     
-    # (Futur) Ici on pourra chercher dans la table Agency si 'email_ingestion_alias' == req.to_email
-    
-    # Pour le MVP : On prend la première agence trouvée (ou une par défaut 'HQ')
-    # Ceci est temporaire en attendant le système d'alias complet
-    target_agency = db.query(Agency).first()
+    # On regarde à QUI l'email a été envoyé (ex: "monprojet+agenceB@gmail.com")
+    recipient = req.to_email.lower().strip() if req.to_email else ""
+    print(f"📨 Routage pour le destinataire : {recipient}")
+
+    # Recherche par alias exact
+    # On cherche si une partie de l'email correspond à un alias d'agence
+    if "+" in recipient:
+        try:
+            # Extrait ce qu'il y a entre '+' et '@'
+            alias_part = recipient.split("+")[1].split("@")[0]
+            print(f"🔎 Recherche de l'alias : {alias_part}")
+            target_agency = db.query(Agency).filter(Agency.email_alias == alias_part).first()
+        except:
+            pass
+
+    # Si pas trouvé via alias, fallback
+    if not target_agency:
+        print("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
+        # Fallback : La première agence créée (souvent l'Admin)
+        target_agency = db.query(Agency).order_by(Agency.id.asc()).first()
     
     if not target_agency:
-        # Fallback de sécurité
-        raise HTTPException(500, "Aucune agence configurée pour recevoir les emails.")
+        # Fallback ultime
+        raise HTTPException(500, "Aucune agence configurée.")
 
     agency_id = target_agency.id
     
@@ -447,8 +466,8 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                         extracted_date=str(doc_analysis.get("date", "")),
                         amount=str(doc_analysis.get("amount", "0")),
                         summary=str(doc_analysis.get("summary", "Reçu par email")),
-                        owner_id=None, # Pas de user spécifique, c'est l'agence
-                        agency_id=agency_id # ✅ IMPORTANT
+                        owner_id=None,
+                        agency_id=agency_id # ✅
                     )
                     db.add(new_file)
                     db.commit()
@@ -468,7 +487,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp_name, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
-        agency_id=agency_id, # ✅ CLOISONNEMENT
+        agency_id=agency_id, # ✅
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -522,7 +541,6 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    # Seuls les emails de SON agence
     return db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == current_user.agency_id).order_by(EmailAnalysis.id.desc()).all()
 
 @app.delete("/email/history/{email_id}")
@@ -538,7 +556,6 @@ async def delete_history(email_id: int, db: Session = Depends(get_db), current_u
 async def get_settings_route(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
     s = db.query(AppSettings).filter(AppSettings.agency_id == current_user.agency_id).first()
     if not s:
-        # Création lazy si inexistant
         s = AppSettings(agency_id=current_user.agency_id, company_name="Mon Agence")
         db.add(s)
         db.commit()
@@ -572,7 +589,6 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
             encoded = img_str
         
         img = Image.open(io.BytesIO(base64.b64decode(encoded)))
-        # Resize safe
         if img.width > 800:
             ratio = 800 / float(img.width)
             img = img.resize((800, int(float(img.height) * ratio)), Image.Resampling.LANCZOS)
@@ -602,12 +618,12 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
         comp, 
         db,
-        aid # Contexte
+        aid
     )
     reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
     
     new_email = EmailAnalysis(
-        agency_id=aid, # ✅
+        agency_id=aid,
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -656,7 +672,7 @@ async def analyze_file(
             amount=str(data.get("amount", "0")),
             summary=str(data.get("summary", "Pas de résumé")),
             owner_id=current_user.id,
-            agency_id=current_user.agency_id # ✅
+            agency_id=current_user.agency_id
         )
         db.add(new_analysis)
         db.commit()
@@ -669,8 +685,6 @@ async def analyze_file(
 
 @app.get("/api/files/history")
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    # Voir les fichiers de TOUTE l'agence ou juste les siens ? 
-    # Pour l'instant : TOUTE l'agence.
     return db.query(FileAnalysis).filter(FileAnalysis.agency_id == current_user.agency_id).order_by(FileAnalysis.id.desc()).all()
 
 @app.delete("/api/files/{file_id}")
@@ -700,7 +714,7 @@ async def gen_inv(req: InvoiceRequest, db: Session = Depends(get_db), current_us
     })
     
     db.add(Invoice(
-        agency_id=aid, # ✅
+        agency_id=aid,
         owner_id=current_user.id,
         reference=req.invoice_number,
         client_name=req.client_name,
@@ -741,6 +755,5 @@ async def download_file(file_id: int, db: Session = Depends(get_db)):
 
 @app.post("/email/send")
 async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    # Pas de contrainte forte ici, sauf si on veut limiter le spam par agence
     send_email_via_resend(req.to_email, req.subject, req.body)
     return {"status": "sent"}
