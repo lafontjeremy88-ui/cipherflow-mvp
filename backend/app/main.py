@@ -6,6 +6,7 @@ import io
 import shutil
 import secrets
 import time
+from fastapi.security import OAuth2PasswordRequestForm
 import re # ✅ Ajout pour nettoyer l'alias
 from typing import Optional, List
 from datetime import datetime
@@ -467,6 +468,16 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
     
     return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
+
+@app.post("/auth/token", response_model=TokenResponse)
+async def token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # Swagger envoie username/password → on map username -> email
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Identifiants invalides")
+
+    token = create_access_token({"sub": user.email})
+    return TokenResponse(access_token=token, token_type="bearer", user_email=user.email)
 
 # --- WEBHOOK EMAIL (ROUTAGE MULTI-AGENCE) ---
 @app.post("/webhook/email", response_model=EmailProcessResponse)

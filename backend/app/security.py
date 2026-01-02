@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 ALGORITHM = "HS256"
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 def create_access_token(data: dict, expires_minutes: int = 60 * 24 * 7):
     if not JWT_SECRET_KEY:
