@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Send,
@@ -19,26 +19,36 @@ import {
 import Login from "./components/Login";
 import Register from "./components/Register";
 import FileAnalyzer from "./components/FileAnalyzer";
-import TenantFilesPanel from "./components/TenantFilesPanel";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
+import DashboardPage from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+const API_BASE =
+  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
+
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
 
+/**
+ * App
+ * - /auth => page login/register
+ * - /oauth/callback => retour Google OAuth
+ * - / => app protégée
+ */
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem(LS_TOKEN));
   const [userEmail, setUserEmail] = useState(localStorage.getItem(LS_EMAIL));
-  const [showRegister, setShowRegister] = useState(false);
 
   const handleAuthSuccess = (newToken, email) => {
     localStorage.setItem(LS_TOKEN, newToken);
-    localStorage.setItem(LS_EMAIL, email);
     setToken(newToken);
-    setUserEmail(email);
+
+    if (email) {
+      localStorage.setItem(LS_EMAIL, email);
+      setUserEmail(email);
+    }
   };
 
   const handleLogout = () => {
@@ -50,33 +60,25 @@ export default function App() {
 
   return (
     <Routes>
-      {/* Callback Google OAuth */}
+      {/* Google OAuth callback */}
       <Route
         path="/oauth/callback"
-        element={<OAuthCallback onAuthSuccess={handleAuthSuccess} />}
+        element={<OAuthCallback onSuccess={handleAuthSuccess} />}
       />
 
-      {/* Login/Register */}
+      {/* Auth page */}
       <Route
         path="/auth"
         element={
-          <AppShell token={token}>
-            {showRegister ? (
-              <Register
-                onSuccess={() => setShowRegister(false)}
-                onGoLogin={() => setShowRegister(false)}
-              />
-            ) : (
-              <Login
-                onAuthSuccess={handleAuthSuccess}
-                onGoRegister={() => setShowRegister(true)}
-              />
-            )}
-          </AppShell>
+          token ? (
+            <Navigate to="/" replace />
+          ) : (
+            <AuthPage onAuthSuccess={handleAuthSuccess} />
+          )
         }
       />
 
-      {/* App */}
+      {/* Protected App */}
       <Route
         path="/*"
         element={
@@ -87,12 +89,18 @@ export default function App() {
           )
         }
       />
+
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
-function AppShell({ token, children }) {
-  if (token) return <Navigate to="/" replace />;
+/**
+ * AuthPage: Login/Register toggle
+ * IMPORTANT: Login.jsx & Register.jsx attendent la prop "onLogin"
+ */
+function AuthPage({ onAuthSuccess }) {
+  const [showRegister, setShowRegister] = useState(false);
 
   return (
     <div
@@ -123,28 +131,49 @@ function AppShell({ token, children }) {
           boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.5)",
         }}
       >
-        {children}
+        {showRegister ? (
+          <Register onLogin={onAuthSuccess} />
+        ) : (
+          <Login onLogin={onAuthSuccess} />
+        )}
+
+        <div
+          style={{
+            marginTop: "1.5rem",
+            paddingTop: "1.5rem",
+            borderTop: "1px solid #334155",
+            textAlign: "center",
+          }}
+        >
+          <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "10px" }}>
+            {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
+          </p>
+
+          <button
+            onClick={() => setShowRegister(!showRegister)}
+            style={{
+              background: "rgba(99, 102, 241, 0.1)",
+              color: "#818cf8",
+              border: "none",
+              padding: "10px 20px",
+              borderRadius: "8px",
+              cursor: "pointer",
+              fontWeight: "bold",
+              width: "100%",
+            }}
+          >
+            {showRegister ? "Se connecter" : "Créer un compte gratuitement"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function MainApp({ token, userEmail, onLogout }) {
+  const navigate = useNavigate();
+
   const [activeTab, setActiveTab] = useState("dashboard");
-
-  // Documents sub-view (analyse docs / dossiers locataires)
-  const [documentsView, setDocumentsView] = useState("analyze"); // "analyze" | "tenants"
-
-  // Dashboard stats
-  const [stats, setStats] = useState({
-    processed_emails: 0,
-    high_urgency: 0,
-    generated_invoices: 0,
-    categories: [],
-    recent_activity: [],
-  });
-
-  // History
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
   // Email form
@@ -171,97 +200,75 @@ function MainApp({ token, userEmail, onLogout }) {
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    if (activeTab !== "documents") {
-      setDocumentsView("analyze");
-    }
-  }, [activeTab]);
-
   /**
    * authFetch:
-   * - Ajoute automatiquement Authorization Bearer <token>
-   * - Ajoute Content-Type: application/json seulement si body n'est PAS un FormData
+   * - Ajoute Authorization Bearer <token>
+   * - Si FormData => pas de Content-Type
+   * - Si 401 => logout + redirect /auth
    */
   const authFetch = async (url, options = {}) => {
-    const headers = new Headers(options.headers || {});
-    headers.set("Authorization", `Bearer ${token}`);
+    const headers = {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${token}`,
+    };
 
     const isFormData = options.body instanceof FormData;
-    if (!isFormData && options.body && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
+    if (!isFormData && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (isFormData) {
+      delete headers["Content-Type"];
+      delete headers["content-type"];
     }
 
     const res = await fetch(url, { ...options, headers });
 
     if (res.status === 401) {
-      // Token expiré ou invalide -> logout pour éviter boucle infinie
-      onLogout?.();
-      throw new Error("Session expirée. Merci de vous reconnecter.");
+      onLogout();
+      navigate("/auth");
+      throw new Error("Session expirée, veuillez vous reconnecter.");
     }
 
     return res;
   };
 
-  const fetchDashboardStats = async () => {
+  const handleAnalyse = async () => {
+    setErrorMessage("");
+    setInfoMessage("");
+    setIsAnalyzing(true);
+
     try {
-      const res = await authFetch(`${API_BASE}/dashboard/stats`);
-      if (!res.ok) throw new Error("Erreur récupération stats dashboard");
-      const data = await res.json();
-      setStats(data);
-    } catch (err) {
-      // On ne bloque pas tout si le dashboard échoue
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    fetchDashboardStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleAnalyzeEmail = async () => {
-    try {
-      setIsAnalyzing(true);
-      setErrorMessage("");
-      setInfoMessage("");
-
       const res = await authFetch(`${API_BASE}/email/process`, {
         method: "POST",
         body: JSON.stringify({
-          sender_email: fromEmail,
+          from_email: fromEmail,
           subject,
-          body: content,
+          content,
+          send_email: false,
         }),
       });
 
-      if (!res.ok) throw new Error("Erreur analyse email");
+      if (!res.ok) throw new Error("Erreur serveur lors de l'analyse");
 
       const data = await res.json();
-      setAnalyse(data);
-      setAnalysisId(data?.id || data?.email_id || null);
-
-      setReplySubject(`RE: ${subject}`);
-      setReplyBody(data?.suggested_response_text || "");
-
-      setInfoMessage("Analyse terminée ✅");
-
-      // refresh dashboard
-      fetchDashboardStats();
+      setAnalysisId(data.id ?? data.email_id ?? null);
+      setAnalyse(data.analyse || null);
+      setReplySubject(data.reponse?.subject || "");
+      setReplyBody(data.reponse?.reply || "");
+      setInfoMessage("Analyse terminée !");
     } catch (err) {
-      setErrorMessage(err.message || "Erreur inconnue");
+      setErrorMessage(err?.message || "Erreur inconnue");
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   const handleSendEmail = async () => {
+    setIsSending(true);
+    setErrorMessage("");
+    setInfoMessage("");
+
     try {
-      if (!analysisId) throw new Error("Aucun email analysé à envoyer.");
-
-      setIsSending(true);
-      setErrorMessage("");
-      setInfoMessage("");
-
       const res = await authFetch(`${API_BASE}/email/send`, {
         method: "POST",
         body: JSON.stringify({
@@ -278,11 +285,8 @@ function MainApp({ token, userEmail, onLogout }) {
       setAnalyse(null);
       setAnalysisId(null);
       setContent("");
-
-      // refresh dashboard
-      fetchDashboardStats();
     } catch (err) {
-      setErrorMessage(err.message || "Erreur inconnue");
+      setErrorMessage(err?.message || "Erreur inconnue");
     } finally {
       setIsSending(false);
     }
@@ -301,34 +305,56 @@ function MainApp({ token, userEmail, onLogout }) {
   return (
     <div className="app-container">
       <aside className="sidebar">
-        <div className="sidebar-header">
-          <Zap size={22} />
-          <h2>CipherFlow V2</h2>
+        <div className="logo">
+          <Zap size={28} color="#6366f1" />
+          <span>CipherFlow V2</span>
         </div>
 
-        <div className="user-info">
-          <div className="user-icon">
-            <User size={18} />
-          </div>
-          <div className="user-details">
-            <div className="user-status">Connecté</div>
-            <div className="user-email">{userEmail || "admin@cipherflow.com"}</div>
+        <div
+          style={{
+            padding: "0 20px 20px 20px",
+            marginBottom: "20px",
+            borderBottom: "1px solid #334155",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              color: "#94a3b8",
+              fontSize: "0.85rem",
+            }}
+          >
+            <div style={{ background: "#334155", padding: "8px", borderRadius: "50%" }}>
+              <User size={16} />
+            </div>
+
+            <div>
+              <div style={{ fontWeight: "bold", color: "white" }}>Connecté</div>
+              <div
+                title={userEmail || ""}
+                style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: "140px" }}
+              >
+                {userEmail || "—"}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="nav">
+        <nav>
           <div
             className={`nav-item ${activeTab === "dashboard" ? "active" : ""}`}
             onClick={() => handleSidebarClick("dashboard")}
           >
-            <LayoutDashboard size={20} /> <span>Vue d&apos;ensemble</span>
+            <PieChart size={20} /> <span>Vue d'ensemble</span>
           </div>
 
           <div
             className={`nav-item ${activeTab === "analyze" ? "active" : ""}`}
             onClick={() => handleSidebarClick("analyze")}
           >
-            <Mail size={20} /> <span>Traitement Email</span>
+            <LayoutDashboard size={20} /> <span>Traitement Email</span>
           </div>
 
           <div
@@ -359,10 +385,17 @@ function MainApp({ token, userEmail, onLogout }) {
             <Settings size={20} /> <span>Paramètres</span>
           </div>
 
-          <div className="nav-item logout" onClick={onLogout}>
+          <div
+            className="nav-item"
+            style={{ marginTop: "auto", color: "#f87171" }}
+            onClick={() => {
+              onLogout();
+              navigate("/auth");
+            }}
+          >
             <LogOut size={20} /> <span>Déconnexion</span>
           </div>
-        </div>
+        </nav>
       </aside>
 
       <main className="main-content">
@@ -381,7 +414,7 @@ function MainApp({ token, userEmail, onLogout }) {
           <div
             style={{
               backgroundColor: "rgba(239,68,68,0.2)",
-              color: "rgb(252,165,165)",
+              color: "#f87171",
               padding: "1rem",
               borderRadius: "8px",
               marginBottom: "1rem",
@@ -396,8 +429,8 @@ function MainApp({ token, userEmail, onLogout }) {
         {infoMessage && (
           <div
             style={{
-              backgroundColor: "rgba(34,197,94,0.2)",
-              color: "rgb(134,239,172)",
+              backgroundColor: "rgba(16,185,129,0.2)",
+              color: "#34d399",
               padding: "1rem",
               borderRadius: "8px",
               marginBottom: "1rem",
@@ -409,127 +442,51 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {/* DASHBOARD */}
         {activeTab === "dashboard" && (
-          <div className="dashboard">
-            <div className="kpi-grid">
-              <div className="kpi-card">
-                <div className="kpi-icon">
-                  <Mail size={18} />
-                </div>
-                <div className="kpi-value">{stats.processed_emails ?? 0}</div>
-                <div className="kpi-label">Emails Traités</div>
-              </div>
-
-              <div className="kpi-card">
-                <div className="kpi-icon warning">
-                  <AlertCircle size={18} />
-                </div>
-                <div className="kpi-value">{stats.high_urgency ?? 0}</div>
-                <div className="kpi-label">Urgence Haute</div>
-              </div>
-
-              <div className="kpi-card">
-                <div className="kpi-icon success">
-                  <FileText size={18} />
-                </div>
-                <div className="kpi-value">{stats.generated_invoices ?? 0}</div>
-                <div className="kpi-label">Quittances Générées</div>
-              </div>
-            </div>
-
-            <div className="dashboard-grid">
-              <div className="card">
-                <h3 style={{ marginBottom: "1rem", display: "flex", gap: 8, alignItems: "center" }}>
-                  <PieChart size={18} /> Répartition par Catégorie
-                </h3>
-
-                {/* Ici tu peux garder ton composant donut existant si tu en as un.
-                    Sinon, on affiche juste une liste simple. */}
-                <div style={{ opacity: 0.9 }}>
-                  {(stats.categories || []).length === 0 ? (
-                    <p style={{ opacity: 0.7 }}>Aucune donnée.</p>
-                  ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {stats.categories.map((c, idx) => (
-                        <li key={idx}>
-                          {c.name}: {c.value}%
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <h3 style={{ marginBottom: "1rem" }}>📈 Activité Récente</h3>
-                {(stats.recent_activity || []).length === 0 ? (
-                  <p style={{ opacity: 0.7 }}>Aucune activité récente.</p>
-                ) : (
-                  <div className="recent-activity">
-                    {stats.recent_activity.map((a, idx) => (
-                      <div
-                        key={idx}
-                        className="activity-item"
-                        onClick={() => handleNavigation("history", a.id)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <div className="activity-dot" />
-                        <div className="activity-text">
-                          <div className="activity-title">{a.subject}</div>
-                          <div className="activity-meta">
-                            {a.category} • {a.created_at}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <DashboardPage token={token} onNavigate={handleNavigation} authFetch={authFetch} />
         )}
 
-        {/* ANALYZE EMAIL */}
         {activeTab === "analyze" && (
-          <div className="card">
-            <h2 style={{ marginBottom: "1rem" }}>📩 Email du Client</h2>
+          <div className="dashboard-grid">
+            <div className="card">
+              <h2 style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1.5rem" }}>
+                <Mail size={20} color="var(--accent)" /> Email du Client
+              </h2>
 
-            <div className="form-group">
-              <label>Expéditeur</label>
-              <input
-                type="email"
-                value={fromEmail}
-                onChange={(e) => setFromEmail(e.target.value)}
-              />
+              <div className="form-group">
+                <label>Expéditeur</label>
+                <input type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} />
+              </div>
+
+              <div className="form-group">
+                <label>Sujet</label>
+                <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} />
+              </div>
+
+              <div className="form-group">
+                <label>Contenu</label>
+                <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} />
+              </div>
+
+              <button className="btn btn-primary" onClick={handleAnalyse} disabled={isAnalyzing}>
+                {isAnalyzing ? "Analyse..." : "Analyser"} <Zap size={18} />
+              </button>
             </div>
-
-            <div className="form-group">
-              <label>Sujet</label>
-              <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} />
-            </div>
-
-            <div className="form-group">
-              <label>Contenu</label>
-              <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} />
-            </div>
-
-            <button className="btn btn-primary" onClick={handleAnalyzeEmail} disabled={isAnalyzing}>
-              {isAnalyzing ? "Analyse..." : "Analyser ⚡"}
-            </button>
 
             {analyse && (
-              <div style={{ marginTop: "2rem" }}>
-                <div className="card" style={{ marginBottom: "1rem" }}>
-                  <h3 style={{ marginBottom: "1rem" }}>🔎 Résultat</h3>
+              <>
+                <div className="card" style={{ borderColor: "var(--accent)" }}>
+                  <h3 style={{ marginBottom: "1rem" }}>📊 Analyse IA</h3>
 
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <div className="pill">
-                      <span>Catégorie:</span> <strong>{analyse.category}</strong>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                    <div>
+                      <label>Catégorie</label>
+                      <div className="badge badge-info">{analyse.category}</div>
                     </div>
-                    <div className="pill">
-                      <span>Urgence:</span>{" "}
-                      <div className={`urgency-badge urgency-${analyse.urgency?.toLowerCase()}`}>
+
+                    <div>
+                      <label>Urgence</label>
+                      <div className={`badge ${analyse.urgency === "haute" ? "badge-danger" : "badge-success"}`}>
                         {analyse.urgency}
                       </div>
                     </div>
@@ -545,81 +502,39 @@ function MainApp({ token, userEmail, onLogout }) {
                   <h3 style={{ marginBottom: "1rem" }}>✍️ Réponse</h3>
 
                   <div className="form-group">
-                    <label>Sujet</label>
-                    <input
-                      type="text"
-                      value={replySubject}
-                      onChange={(e) => setReplySubject(e.target.value)}
-                    />
+                    <label>Objet</label>
+                    <input type="text" value={replySubject} onChange={(e) => setReplySubject(e.target.value)} />
                   </div>
 
                   <div className="form-group">
-                    <label>Réponse</label>
-                    <textarea
-                      rows={8}
-                      value={replyBody}
-                      onChange={(e) => setReplyBody(e.target.value)}
-                    />
+                    <label>Corps</label>
+                    <textarea rows={10} value={replyBody} onChange={(e) => setReplyBody(e.target.value)} />
                   </div>
 
-                  <button className="btn btn-success" onClick={handleSendEmail} disabled={isSending}>
-                    {isSending ? "Envoi..." : "Valider & Envoyer ✅"}
-                  </button>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button className="btn btn-success" onClick={handleSendEmail} disabled={isSending}>
+                      {isSending ? "Envoi..." : "Envoyer"} <Send size={18} />
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
         )}
 
-        {/* INVOICES */}
         {activeTab === "invoices" && (
-          <div>
+          <div style={{ maxWidth: "1600px", margin: "0 auto" }}>
             <InvoiceGenerator token={token} authFetch={authFetch} />
           </div>
         )}
 
-        {/* DOCUMENTS (2 vues) */}
-        {activeTab === "documents" && (
-          <div>
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                marginBottom: "16px",
-                flexWrap: "wrap",
-              }}
-            >
-              <button
-                onClick={() => setDocumentsView("analyze")}
-                className="btn btn-primary"
-                style={{ opacity: documentsView === "analyze" ? 1 : 0.6 }}
-              >
-                Analyse documents
-              </button>
+        {/* ✅ On GARDE FileAnalyzer (analyse de documents) */}
+        {activeTab === "documents" && <FileAnalyzer token={token} authFetch={authFetch} />}
 
-              <button
-                onClick={() => setDocumentsView("tenants")}
-                className="btn btn-primary"
-                style={{ opacity: documentsView === "tenants" ? 1 : 0.6 }}
-              >
-                Dossiers locataires
-              </button>
-            </div>
-
-            {documentsView === "analyze" && <FileAnalyzer token={token} authFetch={authFetch} />}
-
-            {documentsView === "tenants" && (
-              <TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />
-            )}
-          </div>
-        )}
-
-        {/* HISTORY */}
         {activeTab === "history" && (
           <EmailHistory token={token} initialId={selectedHistoryId} authFetch={authFetch} />
         )}
 
-        {/* SETTINGS */}
         {activeTab === "settings" && <SettingsPanel token={token} authFetch={authFetch} />}
       </main>
     </div>

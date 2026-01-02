@@ -47,7 +47,7 @@ export async function apiFetch(path, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem("cipherflow_token");
     localStorage.removeItem("token");
-    window.location.href = "/login";
+    window.location.href = "/auth";
     return res;
   }
 
