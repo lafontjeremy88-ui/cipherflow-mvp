@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Send,
@@ -14,6 +14,7 @@ import {
   User,
   FolderSearch,
   PieChart,
+  FolderUp,
 } from "lucide-react";
 
 import Login from "./components/Login";
@@ -22,24 +23,18 @@ import FileAnalyzer from "./components/FileAnalyzer";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
 import SettingsPanel from "./components/SettingsPanel";
+import TenantFilesPanel from "./components/TenantFilesPanel";
 import DashboardPage from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
 
-const API_BASE =
-  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
-
+const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
 
-/**
- * App
- * - /auth => page login/register
- * - /oauth/callback => retour Google OAuth
- * - / => app protégée
- */
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem(LS_TOKEN));
   const [userEmail, setUserEmail] = useState(localStorage.getItem(LS_EMAIL));
+  const [showRegister, setShowRegister] = useState(false);
 
   const handleAuthSuccess = (newToken, email) => {
     localStorage.setItem(LS_TOKEN, newToken);
@@ -49,6 +44,8 @@ export default function App() {
       localStorage.setItem(LS_EMAIL, email);
       setUserEmail(email);
     }
+
+    setShowRegister(false);
   };
 
   const handleLogout = () => {
@@ -56,37 +53,24 @@ export default function App() {
     localStorage.removeItem(LS_EMAIL);
     setToken(null);
     setUserEmail(null);
+    setShowRegister(false);
   };
 
   return (
     <Routes>
-      {/* Google OAuth callback */}
-      <Route
-        path="/oauth/callback"
-        element={<OAuthCallback onSuccess={handleAuthSuccess} />}
-      />
+      <Route path="/oauth/callback" element={<OAuthCallback onSuccess={handleAuthSuccess} />} />
 
-      {/* Auth page */}
-      <Route
-        path="/auth"
-        element={
-          token ? (
-            <Navigate to="/" replace />
-          ) : (
-            <AuthPage onAuthSuccess={handleAuthSuccess} />
-          )
-        }
-      />
-
-      {/* Protected App */}
       <Route
         path="/*"
         element={
-          token ? (
-            <MainApp token={token} userEmail={userEmail} onLogout={handleLogout} />
-          ) : (
-            <Navigate to="/auth" replace />
-          )
+          <AppShell
+            token={token}
+            userEmail={userEmail}
+            showRegister={showRegister}
+            setShowRegister={setShowRegister}
+            onAuthSuccess={handleAuthSuccess}
+            onLogout={handleLogout}
+          />
         }
       />
 
@@ -95,84 +79,76 @@ export default function App() {
   );
 }
 
-/**
- * AuthPage: Login/Register toggle
- * IMPORTANT: Login.jsx & Register.jsx attendent la prop "onLogin"
- */
-function AuthPage({ onAuthSuccess }) {
-  const [showRegister, setShowRegister] = useState(false);
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "100vh",
-        background: "#0f172a",
-        padding: "20px",
-      }}
-    >
-      <div style={{ marginBottom: "20px", textAlign: "center" }}>
-        <Zap size={40} color="#6366f1" />
-        <h1 style={{ color: "white", fontSize: "1.5rem", marginTop: "10px" }}>
-          CipherFlow V2
-        </h1>
-      </div>
-
+function AppShell({ token, userEmail, showRegister, setShowRegister, onAuthSuccess, onLogout }) {
+  if (!token) {
+    return (
       <div
         style={{
-          width: "100%",
-          maxWidth: "400px",
-          background: "#1e293b",
-          padding: "2rem",
-          borderRadius: "16px",
-          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.5)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          background: "#0f172a",
+          padding: "20px",
         }}
       >
-        {showRegister ? (
-          <Register onLogin={onAuthSuccess} />
-        ) : (
-          <Login onLogin={onAuthSuccess} />
-        )}
+        <div style={{ marginBottom: "20px", textAlign: "center" }}>
+          <Zap size={40} color="#6366f1" />
+          <h1 style={{ color: "white", fontSize: "1.5rem", marginTop: "10px" }}>
+            CipherFlow V2
+          </h1>
+        </div>
 
         <div
           style={{
-            marginTop: "1.5rem",
-            paddingTop: "1.5rem",
-            borderTop: "1px solid #334155",
-            textAlign: "center",
+            width: "100%",
+            maxWidth: "400px",
+            background: "#1e293b",
+            padding: "2rem",
+            borderRadius: "16px",
+            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.5)",
           }}
         >
-          <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "10px" }}>
-            {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
-          </p>
+          {showRegister ? <Register onLogin={onAuthSuccess} /> : <Login onLogin={onAuthSuccess} />}
 
-          <button
-            onClick={() => setShowRegister(!showRegister)}
+          <div
             style={{
-              background: "rgba(99, 102, 241, 0.1)",
-              color: "#818cf8",
-              border: "none",
-              padding: "10px 20px",
-              borderRadius: "8px",
-              cursor: "pointer",
-              fontWeight: "bold",
-              width: "100%",
+              marginTop: "1.5rem",
+              paddingTop: "1.5rem",
+              borderTop: "1px solid #334155",
+              textAlign: "center",
             }}
           >
-            {showRegister ? "Se connecter" : "Créer un compte gratuitement"}
-          </button>
+            <p style={{ color: "#94a3b8", fontSize: "0.9rem", marginBottom: "10px" }}>
+              {showRegister ? "Déjà un compte ?" : "Pas encore de compte ?"}
+            </p>
+
+            <button
+              onClick={() => setShowRegister(!showRegister)}
+              style={{
+                background: "rgba(99, 102, 241, 0.1)",
+                color: "#818cf8",
+                border: "none",
+                padding: "10px 20px",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                width: "100%",
+              }}
+            >
+              {showRegister ? "Se connecter" : "Créer un compte gratuitement"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  return <MainApp token={token} userEmail={userEmail} onLogout={onLogout} />;
 }
 
 function MainApp({ token, userEmail, onLogout }) {
-  const navigate = useNavigate();
-
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
@@ -203,8 +179,8 @@ function MainApp({ token, userEmail, onLogout }) {
   /**
    * authFetch:
    * - Ajoute Authorization Bearer <token>
-   * - Si FormData => pas de Content-Type
-   * - Si 401 => logout + redirect /auth
+   * - Ajoute Content-Type: application/json seulement si body n'est PAS un FormData
+   * - Déconnecte si 401
    */
   const authFetch = async (url, options = {}) => {
     const headers = {
@@ -216,16 +192,11 @@ function MainApp({ token, userEmail, onLogout }) {
     if (!isFormData && !headers["Content-Type"]) {
       headers["Content-Type"] = "application/json";
     }
-    if (isFormData) {
-      delete headers["Content-Type"];
-      delete headers["content-type"];
-    }
 
     const res = await fetch(url, { ...options, headers });
 
     if (res.status === 401) {
       onLogout();
-      navigate("/auth");
       throw new Error("Session expirée, veuillez vous reconnecter.");
     }
 
@@ -251,13 +222,13 @@ function MainApp({ token, userEmail, onLogout }) {
       if (!res.ok) throw new Error("Erreur serveur lors de l'analyse");
 
       const data = await res.json();
-      setAnalysisId(data.id ?? data.email_id ?? null);
-      setAnalyse(data.analyse || null);
+      setAnalysisId(data.id ?? data.email_id);
+      setAnalyse(data.analyse);
       setReplySubject(data.reponse?.subject || "");
       setReplyBody(data.reponse?.reply || "");
       setInfoMessage("Analyse terminée !");
     } catch (err) {
-      setErrorMessage(err?.message || "Erreur inconnue");
+      setErrorMessage(err.message || "Erreur inconnue");
     } finally {
       setIsAnalyzing(false);
     }
@@ -286,7 +257,7 @@ function MainApp({ token, userEmail, onLogout }) {
       setAnalysisId(null);
       setContent("");
     } catch (err) {
-      setErrorMessage(err?.message || "Erreur inconnue");
+      setErrorMessage(err.message || "Erreur inconnue");
     } finally {
       setIsSending(false);
     }
@@ -333,10 +304,10 @@ function MainApp({ token, userEmail, onLogout }) {
             <div>
               <div style={{ fontWeight: "bold", color: "white" }}>Connecté</div>
               <div
-                title={userEmail || ""}
+                title={userEmail}
                 style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: "140px" }}
               >
-                {userEmail || "—"}
+                {userEmail}
               </div>
             </div>
           </div>
@@ -364,11 +335,20 @@ function MainApp({ token, userEmail, onLogout }) {
             <FileText size={20} /> <span>Quittances & Loyers</span>
           </div>
 
+          {/* ✅ Dossiers locataires = tenant-files (création depuis email_id) */}
           <div
-            className={`nav-item ${activeTab === "documents" ? "active" : ""}`}
-            onClick={() => handleSidebarClick("documents")}
+            className={`nav-item ${activeTab === "tenantFiles" ? "active" : ""}`}
+            onClick={() => handleSidebarClick("tenantFiles")}
           >
             <FolderSearch size={20} /> <span>Dossiers Locataires</span>
+          </div>
+
+          {/* ✅ Analyse de documents (on garde FileAnalyzer mais dans un onglet séparé) */}
+          <div
+            className={`nav-item ${activeTab === "docAnalysis" ? "active" : ""}`}
+            onClick={() => handleSidebarClick("docAnalysis")}
+          >
+            <FolderUp size={20} /> <span>Analyse Docs</span>
           </div>
 
           <div
@@ -388,10 +368,7 @@ function MainApp({ token, userEmail, onLogout }) {
           <div
             className="nav-item"
             style={{ marginTop: "auto", color: "#f87171" }}
-            onClick={() => {
-              onLogout();
-              navigate("/auth");
-            }}
+            onClick={onLogout}
           >
             <LogOut size={20} /> <span>Déconnexion</span>
           </div>
@@ -404,7 +381,8 @@ function MainApp({ token, userEmail, onLogout }) {
             {activeTab === "dashboard" && "Tableau de Bord"}
             {activeTab === "analyze" && "Traitement Intelligent"}
             {activeTab === "invoices" && "Générateur de Quittances"}
-            {activeTab === "documents" && "Analyse de Documents"}
+            {activeTab === "tenantFiles" && "Dossiers Locataires"}
+            {activeTab === "docAnalysis" && "Analyse de Documents"}
             {activeTab === "history" && "Historique des Activités"}
             {activeTab === "settings" && "Paramètres du SaaS"}
           </h1>
@@ -503,7 +481,11 @@ function MainApp({ token, userEmail, onLogout }) {
 
                   <div className="form-group">
                     <label>Objet</label>
-                    <input type="text" value={replySubject} onChange={(e) => setReplySubject(e.target.value)} />
+                    <input
+                      type="text"
+                      value={replySubject}
+                      onChange={(e) => setReplySubject(e.target.value)}
+                    />
                   </div>
 
                   <div className="form-group">
@@ -528,8 +510,17 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {/* ✅ On GARDE FileAnalyzer (analyse de documents) */}
-        {activeTab === "documents" && <FileAnalyzer token={token} authFetch={authFetch} />}
+        {/* ✅ Dossiers Locataires = tenant-files */}
+        {activeTab === "tenantFiles" && (
+          <TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />
+        )}
+
+        {/* ✅ Analyse de documents (FileAnalyzer conservé) */}
+        {activeTab === "docAnalysis" && (
+          <div style={{ maxWidth: "1600px", margin: "0 auto" }}>
+            <FileAnalyzer authFetch={authFetch} apiBase={API_BASE} />
+          </div>
+        )}
 
         {activeTab === "history" && (
           <EmailHistory token={token} initialId={selectedHistoryId} authFetch={authFetch} />

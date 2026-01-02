@@ -1,410 +1,324 @@
 import React, { useEffect, useMemo, useState } from "react";
-import FileAnalyzer from "./FileAnalyzer";
 
 /**
  * TenantFilesPanel
- * - Garde l'analyse de documents (FileAnalyzer)
- * - Ajoute la gestion des "dossiers locataires" (tenant-files)
+ * - Liste des dossiers locataires (tenant-files)
+ * - Création / liaison d'un dossier à partir d'un email_id (POST /tenant-files/from-email/{email_id})
+ * - Affichage du détail du dossier sélectionné
  *
- * Requiert :
- * - authFetch(url, options) -> fetch avec Authorization Bearer déjà géré
- * - apiBase (optionnel) -> base URL backend, ex: https://cipherflow-mvp-production.up.railway.app
- *
- * Endpoints utilisés :
- * - GET    /tenant-files
- * - GET    /tenant-files/{tenant_id}
- * - POST   /tenant-files/from-email/{email_id}
+ * Props:
+ * - authFetch: (url, options) => fetch avec Authorization Bearer + gestion 401
+ * - apiBase: string (ex: https://cipherflow-mvp-production.up.railway.app)
  */
-export default function TenantFilesPanel({ authFetch, apiBase = "" }) {
-  const [items, setItems] = useState([]);
-  const [selected, setSelected] = useState(null);
-
-  const [loadingList, setLoadingList] = useState(false);
-  const [loadingOne, setLoadingOne] = useState(false);
-  const [creating, setCreating] = useState(false);
-
+export default function TenantFilesPanel({ authFetch, apiBase }) {
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
 
-  const [emailId, setEmailId] = useState("");
+  const [tenantFiles, setTenantFiles] = useState([]);
+  const [selectedTenantId, setSelectedTenantId] = useState(null);
+  const selectedTenant = useMemo(
+    () => tenantFiles.find((t) => t.id === selectedTenantId) || null,
+    [tenantFiles, selectedTenantId]
+  );
 
-  const base = useMemo(() => (apiBase || "").replace(/\/+$/, ""), [apiBase]);
+  // Emails (pour créer/lier un dossier)
+  const [emails, setEmails] = useState([]);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [selectedEmailId, setSelectedEmailId] = useState("");
 
-  const safeUrl = (path) => {
-    if (!path.startsWith("/")) path = "/" + path;
-    return `${base}${path}`;
-  };
+  // Détail d’un dossier (plus fiable que la liste si tu veux des champs complets)
+  const [tenantDetail, setTenantDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
-  const resetMessages = () => {
+  const safeApiBase = apiBase?.replace(/\/$/, "");
+
+  const fetchTenantFiles = async () => {
     setError("");
-    setInfo("");
-  };
-
-  const fetchList = async () => {
-    resetMessages();
-    setLoadingList(true);
+    setLoading(true);
     try {
-      const res = await authFetch(safeUrl("/tenant-files"));
+      const res = await authFetch(`${safeApiBase}/tenant-files`, { method: "GET" });
       if (!res.ok) {
-        const t = await safeReadText(res);
-        throw new Error(t || `Erreur ${res.status} lors du chargement des dossiers`);
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Erreur API tenant-files (${res.status}) ${txt}`);
       }
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : []);
+      setTenantFiles(Array.isArray(data) ? data : []);
+      // auto-select le 1er si rien sélectionné
+      if (!selectedTenantId && Array.isArray(data) && data.length > 0) {
+        setSelectedTenantId(data[0].id);
+      }
     } catch (e) {
-      setError(e?.message || "Impossible de charger les dossiers.");
+      setError(e?.message || "Erreur lors du chargement des dossiers.");
     } finally {
-      setLoadingList(false);
+      setLoading(false);
     }
   };
 
-  const fetchOne = async (tenantId) => {
-    resetMessages();
-    setLoadingOne(true);
+  const fetchEmails = async () => {
+    setEmailLoading(true);
     try {
-      const res = await authFetch(safeUrl(`/tenant-files/${tenantId}`));
+      // Endpoint vu dans ton swagger: GET /email/history
+      const res = await authFetch(`${safeApiBase}/email/history`, { method: "GET" });
       if (!res.ok) {
-        const t = await safeReadText(res);
-        throw new Error(t || `Dossier introuvable (HTTP ${res.status})`);
+        // Si ton backend a un autre endpoint, tu verras l’erreur ici
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Erreur API email/history (${res.status}) ${txt}`);
       }
       const data = await res.json();
-      setSelected(data);
+      setEmails(Array.isArray(data) ? data : []);
+      if (!selectedEmailId && Array.isArray(data) && data.length > 0) {
+        setSelectedEmailId(String(data[0].id));
+      }
     } catch (e) {
-      setError(e?.message || "Impossible d’ouvrir ce dossier.");
-      setSelected(null);
+      // On ne bloque pas l’écran si email/history n’est pas dispo
+      console.error(e);
+      setEmails([]);
     } finally {
-      setLoadingOne(false);
+      setEmailLoading(false);
     }
   };
 
-  const createFromEmail = async () => {
-    resetMessages();
+  const fetchTenantDetail = async (tenantId) => {
+    if (!tenantId) return;
+    setDetailLoading(true);
+    setTenantDetail(null);
+    setError("");
+    try {
+      const res = await authFetch(`${safeApiBase}/tenant-files/${tenantId}`, { method: "GET" });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Erreur API tenant-files/${tenantId} (${res.status}) ${txt}`);
+      }
+      const data = await res.json();
+      setTenantDetail(data);
+    } catch (e) {
+      setError(e?.message || "Erreur lors du chargement du dossier.");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
-    const parsed = Number(emailId);
-    if (!emailId || Number.isNaN(parsed) || parsed <= 0) {
-      setError("Entre un email_id valide (ex: 7) pour créer/lier un dossier.");
+  const handleCreateFromEmail = async () => {
+    setError("");
+    const emailIdNum = Number(selectedEmailId);
+    if (!emailIdNum || Number.isNaN(emailIdNum)) {
+      setError("Choisis un email valide (email_id).");
       return;
     }
 
-    setCreating(true);
+    setLoading(true);
     try {
-      const res = await authFetch(safeUrl(`/tenant-files/from-email/${parsed}`), {
+      // Endpoint vu dans ton swagger: POST /tenant-files/from-email/{email_id}
+      const res = await authFetch(`${safeApiBase}/tenant-files/from-email/${emailIdNum}`, {
         method: "POST",
+        body: JSON.stringify({}), // body vide côté backend OK (mais on garde JSON pour certains middlewares)
       });
 
       if (!res.ok) {
-        const t = await safeReadText(res);
-        throw new Error(t || `Erreur ${res.status} lors de la création du dossier`);
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Création dossier échouée (${res.status}) ${txt}`);
       }
 
-      const created = await res.json();
-      setInfo("Dossier créé / lié à l’email ✅");
-      setEmailId("");
-
-      // refresh list + open created dossier
-      await fetchList();
+      const created = await res.json(); // devrait renvoyer {id, candidate_email, email_ids, ...}
+      // Refresh liste + sélection
+      await fetchTenantFiles();
       if (created?.id) {
-        await fetchOne(created.id);
+        setSelectedTenantId(created.id);
+        await fetchTenantDetail(created.id);
       }
     } catch (e) {
-      setError(e?.message || "Impossible de créer le dossier depuis cet email.");
+      setError(e?.message || "Erreur lors de la création du dossier.");
     } finally {
-      setCreating(false);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchList();
+    if (!safeApiBase) return;
+    fetchTenantFiles();
+    fetchEmails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base]);
+  }, [safeApiBase]);
+
+  useEffect(() => {
+    if (selectedTenantId) {
+      fetchTenantDetail(selectedTenantId);
+    } else {
+      setTenantDetail(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTenantId]);
+
+  const formatDate = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-      {/* ✅ 1) Analyse de documents (on garde) */}
-      <div>
-        <FileAnalyzer authFetch={authFetch} />
-      </div>
+    <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: "16px" }}>
+      {/* Colonne gauche: Liste + création */}
+      <div className="card" style={{ height: "fit-content" }}>
+        <h2 style={{ marginBottom: "10px" }}>📁 Dossiers locataires</h2>
 
-      {/* ✅ 2) Dossiers locataires */}
-      <div
-        style={{
-          background: "#1e293b",
-          border: "1px solid #334155",
-          borderRadius: 16,
-          padding: 16,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h2 style={{ margin: 0, color: "white", fontSize: "1.05rem" }}>📁 Dossiers locataires</h2>
-            <div style={{ color: "#94a3b8", fontSize: "0.9rem", marginTop: 4 }}>
-              Liste des dossiers créés automatiquement à partir des emails.
-            </div>
-          </div>
-
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
           <button
-            onClick={fetchList}
-            disabled={loadingList}
-            style={btnStyle("secondary")}
-            title="Rafraîchir la liste"
+            className="btn btn-primary"
+            onClick={fetchTenantFiles}
+            disabled={loading}
+            style={{ width: "100%" }}
           >
-            {loadingList ? "Chargement..." : "Rafraîchir"}
+            {loading ? "Chargement..." : "Rafraîchir"}
           </button>
         </div>
 
-        {/* Messages */}
-        {(error || info) && (
-          <div style={{ marginTop: 12 }}>
-            {error && (
-              <div style={msgStyle("error")}>
-                {error}
-              </div>
+        <div style={{ borderTop: "1px solid rgba(148,163,184,0.15)", paddingTop: "12px" }}>
+          <h3 style={{ margin: "0 0 8px 0" }}>Créer / lier depuis un email</h3>
+
+          <label style={{ display: "block", fontSize: "0.9rem", color: "#94a3b8" }}>
+            email_id (depuis l’historique)
+          </label>
+
+          <select
+            value={selectedEmailId}
+            onChange={(e) => setSelectedEmailId(e.target.value)}
+            style={{ width: "100%", marginTop: "6px", padding: "10px", borderRadius: "8px" }}
+            disabled={emailLoading || emails.length === 0}
+          >
+            {emails.length === 0 ? (
+              <option value="">(Aucun email trouvé)</option>
+            ) : (
+              emails.slice(0, 50).map((em) => (
+                <option key={em.id} value={String(em.id)}>
+                  #{em.id} — {em.sender_email || "?"} — {em.subject || "(sans sujet)"}
+                </option>
+              ))
             )}
-            {info && (
-              <div style={msgStyle("success")}>
-                {info}
-              </div>
-            )}
+          </select>
+
+          <button
+            className="btn btn-success"
+            onClick={handleCreateFromEmail}
+            disabled={loading || !selectedEmailId}
+            style={{ width: "100%", marginTop: "10px" }}
+          >
+            Créer / Lier le dossier
+          </button>
+
+          <p style={{ marginTop: "10px", color: "#94a3b8", fontSize: "0.85rem" }}>
+            Ça appelle: <code>/tenant-files/from-email/{`{email_id}`}</code>
+          </p>
+        </div>
+
+        <div style={{ marginTop: "14px" }}>
+          <h3 style={{ marginBottom: "8px" }}>Liste</h3>
+
+          {loading && tenantFiles.length === 0 ? (
+            <div style={{ color: "#94a3b8" }}>Chargement...</div>
+          ) : tenantFiles.length === 0 ? (
+            <div style={{ color: "#94a3b8" }}>Aucun dossier pour l’instant.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {tenantFiles.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTenantId(t.id)}
+                  style={{
+                    textAlign: "left",
+                    borderRadius: "10px",
+                    padding: "10px",
+                    cursor: "pointer",
+                    border:
+                      selectedTenantId === t.id
+                        ? "1px solid rgba(99,102,241,0.7)"
+                        : "1px solid rgba(148,163,184,0.15)",
+                    background:
+                      selectedTenantId === t.id
+                        ? "rgba(99,102,241,0.08)"
+                        : "rgba(15,23,42,0.3)",
+                    color: "white",
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>
+                    Dossier #{t.id} — {t.status || "?"}
+                  </div>
+                  <div style={{ fontSize: "0.9rem", color: "#94a3b8" }}>
+                    {t.candidate_email || "(email inconnu)"}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                    {formatDate(t.created_at)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div
+            style={{
+              marginTop: "12px",
+              background: "rgba(239,68,68,0.15)",
+              border: "1px solid rgba(239,68,68,0.35)",
+              padding: "10px",
+              borderRadius: "10px",
+              color: "#f87171",
+              fontSize: "0.95rem",
+            }}
+          >
+            {error}
           </div>
         )}
+      </div>
 
-        {/* Create from email */}
-        <div
-          style={{
-            marginTop: 14,
-            padding: 12,
-            borderRadius: 12,
-            border: "1px dashed #334155",
-            background: "rgba(15,23,42,0.35)",
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ color: "white", fontWeight: 600 }}>Créer / lier un dossier depuis un email_id :</div>
+      {/* Colonne droite: Détail */}
+      <div className="card">
+        <h2 style={{ marginBottom: "10px" }}>🧾 Détail du dossier</h2>
 
-          <input
-            value={emailId}
-            onChange={(e) => setEmailId(e.target.value)}
-            placeholder="ex: 7"
-            style={{
-              height: 38,
-              borderRadius: 10,
-              border: "1px solid #334155",
-              background: "#0b1220",
-              color: "white",
-              padding: "0 12px",
-              width: 140,
-              outline: "none",
-            }}
-          />
+        {!selectedTenant && !tenantDetail ? (
+          <div style={{ color: "#94a3b8" }}>Sélectionne un dossier à gauche.</div>
+        ) : detailLoading ? (
+          <div style={{ color: "#94a3b8" }}>Chargement du dossier...</div>
+        ) : (
+          <div style={{ display: "grid", gap: "10px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: "10px" }}>
+              <div style={{ color: "#94a3b8" }}>ID</div>
+              <div style={{ fontWeight: 700 }}>#{tenantDetail?.id ?? selectedTenant?.id}</div>
 
-          <button
-            onClick={createFromEmail}
-            disabled={creating}
-            style={btnStyle("primary")}
-          >
-            {creating ? "Création..." : "Créer/Lier"}
-          </button>
+              <div style={{ color: "#94a3b8" }}>Statut</div>
+              <div>{tenantDetail?.status ?? selectedTenant?.status ?? "-"}</div>
 
-          <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
-            Astuce : récupère un id depuis <code style={codeStyle}>/email/history</code> dans Swagger.
-          </div>
-        </div>
+              <div style={{ color: "#94a3b8" }}>Email candidat</div>
+              <div>{tenantDetail?.candidate_email ?? selectedTenant?.candidate_email ?? "-"}</div>
 
-        {/* List + details */}
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 14 }}>
-          {/* left list */}
-          <div
-            style={{
-              border: "1px solid #334155",
-              borderRadius: 14,
-              padding: 12,
-              background: "rgba(15,23,42,0.35)",
-              minHeight: 220,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ color: "white", fontWeight: 700 }}>Liste</div>
-              <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>{items.length} dossier(s)</div>
+              <div style={{ color: "#94a3b8" }}>Nom candidat</div>
+              <div>{tenantDetail?.candidate_name ?? "-"}</div>
+
+              <div style={{ color: "#94a3b8" }}>Créé le</div>
+              <div>{formatDate(tenantDetail?.created_at ?? selectedTenant?.created_at)}</div>
+
+              <div style={{ color: "#94a3b8" }}>Emails liés</div>
+              <div>
+                {Array.isArray(tenantDetail?.email_ids) && tenantDetail.email_ids.length > 0
+                  ? tenantDetail.email_ids.join(", ")
+                  : "(aucun)"}
+              </div>
+
+              <div style={{ color: "#94a3b8" }}>Fichiers liés</div>
+              <div>
+                {Array.isArray(tenantDetail?.file_ids) && tenantDetail.file_ids.length > 0
+                  ? tenantDetail.file_ids.join(", ")
+                  : "(aucun)"}
+              </div>
             </div>
 
-            {loadingList ? (
-              <div style={{ color: "#94a3b8" }}>Chargement...</div>
-            ) : items.length === 0 ? (
-              <div style={{ color: "#94a3b8" }}>
-                Aucun dossier pour l’instant. <br />
-                Crée-en un via <b>email_id</b> ci-dessus.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {items.map((it) => (
-                  <button
-                    key={it.id}
-                    onClick={() => fetchOne(it.id)}
-                    style={{
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: "1px solid #334155",
-                      background: selected?.id === it.id ? "rgba(99,102,241,0.18)" : "rgba(2,6,23,0.35)",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ fontWeight: 700 }}>
-                      #{it.id} — {it.candidate_email || "email inconnu"}
-                    </div>
-                    <div style={{ color: "#94a3b8", fontSize: "0.85rem", marginTop: 2 }}>
-                      Statut: {it.status || "?"} • MAJ: {formatDate(it.updated_at)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div style={{ marginTop: "12px", color: "#94a3b8", fontSize: "0.9rem" }}>
+              Ensuite (prochaine étape), on ajoutera l’upload de pièces justificatives vers ce dossier.
+            </div>
           </div>
-
-          {/* right details */}
-          <div
-            style={{
-              border: "1px solid #334155",
-              borderRadius: 14,
-              padding: 12,
-              background: "rgba(15,23,42,0.35)",
-              minHeight: 220,
-            }}
-          >
-            <div style={{ color: "white", fontWeight: 700, marginBottom: 10 }}>Détail</div>
-
-            {loadingOne ? (
-              <div style={{ color: "#94a3b8" }}>Ouverture du dossier...</div>
-            ) : !selected ? (
-              <div style={{ color: "#94a3b8" }}>
-                Sélectionne un dossier à gauche pour voir le détail.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={kvRow()}>
-                  <div style={kStyle}>ID</div>
-                  <div style={vStyle}>{selected.id}</div>
-                </div>
-
-                <div style={kvRow()}>
-                  <div style={kStyle}>Email</div>
-                  <div style={vStyle}>{selected.candidate_email || "—"}</div>
-                </div>
-
-                <div style={kvRow()}>
-                  <div style={kStyle}>Nom</div>
-                  <div style={vStyle}>{selected.candidate_name || "—"}</div>
-                </div>
-
-                <div style={kvRow()}>
-                  <div style={kStyle}>Statut</div>
-                  <div style={vStyle}>{selected.status || "—"}</div>
-                </div>
-
-                <div style={kvRow()}>
-                  <div style={kStyle}>Emails liés</div>
-                  <div style={vStyle}>
-                    {Array.isArray(selected.email_ids) && selected.email_ids.length > 0
-                      ? selected.email_ids.join(", ")
-                      : "—"}
-                  </div>
-                </div>
-
-                <div style={kvRow()}>
-                  <div style={kStyle}>Fichiers liés</div>
-                  <div style={vStyle}>
-                    {Array.isArray(selected.file_ids) && selected.file_ids.length > 0
-                      ? selected.file_ids.join(", ")
-                      : "—"}
-                  </div>
-                </div>
-
-                <div style={{ color: "#94a3b8", fontSize: "0.85rem", marginTop: 8 }}>
-                  Créé: {formatDate(selected.created_at)} • MAJ: {formatDate(selected.updated_at)}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
-
-/* ---------------- helpers ---------------- */
-
-async function safeReadText(res) {
-  try {
-    const txt = await res.text();
-    return txt;
-  } catch {
-    return "";
-  }
-}
-
-function formatDate(value) {
-  if (!value) return "—";
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return String(value);
-    return d.toLocaleString();
-  } catch {
-    return String(value);
-  }
-}
-
-function btnStyle(variant) {
-  const base = {
-    height: 38,
-    padding: "0 14px",
-    borderRadius: 10,
-    border: "1px solid #334155",
-    cursor: "pointer",
-    fontWeight: 700,
-  };
-
-  if (variant === "primary") {
-    return {
-      ...base,
-      background: "#6366f1",
-      color: "white",
-      borderColor: "rgba(99,102,241,0.6)",
-    };
-  }
-
-  return {
-    ...base,
-    background: "rgba(99,102,241,0.12)",
-    color: "#c7d2fe",
-  };
-}
-
-function msgStyle(type) {
-  if (type === "success") {
-    return {
-      background: "rgba(16,185,129,0.16)",
-      border: "1px solid rgba(16,185,129,0.35)",
-      color: "#34d399",
-      padding: "10px 12px",
-      borderRadius: 10,
-      marginBottom: 10,
-    };
-  }
-  return {
-    background: "rgba(239,68,68,0.16)",
-    border: "1px solid rgba(239,68,68,0.35)",
-    color: "#f87171",
-    padding: "10px 12px",
-    borderRadius: 10,
-    marginBottom: 10,
-  };
-}
-
-const kStyle = { color: "#94a3b8", width: 110, flex: "0 0 110px" };
-const vStyle = { color: "white", fontWeight: 600 };
-const codeStyle = { background: "rgba(2,6,23,0.45)", padding: "2px 6px", borderRadius: 6 };
-const kvRow = () => ({ display: "flex", gap: 10, alignItems: "baseline" });
