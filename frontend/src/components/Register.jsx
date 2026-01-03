@@ -1,13 +1,12 @@
 import React, { useState } from "react";
 import { UserPlus, Mail, Lock, ArrowRight } from "lucide-react";
+import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
 
 const Register = ({ onLogin }) => {
-  const [email, setEmail] = useState("");
+  const [email, setEmailState] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const API_URL = import.meta.env.VITE_API_URL;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -15,104 +14,87 @@ const Register = ({ onLogin }) => {
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/auth/register`, {
+      clearAuth();
+
+      const res = await apiPublicFetch("/auth/register", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", // ✅ pour recevoir/envoyer le cookie refresh
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({}));
 
-      if (response.ok) {
-        localStorage.setItem("cipherflow_token", data.access_token);
-        onLogin(data.access_token, data.user_email);
-      } else {
+      if (!res.ok) {
         setError(data?.detail || "Erreur lors de l'inscription");
+        setLoading(false);
+        return;
       }
+
+      setToken(data.access_token);
+      const userEmail = data.user_email || email;
+      setEmail(userEmail);
+
+      onLogin(data.access_token, userEmail);
     } catch (err) {
-      setError("Impossible de joindre le serveur.");
+      setError("Erreur réseau");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "80vh" }}>
-      <div className="card" style={{ width: "100%", maxWidth: "400px", padding: "2rem" }}>
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <div
-            style={{
-              background: "rgba(99, 102, 241, 0.1)",
-              width: "60px",
-              height: "60px",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 1rem",
-            }}
-          >
-            <UserPlus size={30} color="#6366f1" />
-          </div>
-
-          <h2 style={{ fontSize: "1.5rem", fontWeight: "bold", marginBottom: "0.5rem" }}>Créer un compte</h2>
-          <p style={{ color: "#94a3b8" }}>Rejoignez CipherFlow gratuitement</p>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-[#0B1020] text-white">
+      <div className="w-full max-w-md bg-[#121A2F] rounded-2xl p-8 shadow-lg border border-white/10">
+        <div className="flex items-center gap-2 mb-6">
+          <UserPlus className="text-purple-400" />
+          <h1 className="text-2xl font-bold">Créer un compte</h1>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>
-              <Mail size={16} style={{ display: "inline", marginRight: "8px" }} /> Email
-            </label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="votre@email.com"
-            />
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200">
+            {error}
           </div>
+        )}
 
-          <div className="form-group">
-            <label>
-              <Lock size={16} style={{ display: "inline", marginRight: "8px" }} /> Mot de passe
-            </label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-            />
-          </div>
-
-          {error && (
-            <div
-              style={{
-                color: "#ef4444",
-                marginBottom: "1rem",
-                fontSize: "0.9rem",
-                background: "rgba(239, 68, 68, 0.1)",
-                padding: "10px",
-                borderRadius: "8px",
-              }}
-            >
-              {error}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm text-white/70">Email</label>
+            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
+              <Mail className="w-4 h-4 text-white/60" />
+              <input
+                className="bg-transparent w-full outline-none"
+                value={email}
+                onChange={(e) => setEmailState(e.target.value)}
+                type="email"
+                required
+                placeholder="admin@cipherflow.com"
+              />
             </div>
-          )}
+          </div>
 
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
-            {loading ? "Création..." : "S'inscrire"} <ArrowRight size={18} style={{ marginLeft: "8px" }} />
+          <div>
+            <label className="text-sm text-white/70">Mot de passe</label>
+            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
+              <Lock className="w-4 h-4 text-white/60" />
+              <input
+                className="bg-transparent w-full outline-none"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type="password"
+                required
+                placeholder="••••••••"
+              />
+            </div>
+          </div>
+
+          <button
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition rounded-xl py-3 font-semibold disabled:opacity-50"
+            type="submit"
+          >
+            {loading ? "Création..." : "S'inscrire"}
+            <ArrowRight className="w-4 h-4" />
           </button>
         </form>
-
-        <div style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.9rem", color: "#94a3b8" }}>
-          Déjà un compte ?{" "}
-          <a href="#" onClick={() => window.location.reload()} style={{ color: "#6366f1", textDecoration: "none" }}>
-            Se connecter
-          </a>
-        </div>
       </div>
     </div>
   );

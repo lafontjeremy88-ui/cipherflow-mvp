@@ -1,13 +1,12 @@
 import React, { useState } from "react";
 import { Lock, Mail, ArrowRight, Zap } from "lucide-react";
+import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
 
 const Login = ({ onLogin }) => {
-  const [email, setEmail] = useState("");
+  const [email, setEmailState] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const API_URL = import.meta.env.VITE_API_URL;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -15,140 +14,93 @@ const Login = ({ onLogin }) => {
     setError("");
 
     try {
-      const res = await fetch(`${API_URL}/auth/login`, {
+      clearAuth(); // on repart propre
+
+      const res = await apiPublicFetch("/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", // ✅ indispensable pour recevoir/envoyer le cookie refresh
         body: JSON.stringify({ email, password }),
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        let msg = "Identifiants incorrects";
-        try {
-          const dataErr = await res.json();
-          msg = dataErr?.detail || msg;
-        } catch {}
-        throw new Error(msg);
+        setError(data?.detail || "Erreur de connexion");
+        setLoading(false);
+        return;
       }
 
-      const data = await res.json();
-      localStorage.setItem("cipherflow_token", data.access_token);
-      onLogin(data.access_token, data.user_email);
+      // access token (stocké local)
+      setToken(data.access_token);
+
+      // email (optionnel)
+      const userEmail = data.user_email || email;
+      setEmail(userEmail);
+
+      // remonte au parent
+      onLogin(data.access_token, userEmail);
     } catch (err) {
-      setError(err.message || "Erreur de connexion");
+      setError("Erreur réseau");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = () => {
-    window.location.href = `${API_URL}/auth/google/login`;
-  };
-
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#0f172a",
-        color: "white",
-      }}
-    >
-      <div className="card" style={{ width: "100%", maxWidth: "400px", padding: "2.5rem" }}>
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <div
-            style={{
-              display: "inline-flex",
-              padding: "12px",
-              borderRadius: "50%",
-              backgroundColor: "rgba(99, 102, 241, 0.1)",
-              marginBottom: "1rem",
-            }}
-          >
-            <Zap size={32} color="#6366f1" />
-          </div>
-
-          <h1 style={{ fontSize: "1.5rem", fontWeight: "bold", margin: 0 }}>CipherFlow</h1>
-          <p style={{ color: "#94a3b8", marginTop: "0.5rem" }}>Connexion à l'espace pro</p>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-[#0B1020] text-white">
+      <div className="w-full max-w-md bg-[#121A2F] rounded-2xl p-8 shadow-lg border border-white/10">
+        <div className="flex items-center gap-2 mb-6">
+          <Zap className="text-purple-400" />
+          <h1 className="text-2xl font-bold">CipherFlow</h1>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>Email</label>
-            <div style={{ position: "relative" }}>
-              <Mail size={18} style={{ position: "absolute", left: "12px", top: "12px", color: "#94a3b8" }} />
+        <p className="text-white/70 mb-6">Connexion à l’espace pro</p>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm text-white/70">Email</label>
+            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
+              <Mail className="w-4 h-4 text-white/60" />
               <input
-                type="email"
+                className="bg-transparent w-full outline-none"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{ paddingLeft: "40px" }}
-                placeholder="admin@cipherflow.com"
+                onChange={(e) => setEmailState(e.target.value)}
+                type="email"
                 required
+                placeholder="admin@cipherflow.com"
               />
             </div>
           </div>
 
-          <div className="form-group">
-            <label>Mot de passe</label>
-            <div style={{ position: "relative" }}>
-              <Lock size={18} style={{ position: "absolute", left: "12px", top: "12px", color: "#94a3b8" }} />
+          <div>
+            <label className="text-sm text-white/70">Mot de passe</label>
+            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
+              <Lock className="w-4 h-4 text-white/60" />
               <input
-                type="password"
+                className="bg-transparent w-full outline-none"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                style={{ paddingLeft: "40px" }}
-                placeholder="••••••••"
+                type="password"
                 required
+                placeholder="••••••••"
               />
             </div>
           </div>
 
-          {error && (
-            <div
-              style={{
-                backgroundColor: "rgba(239, 68, 68, 0.1)",
-                color: "#f87171",
-                padding: "0.75rem",
-                borderRadius: "8px",
-                marginBottom: "1.5rem",
-                fontSize: "0.9rem",
-                textAlign: "center",
-              }}
-            >
-              {error}
-            </div>
-          )}
-
           <button
-            type="submit"
-            className="btn btn-primary"
-            style={{ width: "100%", justifyContent: "center" }}
             disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition rounded-xl py-3 font-semibold disabled:opacity-50"
+            type="submit"
           >
-            {loading ? "Connexion..." : "Se connecter"} <ArrowRight size={18} />
+            {loading ? "Connexion..." : "Se connecter"}
+            <ArrowRight className="w-4 h-4" />
           </button>
         </form>
-
-        <div style={{ marginTop: "1.5rem" }}>
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            style={{
-              width: "100%",
-              padding: "0.75rem",
-              borderRadius: "8px",
-              border: "1px solid #334155",
-              backgroundColor: "#020617",
-              color: "#e5e7eb",
-              cursor: "pointer",
-              fontSize: "0.95rem",
-            }}
-          >
-            Continuer avec Google
-          </button>
-        </div>
       </div>
     </div>
   );
