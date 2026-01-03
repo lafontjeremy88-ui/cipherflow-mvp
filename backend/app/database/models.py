@@ -78,6 +78,32 @@ class User(Base):
 
     agency = relationship("Agency", back_populates="users")
 
+    # ✅ NEW: refresh tokens (logout/révocation)
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+
+# ✅ NEW: TABLE DES REFRESH TOKENS
+class RefreshToken(Base):
+    """
+    - On ne stocke JAMAIS le refresh token en clair.
+    - On stocke un HASH sha256 (token_hash).
+    - Logout = revoked_at rempli.
+    """
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="refresh_tokens")
+
 
 # --- SETTINGS ---
 class AppSettings(Base):

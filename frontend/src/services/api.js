@@ -1,12 +1,23 @@
 // frontend/src/services/api.js
 const API_URL = import.meta.env.VITE_API_URL;
 
+const LS_TOKEN = "cipherflow_token";
+
 function getToken() {
   return (
-    localStorage.getItem("cipherflow_token") || // ✅ ton token actuel
-    localStorage.getItem("token") ||            // fallback ancien
+    localStorage.getItem(LS_TOKEN) ||
+    localStorage.getItem("token") ||
     null
   );
+}
+
+function setToken(t) {
+  if (t) localStorage.setItem(LS_TOKEN, t);
+}
+
+function clearToken() {
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem("token");
 }
 
 function isFormDataBody(body) {
@@ -16,21 +27,33 @@ function isFormDataBody(body) {
   );
 }
 
+async function callRefresh() {
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: "POST",
+    credentials: "include", // ✅ indispensable pour envoyer/recevoir le cookie refresh
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!res.ok) return null;
+
+  const data = await res.json().catch(() => null);
+  if (data?.access_token) {
+    setToken(data.access_token);
+    return data.access_token;
+  }
+  return null;
+}
+
 export async function apiFetch(path, options = {}) {
-  const token = getToken();
   const formData = isFormDataBody(options.body);
 
-  // Base headers
   const headers = {
     ...(options.headers || {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
   };
 
-  // ✅ IMPORTANT :
-  // - Si FormData => surtout PAS de Content-Type (le navigateur met multipart/form-data; boundary=...)
-  // - Si JSON => on met application/json
+  // ✅ FormData => ne pas forcer Content-Type
   if (formData) {
-    // si un ancien code l'avait mis, on le supprime
     delete headers["Content-Type"];
     delete headers["content-type"];
   } else {
@@ -39,16 +62,32 @@ export async function apiFetch(path, options = {}) {
     }
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const doFetch = async () =>
+    fetch(`${API_URL}${path}`, {
+      ...options,
+      headers,
+      credentials: "include", // ✅ IMPORTANT : pour le cookie refresh
+    });
 
+  let res = await doFetch();
+
+  // 401 -> refresh -> retry 1 fois
   if (res.status === 401) {
-    localStorage.removeItem("cipherflow_token");
-    localStorage.removeItem("token");
-    window.location.href = "/auth";
-    return res;
+    const newAccess = await callRefresh();
+
+    if (!newAccess) {
+      clearToken();
+      window.location.href = "/auth";
+      return res;
+    }
+
+    headers.Authorization = `Bearer ${newAccess}`;
+    res = await doFetch();
+
+    if (res.status === 401) {
+      clearToken();
+      window.location.href = "/auth";
+    }
   }
 
   return res;

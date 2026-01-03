@@ -6,35 +6,62 @@ import io
 import shutil
 import secrets
 import time
-from fastapi.security import OAuth2PasswordRequestForm
-import re # ✅ Ajout pour nettoyer l'alias
+import re  # ✅ Ajout pour nettoyer l'alias
+import hashlib
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from fastapi.security import OAuth2PasswordRequestForm
 
 from PIL import Image
 import resend
 from jose import jwt, JWTError
 from sqlalchemy import text as sql_text, func
 from sqlalchemy.orm import Session
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Header, UploadFile, File, Form
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Depends,
+    status,
+    Response,
+    Header,
+    UploadFile,
+    File,
+    Form,
+    Cookie,
+)
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 
 from google import genai
-from google.genai import types
 
 # Imports internes
 from app.security import get_current_user as get_current_user_token
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models
+
 # On importe les nouveaux modèles SaaS
-from app.database.models import EmailAnalysis, AppSettings, User, Invoice, FileAnalysis, Agency, UserRole, TenantFile, TenantEmailLink, TenantDocumentLink, TenantFileStatus, TenantDocType, DocQuality
+from app.database.models import (
+    EmailAnalysis,
+    AppSettings,
+    User,
+    Invoice,
+    FileAnalysis,
+    Agency,
+    UserRole,
+    TenantFile,
+    TenantEmailLink,
+    TenantDocumentLink,
+    TenantFileStatus,
+    TenantDocType,
+    DocQuality,
+    RefreshToken,  # ✅ NEW
+)
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
 
@@ -48,10 +75,7 @@ client = None
 
 try:
     if GEMINI_API_KEY:
-        client = genai.Client(
-            api_key=GEMINI_API_KEY, 
-            http_options={'api_version': 'v1beta'}
-        )
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1beta"})
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
@@ -65,16 +89,54 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 
+# ============================================================
+# ✅ AUTH PRO (ACCESS + REFRESH)
+# ============================================================
+ACCESS_TOKEN_MINUTES = 15
+REFRESH_TOKEN_DAYS = 30
+
+def _is_prod() -> bool:
+    return ENV in ("prod", "production")
+
+def create_refresh_token() -> str:
+    # token opaque (random, long)
+    return secrets.token_urlsafe(48)
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+def set_refresh_cookie(response: Response, refresh_token: str):
+    """
+    En prod (Vercel -> Railway):
+    - SameSite=None obligatoire
+    - Secure obligatoire
+    """
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=_is_prod(),
+        samesite="none" if _is_prod() else "lax",
+        max_age=REFRESH_TOKEN_DAYS * 24 * 60 * 60,
+        path="/",
+    )
+
+def clear_refresh_cookie(response: Response):
+    response.delete_cookie(key="refresh_token", path="/")
+
 # --- DEPENDANCES SAAS ---
-async def get_current_user_db(token_payload: dict = Depends(get_current_user_token), db: Session = Depends(get_db)) -> User:
+async def get_current_user_db(
+    token_payload: dict = Depends(get_current_user_token),
+    db: Session = Depends(get_db),
+) -> User:
     email = token_payload.get("sub") or token_payload.get("email")
     if not email:
         raise HTTPException(status_code=401, detail="Token invalide")
-    
+
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=401, detail="Utilisateur introuvable")
-    
+
     return user
 
 # --- FONCTIONS UTILITAIRES ---
@@ -83,41 +145,44 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
         print("Resend API Key manquant")
         return
     try:
-        resend.Emails.send({
-            "from": "contact@cipherflow.company",
-            "to": [to_email],
-            "subject": subject,
-            "html": body.replace("\n", "<br>")
-        })
+        resend.Emails.send(
+            {
+                "from": "contact@cipherflow.company",
+                "to": [to_email],
+                "subject": subject,
+                "html": body.replace("\n", "<br>"),
+            }
+        )
     except Exception as e:
         print(f"Erreur envoi email: {e}")
 
 async def call_gemini(prompt: str) -> str:
-    if not client: return "{}"
+    if not client:
+        return "{}"
     try:
         response = client.models.generate_content(model=MODEL_NAME, contents=[prompt])
         return response.text
     except Exception as e:
         print(f"Erreur IA: {e}")
-        return "{}" 
+        return "{}"
 
 def extract_json_from_text(text: str):
-    if not text: return None
+    if not text:
+        return None
     raw = text.strip()
     if "```" in raw:
         first, last = raw.find("```"), raw.rfind("```")
         if first != -1 and last > first:
-            raw = raw[first+3:last].strip()
+            raw = raw[first + 3 : last].strip()
         if raw.lower().startswith("json"):
             raw = raw[4:].lstrip()
     start, end = raw.find("{"), raw.rfind("}")
     if start != -1 and end != -1:
-        raw = raw[start:end+1]
+        raw = raw[start : end + 1]
     try:
         return json.loads(raw)
     except:
         return None
-
 
 # ============================================================
 # 🟦 HELPERS GESTION LOCATIVE (NOUVEAU)
@@ -137,7 +202,6 @@ def map_doc_type(file_type: str) -> TenantDocType:
     if "rib" in ft or "banque" in ft or "bank" in ft:
         return TenantDocType.BANK
     return TenantDocType.OTHER
-
 
 def compute_checklist(doc_types: List[TenantDocType]) -> dict:
     """Checklist MVP FR: ID + PAYSLIP + TAX requis."""
@@ -159,9 +223,9 @@ async def analyze_document_logic(file_path: str, filename: str):
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
             uploaded_file = client.files.get(name=uploaded_file.name)
-        
+
         if uploaded_file.state.name == "FAILED":
-             raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
+            raise ValueError("L'IA n'a pas réussi à traiter le fichier.")
 
         prompt = (
             "Tu es un expert en vérification de dossiers locataires. "
@@ -173,10 +237,7 @@ async def analyze_document_logic(file_path: str, filename: str):
             "- summary: Synthèse courte."
         )
 
-        res = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[uploaded_file, prompt]
-        )
+        res = client.models.generate_content(model=MODEL_NAME, contents=[uploaded_file, prompt])
         return extract_json_from_text(res.text)
 
     except Exception as e:
@@ -184,14 +245,20 @@ async def analyze_document_logic(file_path: str, filename: str):
         return {"summary": "Erreur analyse", "type": "Erreur"}
 
 async def analyze_email_logic(req, company_name, db: Session, agency_id: int, attachment_summary=""):
-    last_files = db.query(FileAnalysis).filter(FileAnalysis.agency_id == agency_id).order_by(FileAnalysis.id.desc()).limit(5).all()
-    
+    last_files = (
+        db.query(FileAnalysis)
+        .filter(FileAnalysis.agency_id == agency_id)
+        .order_by(FileAnalysis.id.desc())
+        .limit(5)
+        .all()
+    )
+
     files_context = ""
     if last_files:
         files_context = "CONTEXTE DOCUMENTS (Dossiers récents de l'agence) :\n"
         for f in last_files:
             files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount}\n"
-    
+
     if attachment_summary:
         files_context += f"\nNOUVELLES PIÈCES JOINTES : {attachment_summary}\n"
 
@@ -209,27 +276,31 @@ async def analyze_email_logic(req, company_name, db: Session, agency_id: int, at
         f"- summary: Résumé court.\n"
         f"- suggested_title: Titre court."
     )
-    
+
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
-    
+
     return EmailAnalyseResponse(
         is_devis=bool(data.get("is_devis", False)),
         category=str(data.get("category", "Autre")),
         urgency=str(data.get("urgency", "Moyenne")),
         summary=str(data.get("summary", "Analyse non disponible")),
         suggested_title=str(data.get("suggested_title", "Nouvel Email")),
-        raw_ai_text=raw
+        raw_ai_text=raw,
     )
 
 async def generate_reply_logic(req, company_name, tone, signature):
-    prompt = f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\nSujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\nRetourne JSON strict: reply, subject."
+    prompt = (
+        f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\n"
+        f"Sujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\n"
+        f"Retourne JSON strict: reply, subject."
+    )
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
     return EmailReplyResponse(
         reply=data.get("reply", raw),
         subject=data.get("subject", f"Re: {req.subject}"),
-        raw_ai_text=raw
+        raw_ai_text=raw,
     )
 
 # --- CONFIG FASTAPI ---
@@ -239,7 +310,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=OAUTH_STATE_SECRET,
     same_site="lax",
-    https_only=(ENV in ("prod", "production"))
+    https_only=(ENV in ("prod", "production")),
 )
 
 app.include_router(google_oauth_router, tags=["Google OAuth"])
@@ -247,7 +318,7 @@ app.include_router(google_oauth_router, tags=["Google OAuth"])
 origins = [
     "http://localhost:5173",
     "https://cipherflow-mvp.vercel.app",
-    "https://cipherflow.company"
+    "https://cipherflow.company",
 ]
 
 app.add_middleware(
@@ -256,7 +327,7 @@ app.add_middleware(
     allow_origin_regex="https://.*\\.vercel\\.app",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 # --- MODELS Pydantic ---
@@ -297,12 +368,12 @@ class EmailReplyResponse(BaseModel):
 
 class AttachmentModel(BaseModel):
     filename: str
-    content_base64: str 
+    content_base64: str
     content_type: str
 
 class EmailProcessRequest(BaseModel):
     from_email: EmailStr
-    to_email: Optional[str] = None # Nouveau : pour router vers l'agence
+    to_email: Optional[str] = None
     subject: str
     content: str
     send_email: bool = False
@@ -342,6 +413,7 @@ class EmailHistoryItem(BaseModel):
     is_devis: bool
     raw_email_text: str
     suggested_response_text: str
+
     class Config:
         from_attributes = True
 
@@ -356,11 +428,9 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
-
 # ============================================================
 # 🟦 DOSSIERS LOCATAIRES (GESTION LOCATIVE) — Pydantic
 # ============================================================
-
 class TenantFileListItem(BaseModel):
     id: int
     status: str
@@ -371,7 +441,6 @@ class TenantFileListItem(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 class TenantFileDetail(BaseModel):
     id: int
@@ -394,7 +463,7 @@ def on_startup():
     models.Base.metadata.create_all(bind=engine)
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
-    
+
     # Création Super Admin par défaut
     db = next(get_db())
     if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
@@ -402,138 +471,251 @@ def on_startup():
         default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
         db.add(default_agency)
         db.commit()
-        
+
         hashed = get_password_hash("admin123")
         admin = User(
-            email="admin@cipherflow.com", 
-            hashed_password=hashed, 
+            email="admin@cipherflow.com",
+            hashed_password=hashed,
             role=UserRole.SUPER_ADMIN,
-            agency_id=default_agency.id
+            agency_id=default_agency.id,
         )
         db.add(admin)
         db.commit()
 
-# --- ROUTES AUTH ---
+# ============================================================
+# ✅ ROUTES AUTH PRO
+# ============================================================
+
 @app.post("/auth/register", response_model=TokenResponse)
-async def register(req: LoginRequest, db: Session = Depends(get_db)):
+async def register(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
-    
+
     # SAAS AUTO-ONBOARDING :
     agency_name = f"Agence de {req.email.split('@')[0]}"
-    
+
     # ✅ GÉNÉRATION ALIAS AUTOMATIQUE
-    # On prend le début de l'email, on nettoie les caractères spéciaux
-    clean_alias = re.sub(r'[^a-zA-Z0-9]', '', req.email.split('@')[0]).lower()
-    
-    # On vérifie si l'alias est pris, sinon on ajoute un timestamp
+    clean_alias = re.sub(r"[^a-zA-Z0-9]", "", req.email.split("@")[0]).lower()
+
     if db.query(Agency).filter(Agency.email_alias == clean_alias).first():
         clean_alias = f"{clean_alias}{int(time.time())}"
 
-    # Check doublon nom agence
     if db.query(Agency).filter(Agency.name == agency_name).first():
         agency_name = f"{agency_name} ({int(time.time())})"
-    
-    # Ajout de l'alias
+
     new_agency = Agency(name=agency_name, email_alias=clean_alias)
     db.add(new_agency)
     db.commit()
     db.refresh(new_agency)
-    
+
     new_user = User(
-        email=req.email, 
+        email=req.email,
         hashed_password=get_password_hash(req.password),
         agency_id=new_agency.id,
-        role=UserRole.AGENCY_ADMIN
+        role=UserRole.AGENCY_ADMIN,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
+
     default_settings = AppSettings(
         agency_id=new_agency.id,
         company_name=agency_name,
         agent_name="Assistant IA",
-        tone="pro"
+        tone="pro",
     )
     db.add(default_settings)
     db.commit()
-    
-    return {"access_token": create_access_token({"sub": new_user.email}), "token_type": "bearer", "user_email": new_user.email}
+
+    # ✅ Access token (court)
+    access = create_access_token(
+        {"sub": new_user.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_MINUTES),
+    )
+
+    # ✅ Refresh token (long) stocké hashé en DB + cookie HttpOnly
+    refresh = create_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=new_user.id,
+            token_hash=hash_token(refresh),
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS),
+        )
+    )
+    db.commit()
+
+    set_refresh_cookie(response, refresh)
+
+    return {"access_token": access, "token_type": "bearer", "user_email": new_user.email}
 
 @app.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: Session = Depends(get_db)):
+async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
-    
-    return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer", "user_email": user.email}
+
+    access = create_access_token(
+        {"sub": user.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_MINUTES),
+    )
+
+    refresh = create_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(refresh),
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS),
+        )
+    )
+    db.commit()
+
+    set_refresh_cookie(response, refresh)
+
+    return {"access_token": access, "token_type": "bearer", "user_email": user.email}
 
 @app.post("/auth/token", response_model=TokenResponse)
-async def token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # Swagger envoie username/password → on map username -> email
+async def token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    response: Response = None,
+    db: Session = Depends(get_db),
+):
+    # FastAPI peut injecter Response si on le met sans Depends
+    # MAIS comme tu es en prod, le plus simple: on renvoie nous-même une Response JSON
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
-    token = create_access_token({"sub": user.email})
-    return TokenResponse(access_token=token, token_type="bearer", user_email=user.email)
+    access = create_access_token(
+        {"sub": user.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_MINUTES),
+    )
 
+    refresh = create_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(refresh),
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS),
+        )
+    )
+    db.commit()
+
+    # ✅ on fabrique une réponse HTTP propre (cookie + JSON)
+    r = Response(
+        content=json.dumps({"access_token": access, "token_type": "bearer", "user_email": user.email}),
+        media_type="application/json",
+    )
+    set_refresh_cookie(r, refresh)
+    return r
+
+
+@app.post("/auth/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_token: Optional[str] = Cookie(default=None),
+):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+
+    token_hash = hash_token(refresh_token)
+    rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+    if not rt or rt.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    if rt.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+
+    user = db.query(User).filter(User.id == rt.user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # ✅ rotation refresh (pro)
+    new_refresh = create_refresh_token()
+    rt.token_hash = hash_token(new_refresh)
+    rt.last_used_at = datetime.utcnow()
+    rt.expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS)
+    db.commit()
+
+    new_access = create_access_token(
+        {"sub": user.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_MINUTES),
+    )
+
+    set_refresh_cookie(response, new_refresh)
+
+    return {"access_token": new_access, "token_type": "bearer", "user_email": user.email}
+
+@app.post("/auth/logout")
+async def logout(
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_token: Optional[str] = Cookie(default=None),
+):
+    if refresh_token:
+        token_hash = hash_token(refresh_token)
+        rt = db.query(RefreshToken).filter(RefreshToken.token_hash == token_hash).first()
+        if rt and rt.revoked_at is None:
+            rt.revoked_at = datetime.utcnow()
+            db.commit()
+
+    clear_refresh_cookie(response)
+    return {"ok": True}
+
+# ============================================================
 # --- WEBHOOK EMAIL (ROUTAGE MULTI-AGENCE) ---
+# (le reste de ton fichier est inchangé)
+# ============================================================
+
 @app.post("/webhook/email", response_model=EmailProcessResponse)
 async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid Secret")
-    
+
     # 1. IDENTIFIER L'AGENCE DESTINATAIRE (ROUTAGE INTELLIGENT)
     target_agency = None
-    
-    # On regarde à QUI l'email a été envoyé (ex: "monprojet+agenceB@gmail.com")
+
     recipient = req.to_email.lower().strip() if req.to_email else ""
     print(f"📨 Routage pour le destinataire : {recipient}")
 
-    # Recherche par alias exact
-    # On cherche si une partie de l'email correspond à un alias d'agence
     if "+" in recipient:
         try:
-            # Extrait ce qu'il y a entre '+' et '@'
             alias_part = recipient.split("+")[1].split("@")[0]
             print(f"🔎 Recherche de l'alias : {alias_part}")
             target_agency = db.query(Agency).filter(Agency.email_alias == alias_part).first()
         except:
             pass
 
-    # Si pas trouvé via alias, fallback
     if not target_agency:
         print("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
-        # Fallback : La première agence créée (souvent l'Admin)
         target_agency = db.query(Agency).order_by(Agency.id.asc()).first()
-    
+
     if not target_agency:
-        # Fallback ultime
         raise HTTPException(500, "Aucune agence configurée.")
 
     agency_id = target_agency.id
-    
-    # Récupérer les settings de CETTE agence
+
     s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
     comp_name = s.company_name if s else target_agency.name
-    
+
     # 2. TRAITEMENT PJ
     attachment_summary_text = ""
-    attachment_file_ids: List[int] = []  # ✅ IDs FileAnalysis créés pour ce mail
+    attachment_file_ids: List[int] = []
     if req.attachments:
         for att in req.attachments:
             try:
                 file_data = base64.b64decode(att.content_base64)
-                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}" # Prefix avec ID agence
+                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
                 file_path = os.path.join("uploads", safe_filename)
-                
+
                 with open(file_path, "wb") as f:
                     f.write(file_data)
-                
+
                 doc_analysis = await analyze_document_logic(file_path, safe_filename)
-                
+
                 if doc_analysis:
                     new_file = FileAnalysis(
                         filename=safe_filename,
@@ -543,7 +725,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                         amount=str(doc_analysis.get("amount", "0")),
                         summary=str(doc_analysis.get("summary", "Reçu par email")),
                         owner_id=None,
-                        agency_id=agency_id # ✅
+                        agency_id=agency_id,
                     )
                     db.add(new_file)
                     db.commit()
@@ -555,17 +737,29 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
 
     # 3. ANALYSE EMAIL
     analyse = await analyze_email_logic(
-        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
-        comp_name, 
+        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content),
+        comp_name,
         db,
-        agency_id, # ✅ Contexte Agence
-        attachment_summary=attachment_summary_text
+        agency_id,
+        attachment_summary=attachment_summary_text,
     )
-    
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp_name, s.tone if s else "pro", s.signature if s else "Team")
-    
+
+    reponse = await generate_reply_logic(
+        EmailReplyRequest(
+            from_email=req.from_email,
+            subject=req.subject,
+            content=req.content,
+            summary=analyse.summary,
+            category=analyse.category,
+            urgency=analyse.urgency,
+        ),
+        comp_name,
+        s.tone if s else "pro",
+        s.signature if s else "Team",
+    )
+
     new_email = EmailAnalysis(
-        agency_id=agency_id, # ✅
+        agency_id=agency_id,
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -575,21 +769,18 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
         summary=analyse.summary,
         suggested_title=analyse.suggested_title,
         suggested_response_text=reponse.reply,
-        raw_ai_output=analyse.raw_ai_text
+        raw_ai_output=analyse.raw_ai_text,
     )
     db.add(new_email)
     db.commit()
     db.refresh(new_email)
 
-    # ============================================================
-    # ✅ GESTION LOCATIVE AUTO : créer / relier un dossier locataire
-    # ============================================================
+    # ✅ GESTION LOCATIVE AUTO
     try:
         cat = (analyse.category or "").lower().strip() if hasattr(analyse, "category") else (new_email.category or "").lower().strip()
         if ("candid" in cat) or ("locat" in cat) or ("dossier" in cat):
             candidate_email = (req.from_email or "").lower().strip()
 
-            # 1) Trouver un dossier existant sur l'email candidat
             tf = None
             if candidate_email:
                 tf = (
@@ -599,42 +790,36 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                     .first()
                 )
 
-            # 2) Créer si absent
             if not tf:
-                tf = TenantFile(
-                    agency_id=agency_id,
-                    candidate_email=candidate_email,
-                    status=TenantFileStatus.NEW
-                )
+                tf = TenantFile(agency_id=agency_id, candidate_email=candidate_email, status=TenantFileStatus.NEW)
                 db.add(tf)
                 db.commit()
                 db.refresh(tf)
 
-            # 3) Lier l'email
             if not db.query(TenantEmailLink).filter(
                 TenantEmailLink.tenant_file_id == tf.id,
-                TenantEmailLink.email_analysis_id == new_email.id
+                TenantEmailLink.email_analysis_id == new_email.id,
             ).first():
                 db.add(TenantEmailLink(tenant_file_id=tf.id, email_analysis_id=new_email.id))
                 db.commit()
 
-            # 4) Lier les documents créés pour ce mail
             for fid in attachment_file_ids:
                 if not db.query(TenantDocumentLink).filter(
                     TenantDocumentLink.tenant_file_id == tf.id,
-                    TenantDocumentLink.file_analysis_id == fid
+                    TenantDocumentLink.file_analysis_id == fid,
                 ).first():
                     fa = db.query(FileAnalysis).filter(FileAnalysis.id == fid).first()
                     dt = map_doc_type(getattr(fa, "file_type", "") if fa else "")
-                    db.add(TenantDocumentLink(
-                        tenant_file_id=tf.id,
-                        file_analysis_id=fid,
-                        doc_type=dt,
-                        quality=DocQuality.OK
-                    ))
+                    db.add(
+                        TenantDocumentLink(
+                            tenant_file_id=tf.id,
+                            file_analysis_id=fid,
+                            doc_type=dt,
+                            quality=DocQuality.OK,
+                        )
+                    )
             db.commit()
 
-            # 5) Recalcul checklist + statut
             links = db.query(TenantDocumentLink).filter(TenantDocumentLink.tenant_file_id == tf.id).all()
             doc_types = [l.doc_type for l in links]
             checklist = compute_checklist(doc_types)
@@ -649,43 +834,71 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-    
+
     return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
 
+# ============================================================
 # --- ROUTES DASHBOARD & DATA (PROTEGEES PAR AGENCE) ---
+# (reste inchangé)
+# ============================================================
 
 @app.get("/dashboard/stats")
 async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    # FILTRE PAR AGENCE (current_user.agency_id)
     aid = current_user.agency_id
-    
+
     total = db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).count()
-    
-    high = db.query(EmailAnalysis).filter(
-        EmailAnalysis.agency_id == aid,
-        (func.lower(EmailAnalysis.urgency).contains("haut")) | 
-        (func.lower(EmailAnalysis.urgency).contains("urg"))
-    ).count()
-    
+
+    high = (
+        db.query(EmailAnalysis)
+        .filter(
+            EmailAnalysis.agency_id == aid,
+            (func.lower(EmailAnalysis.urgency).contains("haut")) | (func.lower(EmailAnalysis.urgency).contains("urg")),
+        )
+        .count()
+    )
+
     inv = db.query(Invoice).filter(Invoice.agency_id == aid).count()
-    
-    cat_stats = db.query(EmailAnalysis.category, func.count(EmailAnalysis.id)).filter(EmailAnalysis.agency_id == aid).group_by(EmailAnalysis.category).all()
+
+    cat_stats = (
+        db.query(EmailAnalysis.category, func.count(EmailAnalysis.id))
+        .filter(EmailAnalysis.agency_id == aid)
+        .group_by(EmailAnalysis.category)
+        .all()
+    )
     dist = [{"name": c[0], "value": c[1]} for c in cat_stats]
-    
-    recents = db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).order_by(EmailAnalysis.id.desc()).limit(5).all()
-    rec_act = [{
-        "id": r.id, 
-        "subject": r.subject, 
-        "category": r.category, 
-        "urgency": r.urgency, 
-        "date": r.created_at.strftime("%d/%m %H:%M") if r.created_at else ""
-    } for r in recents]
-    
+
+    recents = (
+        db.query(EmailAnalysis)
+        .filter(EmailAnalysis.agency_id == aid)
+        .order_by(EmailAnalysis.id.desc())
+        .limit(5)
+        .all()
+    )
+    rec_act = [
+        {
+            "id": r.id,
+            "subject": r.subject,
+            "category": r.category,
+            "urgency": r.urgency,
+            "date": r.created_at.strftime("%d/%m %H:%M") if r.created_at else "",
+        }
+        for r in recents
+    ]
+
     return {"kpis": {"total_emails": total, "high_urgency": high, "invoices": inv}, "charts": {"distribution": dist}, "recents": rec_act}
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    return db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == current_user.agency_id).order_by(EmailAnalysis.id.desc()).all()
+    return (
+        db.query(EmailAnalysis)
+        .filter(EmailAnalysis.agency_id == current_user.agency_id)
+        .order_by(EmailAnalysis.id.desc())
+        .all()
+    )
+
+# --- (le reste de tes routes: tenant-files, settings, upload, files, invoices, etc.) ---
+# ⚠️ IMPORTANT : garde la suite de ton fichier identique à ton original.
+
 
 # ============================================================
 # 🟦 DOSSIERS LOCATAIRES (GESTION LOCATIVE) — API
@@ -1011,18 +1224,54 @@ async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current
     return {"status": "deleted"}
 
 @app.get("/api/files/view/{file_id}")
-async def view_file(file_id: int, db: Session = Depends(get_db)):
-    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id).first()
-    if not f or not os.path.exists(f"uploads/{f.filename}"):
+async def view_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    f = (
+        db.query(FileAnalysis)
+        .filter(
+            FileAnalysis.id == file_id,
+            FileAnalysis.agency_id == current_user.agency_id
+        )
+        .first()
+    )
+
+    if not f:
+        raise HTTPException(404, detail="Fichier introuvable ou accès refusé")
+
+    path = f"uploads/{f.filename}"
+    if not os.path.exists(path):
         raise HTTPException(404, detail="Fichier introuvable")
-    return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="inline")
+
+    return FileResponse(path=path, filename=f.filename, content_disposition_type="inline")
+
 
 @app.get("/api/files/download/{file_id}")
-async def download_file(file_id: int, db: Session = Depends(get_db)):
-    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id).first()
-    if not f or not os.path.exists(f"uploads/{f.filename}"):
+async def download_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    f = (
+        db.query(FileAnalysis)
+        .filter(
+            FileAnalysis.id == file_id,
+            FileAnalysis.agency_id == current_user.agency_id
+        )
+        .first()
+    )
+
+    if not f:
+        raise HTTPException(404, detail="Fichier introuvable ou accès refusé")
+
+    path = f"uploads/{f.filename}"
+    if not os.path.exists(path):
         raise HTTPException(404, detail="Fichier introuvable")
-    return FileResponse(path=f"uploads/{f.filename}", filename=f.filename, content_disposition_type="attachment")
+
+    return FileResponse(path=path, filename=f.filename, content_disposition_type="attachment")
+
 
 @app.post("/email/send")
 async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
