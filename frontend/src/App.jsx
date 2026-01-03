@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -31,13 +31,73 @@ const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
 
+function getStoredToken() {
+  return localStorage.getItem(LS_TOKEN);
+}
+
+function setStoredToken(t) {
+  if (t) localStorage.setItem(LS_TOKEN, t);
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_EMAIL);
+}
+
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem(LS_TOKEN));
+  const [token, setToken] = useState(getStoredToken());
   const [userEmail, setUserEmail] = useState(localStorage.getItem(LS_EMAIL));
   const [showRegister, setShowRegister] = useState(false);
+  const [bootLoading, setBootLoading] = useState(true);
+
+  /**
+   * Appelle /auth/refresh en utilisant le cookie HttpOnly refresh_token
+   * - credentials: "include" est OBLIGATOIRE pour envoyer le cookie cross-domain
+   * - Si OK -> met à jour localStorage + state token
+   */
+  const refreshSession = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!res.ok) return null;
+
+      const data = await res.json();
+      const newAccess = data.access_token || data.token || data.accessToken || null;
+
+      if (newAccess) {
+        setStoredToken(newAccess);
+        setToken(newAccess);
+        return newAccess;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /**
+   * ✅ BOOT PRO (comme un vrai SaaS)
+   * Au chargement, on tente /auth/refresh même si le token local est absent/expiré.
+   * -> évite le retour direct au login après F5 si le cookie refresh est encore valide.
+   */
+  useEffect(() => {
+    (async () => {
+      // Si on a déjà un token, on n'est pas obligé de refresh,
+      // MAIS on peut quand même laisser le système gérer quand il expirera.
+      // Ici on tente le refresh uniquement si token absent.
+      if (!getStoredToken()) {
+        await refreshSession();
+      }
+      setBootLoading(false);
+    })();
+  }, [refreshSession]);
 
   const handleAuthSuccess = (newToken, email) => {
-    localStorage.setItem(LS_TOKEN, newToken);
+    setStoredToken(newToken);
     setToken(newToken);
 
     if (email) {
@@ -48,13 +108,46 @@ export default function App() {
     setShowRegister(false);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem(LS_TOKEN);
-    localStorage.removeItem(LS_EMAIL);
-    setToken(null);
-    setUserEmail(null);
-    setShowRegister(false);
+  /**
+   * Logout "pro" :
+   * - nettoie local
+   * - tente d'appeler /auth/logout si dispo (pas obligatoire si ton backend ne l'a pas encore)
+   */
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore
+    } finally {
+      clearStoredAuth();
+      setToken(null);
+      setUserEmail(null);
+      setShowRegister(false);
+    }
   };
+
+  if (bootLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          minHeight: "100vh",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#0f172a",
+          color: "white",
+          flexDirection: "column",
+          gap: "12px",
+        }}
+      >
+        <Zap size={40} color="#6366f1" />
+        <div style={{ fontSize: "1.1rem", opacity: 0.9 }}>Chargement de la session…</div>
+      </div>
+    );
+  }
 
   return (
     <Routes>
@@ -70,6 +163,8 @@ export default function App() {
             setShowRegister={setShowRegister}
             onAuthSuccess={handleAuthSuccess}
             onLogout={handleLogout}
+            refreshSession={refreshSession}
+            setToken={setToken}
           />
         }
       />
@@ -79,7 +174,16 @@ export default function App() {
   );
 }
 
-function AppShell({ token, userEmail, showRegister, setShowRegister, onAuthSuccess, onLogout }) {
+function AppShell({
+  token,
+  userEmail,
+  showRegister,
+  setShowRegister,
+  onAuthSuccess,
+  onLogout,
+  refreshSession,
+  setToken,
+}) {
   if (!token) {
     return (
       <div
@@ -145,10 +249,18 @@ function AppShell({ token, userEmail, showRegister, setShowRegister, onAuthSucce
     );
   }
 
-  return <MainApp token={token} userEmail={userEmail} onLogout={onLogout} />;
+  return (
+    <MainApp
+      token={token}
+      userEmail={userEmail}
+      onLogout={onLogout}
+      refreshSession={refreshSession}
+      setToken={setToken}
+    />
+  );
 }
 
-function MainApp({ token, userEmail, onLogout }) {
+function MainApp({ token, userEmail, onLogout, refreshSession, setToken }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
 
@@ -177,31 +289,77 @@ function MainApp({ token, userEmail, onLogout }) {
   }, [activeTab]);
 
   /**
-   * authFetch:
-   * - Ajoute Authorization Bearer <token>
-   * - Ajoute Content-Type: application/json seulement si body n'est PAS un FormData
-   * - Déconnecte si 401
+   * ✅ authFetch PRO :
+   * - ajoute Bearer token
+   * - si 401 => tente /auth/refresh (cookie) => retry 1 fois
+   * - si encore 401 => logout propre
    */
-  const authFetch = async (url, options = {}) => {
-    const headers = {
-      ...(options.headers || {}),
-      Authorization: `Bearer ${token}`,
-    };
+  const authFetch = useCallback(
+    async (url, options = {}) => {
+      const doRequest = async (accessToken) => {
+        const headers = {
+          ...(options.headers || {}),
+          Authorization: `Bearer ${accessToken}`,
+        };
 
-    const isFormData = options.body instanceof FormData;
-    if (!isFormData && !headers["Content-Type"]) {
-      headers["Content-Type"] = "application/json";
-    }
+        const isFormData = options.body instanceof FormData;
+        if (!isFormData && !headers["Content-Type"]) {
+          headers["Content-Type"] = "application/json";
+        }
+        // ⚠️ si FormData : ne PAS forcer Content-Type
+        if (isFormData) {
+          delete headers["Content-Type"];
+          delete headers["content-type"];
+        }
 
-    const res = await fetch(url, { ...options, headers });
+        return fetch(url, {
+          ...options,
+          headers,
+          // credentials pas obligatoire pour les routes normales,
+          // mais OK si tu veux l'inclure partout. Ici on le met pour être safe.
+          credentials: "include",
+        });
+      };
 
-    if (res.status === 401) {
-      onLogout();
-      throw new Error("Session expirée, veuillez vous reconnecter.");
-    }
+      // 1) essai normal
+      let res = await doRequest(token);
 
-    return res;
-  };
+      // 2) si 401 -> refresh -> retry
+      if (res.status === 401) {
+        const newAccess = await refreshSession();
+
+        if (!newAccess) {
+          await onLogout();
+          throw new Error("Session expirée, veuillez vous reconnecter.");
+        }
+
+        setStoredToken(newAccess);
+        setToken(newAccess);
+
+        res = await doRequest(newAccess);
+
+        if (res.status === 401) {
+          await onLogout();
+          throw new Error("Session expirée, veuillez vous reconnecter.");
+        }
+      }
+
+      return res;
+    },
+    [token, refreshSession, onLogout, setToken]
+  );
+
+  // ✅ Ping au chargement : déclenche refresh si token cassé (et évite “Network vide”)
+  useEffect(() => {
+    (async () => {
+      try {
+        await authFetch(`${API_BASE}/stats`);
+      } catch {
+        // authFetch gère déjà logout si besoin
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleAnalyse = async () => {
     setErrorMessage("");
@@ -335,7 +493,6 @@ function MainApp({ token, userEmail, onLogout }) {
             <FileText size={20} /> <span>Quittances & Loyers</span>
           </div>
 
-          {/* ✅ Dossiers locataires = tenant-files (création depuis email_id) */}
           <div
             className={`nav-item ${activeTab === "tenantFiles" ? "active" : ""}`}
             onClick={() => handleSidebarClick("tenantFiles")}
@@ -343,7 +500,6 @@ function MainApp({ token, userEmail, onLogout }) {
             <FolderSearch size={20} /> <span>Dossiers Locataires</span>
           </div>
 
-          {/* ✅ Analyse de documents (on garde FileAnalyzer mais dans un onglet séparé) */}
           <div
             className={`nav-item ${activeTab === "docAnalysis" ? "active" : ""}`}
             onClick={() => handleSidebarClick("docAnalysis")}
@@ -510,12 +666,8 @@ function MainApp({ token, userEmail, onLogout }) {
           </div>
         )}
 
-        {/* ✅ Dossiers Locataires = tenant-files */}
-        {activeTab === "tenantFiles" && (
-          <TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />
-        )}
+        {activeTab === "tenantFiles" && <TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />}
 
-        {/* ✅ Analyse de documents (FileAnalyzer conservé) */}
         {activeTab === "docAnalysis" && (
           <div style={{ maxWidth: "1600px", margin: "0 auto" }}>
             <FileAnalyzer authFetch={authFetch} apiBase={API_BASE} />
