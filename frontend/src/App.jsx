@@ -1,152 +1,136 @@
 // frontend/src/App.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from "react-router-dom";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import "./App.css";
 
-import DashboardPage from "./pages/Dashboard";
-import EmailProcessingPage from "./pages/EmailProcessing";
-import InvoicesPage from "./pages/Invoices";
-import TenantFilesPage from "./pages/TenantFiles";
-import DocumentAnalyzerPage from "./pages/DocumentAnalyzer";
-import HistoryPage from "./pages/History";
-import SettingsPage from "./pages/Settings";
+// Pages existantes
+import Dashboard from "./pages/Dashboard";
+import OAuthCallback from "./pages/OAuthCallback";
 
+// Components existants
 import Login from "./components/Login";
 import Register from "./components/Register";
+import EmailHistory from "./components/EmailHistory";
+import InvoiceGenerator from "./components/InvoiceGenerator";
+import TenantFilesPanel from "./components/TenantFilesPanel";
+import FileAnalyzer from "./components/FileAnalyzer";
+import SettingsPanel from "./components/SettingsPanel";
 
-import {
-  authFetch,
-  login as apiLogin,
-  logout as apiLogout,
-  getToken,
-  getEmail,
-  isAuthed,
-} from "./services/api";
+import { getToken, clearAuth, logout as apiLogout } from "./services/api";
 
-function ProtectedRoute({ isAuthenticated, children }) {
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+function PrivateLayout({ onLogout, children }) {
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-icon">⚡</span>
+          <span className="brand-title">CipherFlow V2</span>
+        </div>
+
+        <nav className="nav">
+          <Link className="nav-item" to="/dashboard">Vue d&apos;ensemble</Link>
+          <Link className="nav-item" to="/emails">Traitement Email</Link>
+          <Link className="nav-item" to="/invoices">Quittances &amp; Loyers</Link>
+          <Link className="nav-item" to="/tenants">Dossiers Locataires</Link>
+          <Link className="nav-item" to="/docs">Analyse Docs</Link>
+          <Link className="nav-item" to="/settings">Paramètres</Link>
+        </nav>
+
+        <button className="nav-logout" onClick={onLogout}>
+          Déconnexion
+        </button>
+      </aside>
+
+      <main className="main-content">{children}</main>
+    </div>
+  );
+}
+
+function Protected({ isAuthed, children }) {
+  if (!isAuthed) return <Navigate to="/login" replace />;
   return children;
 }
 
-export default function App() {
-  const [token, setTokenState] = useState(getToken());
-  const [email, setEmailState] = useState(getEmail());
+function AppRoutes() {
+  const navigate = useNavigate();
+  const [isAuthed, setIsAuthed] = useState(Boolean(getToken()));
 
-  const isAuthenticated = useMemo(() => !!token && isAuthed(), [token]);
-
-  // sync localStorage -> state (au cas où refresh met à jour le token)
   useEffect(() => {
-    const t = getToken();
-    const e = getEmail();
-    setTokenState(t);
-    setEmailState(e);
+    const onStorage = () => setIsAuthed(Boolean(getToken()));
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const doLogin = useCallback(async (email, password) => {
-    await apiLogin(email, password);
-    setTokenState(getToken());
-    setEmailState(getEmail());
-  }, []);
+  const handleLogout = async () => {
+    try {
+      await apiLogout();
+    } catch (e) {
+      console.warn("Logout backend failed:", e);
+    } finally {
+      clearAuth();
+      setIsAuthed(false);
+      navigate("/login", { replace: true });
+    }
+  };
 
-  const doLogout = useCallback(async () => {
-    await apiLogout();
-    setTokenState("");
-    setEmailState("");
-  }, []);
-
-  // IMPORTANT: on passe authFetch tel quel aux pages
-  const authedFetch = useCallback((path, options) => authFetch(path, options), []);
+  const authMemo = useMemo(() => ({ isAuthed }), [isAuthed]);
 
   return (
-    <Router>
-      <Routes>
-        <Route
-          path="/login"
-          element={
-            isAuthenticated ? (
-              <Navigate to="/" replace />
-            ) : (
-              <Login onLogin={doLogin} />
-            )
-          }
-        />
+    <Routes>
+      {/* Public */}
+      <Route
+        path="/login"
+        element={
+          isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Login onLoginSuccess={() => { setIsAuthed(true); navigate("/dashboard", { replace: true }); }} />
+          )
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Register onRegisterSuccess={() => navigate("/login", { replace: true })} />
+          )
+        }
+      />
+      <Route
+        path="/oauth/callback"
+        element={<OAuthCallback onSuccess={() => { setIsAuthed(true); navigate("/dashboard", { replace: true }); }} />}
+      />
 
-        <Route
-          path="/register"
-          element={
-            isAuthenticated ? (
-              <Navigate to="/" replace />
-            ) : (
-              <Register />
-            )
-          }
-        />
+      {/* Privé */}
+      <Route
+        path="/*"
+        element={
+          <Protected isAuthed={authMemo.isAuthed}>
+            <PrivateLayout onLogout={handleLogout}>
+              <Routes>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/emails" element={<EmailHistory />} />
+                <Route path="/invoices" element={<InvoiceGenerator />} />
+                <Route path="/tenants" element={<TenantFilesPanel />} />
+                <Route path="/docs" element={<FileAnalyzer />} />
+                <Route path="/settings" element={<SettingsPanel />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Routes>
+            </PrivateLayout>
+          </Protected>
+        }
+      />
+    </Routes>
+  );
+}
 
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <DashboardPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/emails"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <EmailProcessingPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/invoices"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <InvoicesPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/tenants"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <TenantFilesPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/documents"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <DocumentAnalyzerPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/history"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <HistoryPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
-              <SettingsPage authFetch={authedFetch} onLogout={doLogout} email={email} />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="*" element={<Navigate to={isAuthenticated ? "/" : "/login"} replace />} />
-      </Routes>
-    </Router>
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
   );
 }
