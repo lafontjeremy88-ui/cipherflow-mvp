@@ -2,8 +2,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from "react-router-dom";
 
-import "./App.css";
-
 // Pages existantes
 import Dashboard from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
