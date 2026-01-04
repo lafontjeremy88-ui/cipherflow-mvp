@@ -1,3 +1,5 @@
+// frontend/src/App.jsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 
@@ -12,97 +14,48 @@ import SettingsPage from "./pages/Settings";
 import Login from "./components/Login";
 import Register from "./components/Register";
 
-// ✅ Source unique Auth
 import {
-  apiFetch,
-  initSession,
+  authFetch,
+  login as apiLogin,
   logout as apiLogout,
-  setToken,
-  setEmail,
   getToken,
   getEmail,
+  isAuthed,
 } from "./services/api";
 
+function ProtectedRoute({ isAuthenticated, children }) {
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return children;
+}
+
 export default function App() {
-  const [token, setTokenState] = useState(() => getToken() || "");
-  const [email, setEmailState] = useState(() => getEmail() || "");
-  const [showRegister, setShowRegister] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
+  const [token, setTokenState] = useState(getToken());
+  const [email, setEmailState] = useState(getEmail());
 
-  const isAuthenticated = useMemo(() => !!token, [token]);
+  const isAuthenticated = useMemo(() => !!token && isAuthed(), [token]);
 
-  // ✅ Au démarrage : refresh silencieux (via cookie refresh_token)
+  // sync localStorage -> state (au cas où refresh met à jour le token)
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const session = await initSession();
-        if (cancelled) return;
-
-        setTokenState(session.token || "");
-        setEmailState(session.email || "");
-      } finally {
-        if (!cancelled) setAuthReady(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    const t = getToken();
+    const e = getEmail();
+    setTokenState(t);
+    setEmailState(e);
   }, []);
 
-  // ✅ Callback reçu depuis <Login /> / <Register />
-  // On accepte plusieurs formats (string ou objet)
-  const onAuthSuccess = useCallback((payload, maybeEmail) => {
-    let newToken = "";
-    let newEmail = "";
-
-    if (typeof payload === "string") {
-      newToken = payload;
-      newEmail = maybeEmail || "";
-    } else if (payload && typeof payload === "object") {
-      newToken =
-        payload.token ||
-        payload.access_token ||
-        payload.jwt ||
-        payload?.data?.token ||
-        payload?.data?.access_token ||
-        "";
-
-      newEmail =
-        payload.email ||
-        payload.user_email ||
-        payload?.user?.email ||
-        payload?.data?.email ||
-        maybeEmail ||
-        "";
-    }
-
-    if (newToken) {
-      setToken(newToken);
-      setTokenState(newToken);
-    }
-    if (newEmail) {
-      setEmail(newEmail);
-      setEmailState(newEmail);
-    }
+  const doLogin = useCallback(async (email, password) => {
+    await apiLogin(email, password);
+    setTokenState(getToken());
+    setEmailState(getEmail());
   }, []);
 
-  const onLogout = useCallback(async () => {
+  const doLogout = useCallback(async () => {
     await apiLogout();
     setTokenState("");
     setEmailState("");
   }, []);
 
-  // ✅ Protection simple des routes
-  const ProtectedRoute = ({ children }) => {
-    if (!authReady) return null;
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
-    return children;
-  };
-
-  if (!authReady) return null;
+  // IMPORTANT: on passe authFetch tel quel aux pages
+  const authedFetch = useCallback((path, options) => authFetch(path, options), []);
 
   return (
     <Router>
@@ -113,30 +66,18 @@ export default function App() {
             isAuthenticated ? (
               <Navigate to="/" replace />
             ) : (
-              <div>
-                {showRegister ? (
-                  <Register onLogin={onAuthSuccess} />
-                ) : (
-                  <Login onLogin={onAuthSuccess} />
-                )}
+              <Login onLogin={doLogin} />
+            )
+          }
+        />
 
-                <div style={{ marginTop: 12, textAlign: "center" }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowRegister((v) => !v)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "#8aa4ff",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {showRegister
-                      ? "Déjà un compte ? Se connecter"
-                      : "Pas de compte ? S'inscrire"}
-                  </button>
-                </div>
-              </div>
+        <Route
+          path="/register"
+          element={
+            isAuthenticated ? (
+              <Navigate to="/" replace />
+            ) : (
+              <Register />
             )
           }
         />
@@ -144,56 +85,62 @@ export default function App() {
         <Route
           path="/"
           element={
-            <ProtectedRoute>
-              <DashboardPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <DashboardPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/emails"
           element={
-            <ProtectedRoute>
-              <EmailProcessingPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <EmailProcessingPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/invoices"
           element={
-            <ProtectedRoute>
-              <InvoicesPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <InvoicesPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
-          path="/tenant-files"
+          path="/tenants"
           element={
-            <ProtectedRoute>
-              <TenantFilesPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <TenantFilesPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/documents"
           element={
-            <ProtectedRoute>
-              <DocumentAnalyzerPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <DocumentAnalyzerPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/history"
           element={
-            <ProtectedRoute>
-              <HistoryPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <HistoryPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/settings"
           element={
-            <ProtectedRoute>
-              <SettingsPage authFetch={apiFetch} onLogout={onLogout} email={email} />
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <SettingsPage authFetch={authedFetch} onLogout={doLogout} email={email} />
             </ProtectedRoute>
           }
         />

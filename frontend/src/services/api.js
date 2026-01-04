@@ -1,38 +1,48 @@
 // frontend/src/services/api.js
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "https://cipherflow-mvp-production.up.railway.app";
-
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
 
-export function getToken() {
-  return localStorage.getItem(LS_TOKEN);
-}
+// Ton backend Railway (tu peux aussi le mettre dans Vercel: VITE_API_URL)
+export const API_URL =
+  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
 
-export function getEmail() {
-  return localStorage.getItem(LS_EMAIL);
+export function getToken() {
+  return localStorage.getItem(LS_TOKEN) || "";
 }
 
 export function setToken(token) {
   if (token) localStorage.setItem(LS_TOKEN, token);
-  else localStorage.removeItem(LS_TOKEN);
+}
+
+export function clearToken() {
+  localStorage.removeItem(LS_TOKEN);
+}
+
+export function getEmail() {
+  return localStorage.getItem(LS_EMAIL) || "";
 }
 
 export function setEmail(email) {
   if (email) localStorage.setItem(LS_EMAIL, email);
-  else localStorage.removeItem(LS_EMAIL);
+}
+
+export function clearEmail() {
+  localStorage.removeItem(LS_EMAIL);
 }
 
 export function clearAuth() {
-  localStorage.removeItem(LS_TOKEN);
-  localStorage.removeItem(LS_EMAIL);
+  clearToken();
+  clearEmail();
+}
 
-  // Nettoyage des anciennes clés parasites si elles existent encore
-  localStorage.removeItem("abc");
-  localStorage.removeItem("token");
-  localStorage.removeItem("email");
+export function isAuthed() {
+  return !!getToken();
+}
+
+export function buildUrl(path) {
+  // path doit être du type "/auth/login", "/dashboard/stats" etc.
+  return `${API_URL}${path}`;
 }
 
 async function safeJson(res) {
@@ -44,69 +54,38 @@ async function safeJson(res) {
 }
 
 /**
- * Appels PUBLICS (login/register) :
- * - credentials: "include" indispensable pour recevoir le Set-Cookie (refresh_token)
+ * Appel API bas niveau
+ * - credentials: "include" indispensable pour envoyer/recevoir le refresh_token cookie
  */
-export async function apiPublicFetch(path, options = {}) {
-  const res = await fetch(`${API_URL}${path}`, {
+export async function apiFetch(path, options = {}) {
+  const url = buildUrl(path);
+
+  const res = await fetch(url, {
     ...options,
-    credentials: "include",
     headers: {
-      "Content-Type": "application/json",
       ...(options.headers || {}),
     },
+    credentials: "include",
   });
 
   return res;
 }
 
 /**
- * ✅ LOGIN (email/password)
- * Attendu côté backend :
- * - Set-Cookie refresh_token (HttpOnly)
- * - JSON { access_token, user_email }
+ * Refresh access token via cookie HttpOnly refresh_token
  */
-export async function login(email, password) {
-  const res = await apiPublicFetch("/auth/login", {
+export async function refreshAccessToken() {
+  const res = await apiFetch("/auth/refresh", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    headers: { "Content-Type": "application/json" },
   });
+
+  if (!res.ok) {
+    return { ok: false, status: res.status };
+  }
 
   const data = await safeJson(res);
 
-  if (!res.ok) {
-    // on renvoie une erreur simple (utilisable dans l'UI)
-    const msg = data?.detail || data?.message || "Connexion impossible";
-    throw new Error(msg);
-  }
-
-  const token = data?.access_token;
-  const userEmail = data?.user_email || email;
-
-  if (token) setToken(token);
-  if (userEmail) setEmail(userEmail);
-
-  return { token, email: userEmail, raw: data };
-}
-
-/**
- * (Optionnel) REGISTER si tu as un endpoint backend.
- * Si tu n'en as pas, tu peux supprimer cette fonction.
- */
-export async function register(payload) {
-  const res = await apiPublicFetch("/auth/register", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-
-  const data = await safeJson(res);
-
-  if (!res.ok) {
-    const msg = data?.detail || data?.message || "Inscription impossible";
-    throw new Error(msg);
-  }
-
-  // Certains backends renvoient directement un access_token après register
   if (data?.access_token) {
     setToken(data.access_token);
   }
@@ -114,91 +93,97 @@ export async function register(payload) {
     setEmail(data.user_email);
   }
 
+  return { ok: true, data };
+}
+
+/**
+ * Fetch authentifié:
+ * - Ajoute Authorization Bearer
+ * - Si 401 -> tente refresh -> rejoue la requête 1 fois
+ */
+export async function authFetch(path, options = {}) {
+  const token = getToken();
+
+  const first = await apiFetch(path, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: token ? `Bearer ${token}` : "",
+    },
+  });
+
+  if (first.status !== 401) return first;
+
+  // 401 -> on tente refresh puis retry une seule fois
+  const refreshed = await refreshAccessToken();
+  if (!refreshed.ok) {
+    clearAuth();
+    return first; // renvoie le 401 initial
+  }
+
+  const token2 = getToken();
+
+  const retry = await apiFetch(path, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: token2 ? `Bearer ${token2}` : "",
+    },
+  });
+
+  return retry;
+}
+
+// -------------------- AUTH --------------------
+
+export async function login(email, password) {
+  const res = await apiFetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const data = await safeJson(res);
+
+  if (!res.ok) {
+    const msg = data?.detail || "Login failed";
+    throw new Error(msg);
+  }
+
+  if (data?.access_token) setToken(data.access_token);
+  if (data?.user_email) setEmail(data.user_email);
+  else setEmail(email);
+
   return data;
 }
 
-/**
- * ✅ Refresh access token via cookie HttpOnly refresh_token
- * - Si OK : met à jour localStorage + retourne le token
- * - Si KO : retourne null (ne fait pas de logout ici)
- */
-export async function refreshAccessToken() {
-  const res = await fetch(`${API_URL}/auth/refresh`, {
+export async function register(email, password) {
+  const res = await apiFetch("/auth/register", {
     method: "POST",
-    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
   });
 
-  if (!res.ok) return null;
-
   const data = await safeJson(res);
-  const newToken = data?.access_token || null;
 
-  if (newToken) {
-    setToken(newToken);
-    // email peut rester tel quel en localStorage
-    return newToken;
+  if (!res.ok) {
+    const msg = data?.detail || "Register failed";
+    throw new Error(msg);
   }
 
-  return null;
+  return data;
 }
 
-/**
- * ✅ Appel PROTÉGÉ UNIQUE
- * - Ajoute Authorization Bearer
- * - credentials include pour envoyer cookie refresh_token
- * - Si 401 : tente refresh puis rejoue 1 fois
- */
-export async function apiFetch(path, options = {}) {
-  const doFetch = async (bearer) => {
-    const headers = {
-      ...(options.headers || {}),
-    };
-
-    if (bearer) headers.Authorization = `Bearer ${bearer}`;
-
-    return fetch(`${API_URL}${path}`, {
-      ...options,
-      credentials: "include",
-      headers,
-    });
-  };
-
-  let token = getToken();
-  let res = await doFetch(token);
-
-  // token expiré => refresh + retry 1 fois
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken();
-    if (!newToken) return res;
-    token = newToken;
-    res = await doFetch(token);
-  }
-
-  return res;
-}
-
-/**
- * ✅ Init session au démarrage (silencieux)
- * - si cookie refresh_token existe : récupère un nouvel access_token
- * - retourne { token, email }
- */
-export async function initSession() {
-  // On tente un refresh même si pas de token local :
-  // si le cookie refresh existe, on récupère un token et on restaure la session.
-  const newToken = await refreshAccessToken();
-  return { token: newToken || getToken() || "", email: getEmail() || "" };
-}
-
-/**
- * ✅ Logout PRO
- * - appelle /auth/logout (révoque refresh + supprime cookie)
- * - wipe TOTAL du localStorage auth
- */
 export async function logout() {
-  await fetch(`${API_URL}/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-  }).catch(() => {});
-
+  // On appelle le backend pour nettoyer cookie refresh côté serveur si tu le fais
+  await apiFetch("/auth/logout", { method: "POST" });
   clearAuth();
+}
+
+// -------------------- DATA --------------------
+
+export async function getDashboardStats() {
+  const res = await authFetch("/dashboard/stats");
+  const data = await safeJson(res);
+  return { res, data };
 }
