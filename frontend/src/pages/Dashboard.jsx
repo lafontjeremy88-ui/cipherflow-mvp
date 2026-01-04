@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Mail, FileText, AlertTriangle, Activity } from "lucide-react";
 
@@ -15,32 +15,64 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
   if (percent < 0.05) return null;
 
   return (
-    <text x={x} y={y} fill="white" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" style={{ fontSize: '12px', fontWeight: 'bold', textShadow: '0px 0px 3px rgba(0,0,0,0.5)' }}>
+    <text
+      x={x}
+      y={y}
+      fill="white"
+      textAnchor={x > cx ? "start" : "end"}
+      dominantBaseline="central"
+      style={{
+        fontSize: "12px",
+        fontWeight: "bold",
+        textShadow: "0px 0px 3px rgba(0,0,0,0.5)",
+      }}
+    >
       {`${(percent * 100).toFixed(0)}%`}
     </text>
   );
 };
 
-const DashboardPage = ({ token, authFetch, onNavigate }) => {
+const DashboardPage = ({ authFetch, onLogout, onNavigate }) => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // 🔒 Empêche les doubles appels (React StrictMode / re-render)
+  const hasFetched = useRef(false);
+
   useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+
     const fetchStats = async () => {
       try {
-        const res = await authFetch("https://cipherflow-mvp-production.up.railway.app/dashboard/stats");
+        setLoading(true);
+
+        // ✅ IMPORTANT : authFetch reçoit TOUJOURS un chemin relatif (pas d’URL complète)
+        const res = await authFetch("/dashboard/stats");
+
+        // ✅ Si session invalide => logout propre
+        if (res.status === 401) {
+          await onLogout?.();
+          return;
+        }
+
         if (res.ok) {
           const data = await res.json();
           setStats(data);
+        } else {
+          console.error("Erreur stats:", res.status);
+          setStats(null);
         }
       } catch (error) {
         console.error("Erreur stats:", error);
+        setStats(null);
       } finally {
         setLoading(false);
       }
     };
+
     fetchStats();
-  }, [authFetch]);
+  }, [authFetch, onLogout]);
 
   if (loading) return <div style={{ color: "white", padding: "20px" }}>Chargement des données...</div>;
   if (!stats) return <div style={{ color: "white", padding: "20px" }}>Erreur de chargement.</div>;
@@ -52,7 +84,7 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
     gap: "20px",
-    marginBottom: "30px"
+    marginBottom: "30px",
   };
 
   const cardStyle = {
@@ -65,7 +97,7 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
     gap: "20px",
     boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
     cursor: "pointer",
-    transition: "transform 0.2s ease, border-color 0.2s ease"
+    transition: "transform 0.2s ease, border-color 0.2s ease",
   };
 
   const handleMouseEnter = (e) => {
@@ -85,20 +117,20 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
     alignItems: "center",
     justifyContent: "center",
     color: color,
-    background: bg
+    background: bg,
   });
 
   const valueStyle = {
     fontSize: "2rem",
     fontWeight: "bold",
     color: "white",
-    lineHeight: "1"
+    lineHeight: "1",
   };
 
   const labelStyle = {
     color: "#94a3b8",
     fontSize: "0.9rem",
-    marginTop: "5px"
+    marginTop: "5px",
   };
 
   const mainCardStyle = {
@@ -109,19 +141,24 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
     height: "100%",
     minHeight: "400px",
     display: "flex",
-    flexDirection: "column"
+    flexDirection: "column",
   };
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", paddingBottom: "50px" }}>
-      
-      <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white", marginBottom: "2rem" }}>Tableau de Bord</h2>
+      <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white", marginBottom: "2rem" }}>
+        Tableau de Bord
+      </h2>
 
       {/* --- CARTES KPI --- */}
       <div style={gridStyle}>
-        
         {/* EMAILS */}
-        <div style={cardStyle} onClick={() => onNavigate("history")} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+        <div
+          style={cardStyle}
+          onClick={() => onNavigate?.("history")}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#6366f1", "rgba(99, 102, 241, 0.1)")}>
             <Mail size={24} />
           </div>
@@ -132,7 +169,12 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
         </div>
 
         {/* URGENCE HAUTE */}
-        <div style={cardStyle} onClick={() => onNavigate("history")} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+        <div
+          style={cardStyle}
+          onClick={() => onNavigate?.("history")}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#f59e0b", "rgba(245, 158, 11, 0.1)")}>
             <AlertTriangle size={24} />
           </div>
@@ -143,7 +185,12 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
         </div>
 
         {/* FACTURES */}
-        <div style={cardStyle} onClick={() => onNavigate("invoices")} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+        <div
+          style={cardStyle}
+          onClick={() => onNavigate?.("invoices")}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <div style={iconBoxStyle("#10b981", "rgba(16, 185, 129, 0.1)")}>
             <FileText size={24} />
           </div>
@@ -156,10 +203,12 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
 
       {/* --- GRAPHIQUES ET LISTE --- */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: "20px" }}>
-        
         {/* GRAPHIQUE */}
         <div style={mainCardStyle}>
-          <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem", fontWeight: "bold" }}>Répartition par Catégorie</h3>
+          <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem", fontWeight: "bold" }}>
+            Répartition par Catégorie
+          </h3>
+
           <div style={{ flex: 1, width: "100%", minHeight: "300px" }}>
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -173,15 +222,21 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
                     paddingAngle={5}
                     dataKey="value"
                     labelLine={false}
-                    label={renderCustomizedLabel} // ✅ Ajout des pourcentages
+                    label={renderCustomizedLabel}
                   >
                     {chartData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  {/* ✅ Tooltip corrigé : Fond blanc, texte noir pour lisibilité */}
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: "#ffffff", borderRadius: "8px", border: "none", color: "#000", fontWeight: "bold" }}
+
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#ffffff",
+                      borderRadius: "8px",
+                      border: "none",
+                      color: "#000",
+                      fontWeight: "bold",
+                    }}
                     itemStyle={{ color: "#000" }}
                   />
                   <Legend verticalAlign="bottom" height={36} iconType="circle" />
@@ -197,27 +252,56 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
 
         {/* LISTE ACTIVITÉ */}
         <div style={mainCardStyle}>
-          <h3 style={{ color: "white", marginBottom: "20px", fontSize: "1.2rem", fontWeight: "bold", display: "flex", alignItems: "center", gap: "10px" }}>
+          <h3
+            style={{
+              color: "white",
+              marginBottom: "20px",
+              fontSize: "1.2rem",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
             <Activity size={20} color="#6366f1" /> Activité Récente
           </h3>
+
           <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             {stats.recents && stats.recents.length > 0 ? (
               stats.recents.map((item) => (
-                <div 
-                  key={item.id} 
-                  onClick={() => onNavigate("history", item.id)}
-                  style={{ display: "flex", alignItems: "center", gap: "15px", paddingBottom: "15px", borderBottom: "1px solid #334155", cursor: "pointer" }}
+                <div
+                  key={item.id}
+                  onClick={() => onNavigate?.("history", item.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "15px",
+                    paddingBottom: "15px",
+                    borderBottom: "1px solid #334155",
+                    cursor: "pointer",
+                  }}
                 >
-                  <div style={{ 
-                    width: "10px", 
-                    height: "10px", 
-                    borderRadius: "50%", 
-                    background: item.urgency && item.urgency.toLowerCase().includes("haut") ? "#ef4444" : "#10b981",
-                    boxShadow: item.urgency && item.urgency.toLowerCase().includes("haut") ? "0 0 10px rgba(239, 68, 68, 0.5)" : "none"
-                  }}></div>
+                  <div
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "50%",
+                      background:
+                        item.urgency && item.urgency.toLowerCase().includes("haut") ? "#ef4444" : "#10b981",
+                      boxShadow:
+                        item.urgency && item.urgency.toLowerCase().includes("haut")
+                          ? "0 0 10px rgba(239, 68, 68, 0.5)"
+                          : "none",
+                    }}
+                  ></div>
+
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: "bold", color: "white", marginBottom: "4px" }}>{item.subject || "Sans objet"}</div>
-                    <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>{item.category} • {item.date}</div>
+                    <div style={{ fontWeight: "bold", color: "white", marginBottom: "4px" }}>
+                      {item.subject || "Sans objet"}
+                    </div>
+                    <div style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+                      {item.category} • {item.date}
+                    </div>
                   </div>
                 </div>
               ))
@@ -226,7 +310,6 @@ const DashboardPage = ({ token, authFetch, onNavigate }) => {
             )}
           </div>
         </div>
-
       </div>
     </div>
   );
