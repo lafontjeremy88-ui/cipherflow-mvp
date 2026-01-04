@@ -1,337 +1,313 @@
-import React, { useState, useEffect } from "react";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-  useNavigate,
-  useLocation,
-  Link,
-} from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 
-import {
-  LayoutDashboard,
-  Mail,
-  FileText,
-  FolderOpen,
-  FileSearch,
-  History,
-  Settings,
-  LogOut,
-  User,
-  Shield,
-  Building2,
-  PieChart,
-  FolderUp,
-} from "lucide-react";
+import DashboardPage from "./pages/Dashboard";
+import EmailProcessingPage from "./pages/EmailProcessing";
+import InvoicesPage from "./pages/Invoices";
+import TenantFilesPage from "./pages/TenantFiles";
+import DocumentAnalyzerPage from "./pages/DocumentAnalyzer";
+import HistoryPage from "./pages/History";
+import SettingsPage from "./pages/Settings";
 
-import Dashboard from "./pages/Dashboard";
-import EmailProcessing from "./pages/EmailProcessing";
-import RentReceipts from "./pages/RentReceipts";
-import TenantFiles from "./pages/TenantFiles";
-import DocumentAnalyzer from "./pages/DocumentAnalyzer";
-import HistoryPage from "./pages/HistoryPage";
-import SettingsPage from "./pages/SettingsPage";
-
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import OAuthCallback from "./pages/OAuthCallback";
+import Login from "./components/Login";
+import Register from "./components/Register";
 
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "https://cipherflow-mvp-production.up.railway.app";
 
-function clearAuthStorage() {
+// ✅ Mets ça dans Vercel : VITE_API_URL=https://cipherflow-mvp-production.up.railway.app
+const API_BASE = (import.meta?.env?.VITE_API_URL || "").replace(/\/$/, "");
+
+function safeJsonParse(str) {
   try {
-    localStorage.removeItem(LS_TOKEN);
-    localStorage.removeItem(LS_EMAIL);
-    // Legacy keys (older versions)
-    localStorage.removeItem("abc");
-    localStorage.removeItem("token");
-    localStorage.removeItem("access_token");
-  } catch {}
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function extractTokenFromRefreshResponse(data) {
+  // On accepte plusieurs formats possibles pour être robuste
+  return (
+    data?.access_token ||
+    data?.token ||
+    data?.jwt ||
+    data?.data?.access_token ||
+    null
+  );
+}
+
+function buildUrl(pathOrUrl) {
+  if (!pathOrUrl) return "";
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  if (!API_BASE) return pathOrUrl; // fallback si env manquant (mais à éviter)
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${API_BASE}${path}`;
 }
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem(LS_TOKEN) || "");
-  const [userEmail, setUserEmail] = useState(localStorage.getItem(LS_EMAIL) || "");
+  const [token, setToken] = useState(() => localStorage.getItem(LS_TOKEN) || "");
+  const [email, setEmail] = useState(() => localStorage.getItem(LS_EMAIL) || "");
   const [showRegister, setShowRegister] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false); // évite des flashs au chargement
 
-  const handleAuthSuccess = (accessToken, email) => {
-    // Clean legacy keys so we don't keep "abc" around
+  // ✅ Nettoyage des anciennes clés parasites (ex: "abc")
+  useEffect(() => {
     try {
       localStorage.removeItem("abc");
+      localStorage.removeItem("token"); // si tu avais une ancienne key générique
+      localStorage.removeItem("email"); // idem
     } catch {}
-    localStorage.setItem(LS_TOKEN, accessToken);
-    localStorage.setItem(LS_EMAIL, email);
-    setToken(accessToken);
-    setUserEmail(email);
-  };
+  }, []);
 
-  // 1) Boot session:
-  // - If there is no access token in localStorage, we try to restore the session via /auth/refresh (refresh token cookie).
+  const isAuthenticated = useMemo(() => !!token, [token]);
+
+  const persistAuth = useCallback((newToken, newEmail) => {
+    if (newToken) {
+      localStorage.setItem(LS_TOKEN, newToken);
+      setToken(newToken);
+    }
+    if (newEmail) {
+      localStorage.setItem(LS_EMAIL, newEmail);
+      setEmail(newEmail);
+    }
+  }, []);
+
+  const clearAuth = useCallback(() => {
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_EMAIL);
+    setToken("");
+    setEmail("");
+  }, []);
+
+  // ✅ Appel refresh : récupère un nouveau access token via cookie refresh (credentials include)
+  const refreshAccessToken = useCallback(async () => {
+    const url = buildUrl("/auth/refresh");
+
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "include", // IMPORTANT : envoie les cookies
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await res.json().catch(() => null);
+    const newToken = extractTokenFromRefreshResponse(data);
+    return newToken || null;
+  }, []);
+
+  // ✅ Logout backend (optionnel mais pro) + nettoyage local
+  const logout = useCallback(async () => {
+    try {
+      const url = buildUrl("/auth/logout");
+      await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      }).catch(() => {});
+    } finally {
+      clearAuth();
+    }
+  }, [clearAuth]);
+
+  // ✅ authFetch PRO : retry après refresh
+  const authFetch = useCallback(
+    async (pathOrUrl, options = {}) => {
+      const url = buildUrl(pathOrUrl);
+
+      const doRequest = async (jwt, isRetry = false) => {
+        const headers = new Headers(options.headers || {});
+        headers.set("Content-Type", headers.get("Content-Type") || "application/json");
+
+        if (jwt) {
+          headers.set("Authorization", `Bearer ${jwt}`);
+        }
+
+        const res = await fetch(url, {
+          ...options,
+          headers,
+          credentials: "include", // IMPORTANT : pour refresh cookie + CORS allow-credentials
+        });
+
+        // ✅ Si token expiré → refresh → retry 1 fois
+        if (res.status === 401 && !isRetry) {
+          const newToken = await refreshAccessToken();
+          if (newToken) {
+            persistAuth(newToken, null);
+            return doRequest(newToken, true);
+          }
+          // refresh impossible → logout
+          await logout();
+          throw new Error("Unauthorized (refresh failed)");
+        }
+
+        return res;
+      };
+
+      return doRequest(token, false);
+    },
+    [token, refreshAccessToken, persistAuth, logout]
+  );
+
+  // ✅ Au démarrage : si on a déjà un token → on tente un refresh silencieux (pro)
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const hasToken = !!localStorage.getItem(LS_TOKEN);
-        if (hasToken) {
-          setAuthLoading(false);
-          return;
+        if (token) {
+          const newToken = await refreshAccessToken();
+          if (!cancelled && newToken) {
+            persistAuth(newToken, null);
+          }
         }
-
-        const res = await fetch(`${API_BASE}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!res.ok) {
-          setAuthLoading(false);
-          return;
-        }
-
-        const data = await res.json();
-        const accessToken = data?.access_token || data?.accessToken || "";
-        if (!accessToken) {
-          setAuthLoading(false);
-          return;
-        }
-
-        clearAuthStorage();
-        localStorage.setItem(LS_TOKEN, accessToken);
-        if (data?.email) localStorage.setItem(LS_EMAIL, data.email);
-
-        if (!cancelled) {
-          setToken(accessToken);
-          if (data?.email) setUserEmail(data.email);
-        }
-      } catch {
-        // ignore
       } finally {
-        if (!cancelled) setAuthLoading(false);
+        if (!cancelled) setAuthReady(true);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [token, refreshAccessToken, persistAuth]);
 
-  // 2) Auto-refresh access token shortly before it expires
-  useEffect(() => {
-    if (!token) return;
-
-    const parseJwt = (t) => {
-      try {
-        const payload = t.split(".")[1];
-        const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-        return JSON.parse(json);
-      } catch {
-        return null;
+  // ✅ Callback reçu depuis <Login /> ou <Register />
+  const onAuthSuccess = useCallback(
+    (payload, maybeEmail) => {
+      // On supporte plusieurs formats :
+      // 1) onLogin(token, email)
+      // 2) onLogin({ token, email })
+      // 3) onLogin({ access_token, email })
+      if (typeof payload === "string") {
+        persistAuth(payload, maybeEmail || "");
+        return;
       }
-    };
 
-    const payload = parseJwt(token);
-    const exp = payload?.exp ? payload.exp * 1000 : null;
-    if (!exp) return;
+      const t =
+        payload?.token ||
+        payload?.access_token ||
+        payload?.jwt ||
+        payload?.data?.token ||
+        payload?.data?.access_token ||
+        "";
 
-    const now = Date.now();
-    const delay = Math.max(exp - now - 60_000, 5_000);
+      const e = payload?.email || payload?.user?.email || payload?.data?.email || "";
 
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error("refresh_failed");
-
-        const data = await res.json();
-        const accessToken = data?.access_token || data?.accessToken || "";
-        if (!accessToken) throw new Error("no_token");
-
-        localStorage.setItem(LS_TOKEN, accessToken);
-        setToken(accessToken);
-      } catch {
-        clearAuthStorage();
-        setToken("");
-        setUserEmail("");
+      if (t) {
+        persistAuth(t, e);
       }
-    }, delay);
+    },
+    [persistAuth]
+  );
 
-    return () => clearTimeout(timer);
-  }, [token]);
-
-  const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-    } catch {
-      // ignore
-    }
-    clearAuthStorage();
-    setToken("");
-    setUserEmail("");
-    setShowRegister(false);
+  // ✅ Petit composant de protection des routes
+  const ProtectedRoute = ({ children }) => {
+    if (!authReady) return null; // évite flash login/dashboard
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    return children;
   };
+
+  if (!authReady) return null;
 
   return (
     <Router>
       <Routes>
         <Route
-          path="/oauth/callback"
-          element={<OAuthCallback onAuthSuccess={handleAuthSuccess} />}
-        />
-        <Route
-          path="/*"
+          path="/login"
           element={
-            <AppShell
-              token={token}
-              userEmail={userEmail}
-              authLoading={authLoading}
-              showRegister={showRegister}
-              setShowRegister={setShowRegister}
-              onAuthSuccess={handleAuthSuccess}
-              onLogout={handleLogout}
-            />
+            isAuthenticated ? (
+              <Navigate to="/" replace />
+            ) : (
+              <div>
+                {showRegister ? (
+                  <Register onLogin={onAuthSuccess} />
+                ) : (
+                  <Login onLogin={onAuthSuccess} />
+                )}
+
+                <div style={{ marginTop: 12, textAlign: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowRegister((v) => !v)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#8aa4ff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showRegister
+                      ? "Déjà un compte ? Se connecter"
+                      : "Pas de compte ? S'inscrire"}
+                  </button>
+                </div>
+              </div>
+            )
           }
         />
+
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <DashboardPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/emails"
+          element={
+            <ProtectedRoute>
+              <EmailProcessingPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices"
+          element={
+            <ProtectedRoute>
+              <InvoicesPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tenant-files"
+          element={
+            <ProtectedRoute>
+              <TenantFilesPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/documents"
+          element={
+            <ProtectedRoute>
+              <DocumentAnalyzerPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/history"
+          element={
+            <ProtectedRoute>
+              <HistoryPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <SettingsPage authFetch={authFetch} onLogout={logout} email={email} />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="*" element={<Navigate to={isAuthenticated ? "/" : "/login"} replace />} />
       </Routes>
     </Router>
-  );
-}
-
-function AppShell({
-  token,
-  userEmail,
-  authLoading,
-  showRegister,
-  setShowRegister,
-  onAuthSuccess,
-  onLogout,
-}) {
-  const location = useLocation();
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0B1020] text-white">
-        <div className="text-center">
-          <div className="text-lg font-semibold">Chargement…</div>
-          <div className="text-sm opacity-70 mt-2">Vérification de la session</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!token) {
-    // Auth pages
-    if (showRegister) {
-      return (
-        <Register
-          onSuccess={(accessToken, email) => {
-            onAuthSuccess(accessToken, email);
-            setShowRegister(false);
-          }}
-          onSwitchToLogin={() => setShowRegister(false)}
-        />
-      );
-    }
-
-    return (
-      <Login
-        onSuccess={(accessToken, email) => onAuthSuccess(accessToken, email)}
-        onSwitchToRegister={() => setShowRegister(true)}
-      />
-    );
-  }
-
-  // Logged in app
-  return <MainLayout userEmail={userEmail} onLogout={onLogout} />;
-}
-
-function MainLayout({ userEmail, onLogout }) {
-  const location = useLocation();
-
-  const nav = [
-    { to: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
-    { to: "/emails", label: "Traitement Email", icon: Mail },
-    { to: "/quittances", label: "Quittances & Loyers", icon: FileText },
-    { to: "/dossiers", label: "Dossiers Locataires", icon: FolderOpen },
-    { to: "/analyse", label: "Analyse Docs", icon: FileSearch },
-    { to: "/historique", label: "Historique", icon: History },
-    { to: "/parametres", label: "Paramètres", icon: Settings },
-  ];
-
-  return (
-    <div className="min-h-screen bg-[#0B1020] text-white flex">
-      {/* Sidebar */}
-      <aside className="w-[280px] bg-[#0E1630] border-r border-white/5 p-5 flex flex-col">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-9 h-9 rounded-xl bg-indigo-500/20 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-indigo-300" />
-          </div>
-          <div>
-            <div className="font-bold text-lg">CipherFlow V2</div>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-5">
-          <div className="text-sm opacity-70 flex items-center gap-2">
-            <User className="w-4 h-4" />
-            Connecté
-          </div>
-          <div className="text-sm mt-1 truncate">{userEmail}</div>
-        </div>
-
-        <nav className="flex-1 flex flex-col gap-2">
-          {nav.map((item) => {
-            const active =
-              item.to === "/"
-                ? location.pathname === "/"
-                : location.pathname.startsWith(item.to);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition ${
-                  active ? "bg-indigo-500/30 border border-indigo-400/30" : "hover:bg-white/5"
-                }`}
-              >
-                <Icon className="w-4 h-4 opacity-80" />
-                <span className="text-sm">{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <button
-          onClick={onLogout}
-          className="mt-4 flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-500/10 text-red-300 transition"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="text-sm">Déconnexion</span>
-        </button>
-      </aside>
-
-      {/* Main */}
-      <main className="flex-1 p-8">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/emails" element={<EmailProcessing />} />
-          <Route path="/quittances" element={<RentReceipts />} />
-          <Route path="/dossiers" element={<TenantFiles />} />
-          <Route path="/analyse" element={<DocumentAnalyzer />} />
-          <Route path="/historique" element={<HistoryPage />} />
-          <Route path="/parametres" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </div>
   );
 }
