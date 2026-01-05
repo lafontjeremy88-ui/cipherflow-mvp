@@ -1,241 +1,198 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-  NavLink,
-  useNavigate,
-  useLocation,
-} from "react-router-dom";
+import { Routes, Route, Navigate, NavLink, useNavigate } from "react-router-dom";
 
 import Dashboard from "./pages/Dashboard";
+import OAuthCallback from "./pages/OAuthCallback";
+
+import Login from "./components/Login";
+import Register from "./components/Register";
+import FileAnalyzer from "./components/FileAnalyzer";
+import InvoiceGenerator from "./components/InvoiceGenerator";
 import EmailHistory from "./components/EmailHistory";
+import SettingsPanel from "./components/SettingsPanel";
+import TenantFilesPanel from "./components/TenantFilesPanel";
 
-// ⚠️ Adapte ces imports à TES fichiers si les noms diffèrent
-import EmailProcessor from "./pages/EmailProcessor";
-import ReceiptGenerator from "./pages/ReceiptGenerator";
-import FileAnalyzer from "./pages/FileAnalyzer";
-import Settings from "./pages/Settings";
-import Login from "./pages/Login";
+import { getToken, getEmail, clearAuth } from "./services/api";
 
-// =====================
-// Config
-// =====================
-const API_BASE =
-  import.meta.env.VITE_API_URL ||
-  import.meta.env.VITE_BACKEND_URL ||
-  "http://localhost:8000";
-
-// =====================
-// Helpers
-// =====================
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-function getStoredAccessToken() {
-  return localStorage.getItem("access_token") || "";
+function ProtectedRoute({ children }) {
+  const token = getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
 }
 
-function setStoredAccessToken(token) {
-  if (!token) localStorage.removeItem("access_token");
-  else localStorage.setItem("access_token", token);
-}
+export default function App() {
+  const navigate = useNavigate();
+  const [authed, setAuthed] = useState(!!getToken());
 
-// =====================
-// Layout
-// =====================
-function AppShell({ authFetch, onLogout }) {
-  const location = useLocation();
+  const userEmail = useMemo(() => getEmail() || "", [authed]);
 
-  const navItems = [
-    { to: "/dashboard", label: "Vue d'ensemble", icon: "🕒" },
-    { to: "/email", label: "Traitement Email", icon: "✉️" },
-    { to: "/receipts", label: "Quittances & Loyers", icon: "📄" },
-    { to: "/documents", label: "Dossiers Locataires", icon: "📁" },
-    { to: "/emails", label: "Historique", icon: "🕘" },
-    { to: "/settings", label: "Paramètres", icon: "⚙️" },
-  ];
+  // Synchronise si token change (login/logout)
+  useEffect(() => {
+    const onStorage = () => setAuthed(!!getToken());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const handleLogout = () => {
+    clearAuth();
+    setAuthed(false);
+    navigate("/login", { replace: true });
+  };
+
+  const handleLoginSuccess = () => {
+    setAuthed(true);
+    navigate("/dashboard", { replace: true });
+  };
+
+  const navItemClass = ({ isActive }) =>
+    cx("nav-item", isActive && "active");
 
   return (
-    <div className="app">
+    <div className="app-shell">
+      {/* Sidebar */}
       <aside className="sidebar">
-        <div className="logo">
-          <span className="logo-icon">⚡</span>
-          <span className="logo-text">CipherFlow V2</span>
-        </div>
-
-        <div className="userbox">
-          <div className="avatar">👤</div>
-          <div className="userinfo">
-            <div className="status">Connecté</div>
-            <div className="email">_</div>
+        <div className="brand">
+          <div className="brand-logo">CF</div>
+          <div className="brand-text">
+            <div className="brand-title">CipherFlow</div>
+            <div className="brand-sub">Inbox-IA-Pro</div>
           </div>
         </div>
 
         <nav className="nav">
-          {navItems.map((it) => (
-            <NavLink
-              key={it.to}
-              to={it.to}
-              className={({ isActive }) =>
-                cx("nav-item", isActive && "active")
-              }
-            >
-              <span className="nav-icon">{it.icon}</span>
-              <span>{it.label}</span>
-            </NavLink>
-          ))}
-        </nav>
+          <NavLink to="/dashboard" className={navItemClass}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/emails/history" className={navItemClass}>
+            Historique Emails
+          </NavLink>
+          <NavLink to="/documents" className={navItemClass}>
+            Analyse de documents
+          </NavLink>
+          <NavLink to="/invoices" className={navItemClass}>
+            Quittances
+          </NavLink>
+          <NavLink to="/tenant-files" className={navItemClass}>
+            Dossiers locataires
+          </NavLink>
+          <NavLink to="/settings" className={navItemClass}>
+            Paramètres
+          </NavLink>
 
-        <div className="nav-bottom">
-          <button className="logout" onClick={onLogout}>
-            ⮐ Déconnexion
-          </button>
-        </div>
+          <div className="nav-spacer" />
+
+          {authed ? (
+            <button className="btn btn-ghost" onClick={handleLogout}>
+              Se déconnecter
+            </button>
+          ) : (
+            <div className="muted small">Non connecté</div>
+          )}
+
+          {authed && userEmail ? (
+            <div className="muted small" style={{ marginTop: 10 }}>
+              {userEmail}
+            </div>
+          ) : null}
+        </nav>
       </aside>
 
-      <main className="main">
+      {/* Content */}
+      <main className="content">
         <Routes>
+          {/* Public */}
+          <Route
+            path="/login"
+            element={
+              authed ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Login onLogin={handleLoginSuccess} />
+              )
+            }
+          />
+          <Route
+            path="/register"
+            element={
+              authed ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Register />
+              )
+            }
+          />
+
+          {/* OAuth callback */}
+          <Route
+            path="/oauth/callback"
+            element={<OAuthCallback onDone={handleLoginSuccess} />}
+          />
+
+          {/* Protected */}
           <Route
             path="/dashboard"
-            element={<Dashboard authFetch={authFetch} />}
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
           />
-          <Route path="/emails" element={<EmailHistory authFetch={authFetch} />} />
-
-          {/* ⚠️ adapte si besoin */}
-          <Route path="/email" element={<EmailProcessor authFetch={authFetch} />} />
           <Route
-            path="/receipts"
-            element={<ReceiptGenerator authFetch={authFetch} />}
+            path="/emails/history"
+            element={
+              <ProtectedRoute>
+                <EmailHistory />
+              </ProtectedRoute>
+            }
           />
           <Route
             path="/documents"
-            element={<FileAnalyzer authFetch={authFetch} />}
+            element={
+              <ProtectedRoute>
+                <FileAnalyzer />
+              </ProtectedRoute>
+            }
           />
-          <Route path="/settings" element={<Settings authFetch={authFetch} />} />
+          <Route
+            path="/invoices"
+            element={
+              <ProtectedRoute>
+                <InvoiceGenerator />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tenant-files"
+            element={
+              <ProtectedRoute>
+                <TenantFilesPanel />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <SettingsPanel />
+              </ProtectedRoute>
+            }
+          />
 
-          {/* fallback */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          {/* Default */}
+          <Route
+            path="/"
+            element={<Navigate to={authed ? "/dashboard" : "/login"} replace />}
+          />
+          <Route
+            path="*"
+            element={<Navigate to={authed ? "/dashboard" : "/login"} replace />}
+          />
         </Routes>
       </main>
     </div>
-  );
-}
-
-function AppInner() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const [accessToken, setAccessToken] = useState(getStoredAccessToken());
-  const isAuthed = !!accessToken;
-
-  // ---------------------
-  // authFetch : TOUJOURS utiliser ça pour appeler le backend
-  // ---------------------
-  const authFetch = useMemo(() => {
-    return async (path, options = {}) => {
-      const url = String(path || "").startsWith("http")
-        ? String(path)
-        : `${API_BASE}${String(path || "")}`;
-
-      const headers = new Headers(options.headers || {});
-      headers.set("Content-Type", headers.get("Content-Type") || "application/json");
-
-      const token = getStoredAccessToken();
-      if (token) headers.set("Authorization", `Bearer ${token}`);
-
-      const doFetch = async () => {
-        return fetch(url, { ...options, headers, credentials: "include" });
-      };
-
-      let res = await doFetch();
-
-      // Si 401 : refresh puis retry
-      if (res.status === 401) {
-        try {
-          const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
-            method: "POST",
-            credentials: "include",
-          });
-
-          if (refreshRes.ok) {
-            const refreshData = await refreshRes.json().catch(() => ({}));
-            const newToken =
-              refreshData?.access_token ||
-              refreshData?.accessToken ||
-              refreshData?.token ||
-              "";
-
-            if (newToken) {
-              setStoredAccessToken(newToken);
-              setAccessToken(newToken);
-
-              // retry avec nouveau token
-              headers.set("Authorization", `Bearer ${newToken}`);
-              res = await doFetch();
-            }
-          } else {
-            // refresh KO => logout
-            setStoredAccessToken("");
-            setAccessToken("");
-          }
-        } catch (e) {
-          setStoredAccessToken("");
-          setAccessToken("");
-        }
-      }
-
-      return res;
-    };
-  }, []);
-
-  // Redirection si pas loggé
-  useEffect(() => {
-    const publicPaths = ["/login"];
-    const isPublic = publicPaths.includes(location.pathname);
-    if (!isAuthed && !isPublic) navigate("/login", { replace: true });
-    if (isAuthed && location.pathname === "/login")
-      navigate("/dashboard", { replace: true });
-  }, [isAuthed, location.pathname, navigate]);
-
-  const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" });
-    } catch (e) {
-      // ignore
-    }
-    setStoredAccessToken("");
-    setAccessToken("");
-    navigate("/login", { replace: true });
-  };
-
-  return (
-    <Routes>
-      <Route
-        path="/login"
-        element={
-          <Login
-            apiBase={API_BASE}
-            onLogin={(token) => {
-              setStoredAccessToken(token);
-              setAccessToken(token);
-              navigate("/dashboard", { replace: true });
-            }}
-          />
-        }
-      />
-      <Route path="/*" element={<AppShell authFetch={authFetch} onLogout={handleLogout} />} />
-    </Routes>
-  );
-}
-
-export default function App() {
-  return (
-    <Router>
-      <AppInner />
-    </Router>
   );
 }

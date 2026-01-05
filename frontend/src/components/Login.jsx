@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { Lock, Mail, ArrowRight, Zap } from "lucide-react";
-import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
+import { login, API_URL, clearAuth } from "../services/api";
 
-const Login = ({ onLogin }) => {
+export default function Login({ onLogin }) {
   const [email, setEmailState] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -14,35 +14,34 @@ const Login = ({ onLogin }) => {
     setError("");
 
     try {
-      clearAuth(); // on repart propre
+      // IMPORTANT : on utilise la fonction login() de services/api.js
+      // Elle gère apiPublicFetch + setToken + setEmail
+      const data = await login(email, password);
 
-      const res = await apiPublicFetch("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(data?.detail || "Erreur de connexion");
+      const token = data?.access_token || data?.token || data?.accessToken;
+      if (!token) {
+        setError(data?.detail || "Token manquant (login incomplet)");
         setLoading(false);
         return;
       }
 
-      // access token (stocké local)
-      setToken(data.access_token);
-
-      // email (optionnel)
-      const userEmail = data.user_email || email;
-      setEmail(userEmail);
-
-      // remonte au parent
-      onLogin(data.access_token, userEmail);
+      // Préviens App.jsx que le login est OK
+      if (typeof onLogin === "function") onLogin();
     } catch (err) {
-      setError("Erreur réseau");
+      const msg =
+        err?.message ||
+        err?.detail ||
+        "Erreur de connexion (vérifie email / mot de passe)";
+      setError(msg);
+      clearAuth();
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogle = () => {
+    // Démarre l’OAuth côté backend
+    window.location.href = `${API_URL}/auth/google/login`;
   };
 
   return (
@@ -56,7 +55,7 @@ const Login = ({ onLogin }) => {
         <p className="text-white/70 mb-6">Connexion à l’espace pro</p>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200">
+          <div className="bg-red-500/15 border border-red-500/30 text-red-200 p-3 rounded-xl mb-4">
             {error}
           </div>
         )}
@@ -71,8 +70,9 @@ const Login = ({ onLogin }) => {
                 value={email}
                 onChange={(e) => setEmailState(e.target.value)}
                 type="email"
+                autoComplete="email"
+                placeholder="toi@agence.com"
                 required
-                placeholder="admin@cipherflow.com"
               />
             </div>
           </div>
@@ -86,24 +86,37 @@ const Login = ({ onLogin }) => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type="password"
-                required
+                autoComplete="current-password"
                 placeholder="••••••••"
+                required
               />
             </div>
           </div>
 
           <button
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition rounded-xl py-3 font-semibold disabled:opacity-50"
             type="submit"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition rounded-xl py-3 font-semibold disabled:opacity-60"
           >
             {loading ? "Connexion..." : "Se connecter"}
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        <div className="my-5 border-t border-white/10" />
+
+        <button
+          type="button"
+          onClick={handleGoogle}
+          className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 transition rounded-xl py-3 font-semibold"
+        >
+          Continuer avec Google
+        </button>
+
+        <p className="text-xs text-white/50 mt-4">
+          Astuce : si ça boucle, vide le storage (localStorage) et reconnecte-toi.
+        </p>
       </div>
     </div>
   );
-};
-
-export default Login;
+}
