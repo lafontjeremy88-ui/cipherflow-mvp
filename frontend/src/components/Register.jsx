@@ -1,196 +1,201 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Mail, Lock, UserPlus, AlertCircle } from "lucide-react";
-
-import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
-
-function passwordIssues(pw) {
-  const issues = [];
-  if (!pw || pw.length < 8) issues.push("Au moins 8 caractères");
-  if (!/[a-z]/.test(pw)) issues.push("Au moins 1 minuscule");
-  if (!/[A-Z]/.test(pw)) issues.push("Au moins 1 majuscule");
-  if (!/[0-9]/.test(pw)) issues.push("Au moins 1 chiffre");
-  if (!/[^A-Za-z0-9]/.test(pw)) issues.push("Au moins 1 caractère spécial");
-  return issues;
-}
+import { API_URL } from "../services/api";
 
 export default function Register() {
-  const nav = useNavigate();
+  const navigate = useNavigate();
 
-  const [email, setEmailInput] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState("");
 
-  const issues = useMemo(() => passwordIssues(password), [password]);
-  const passwordsMatch = password && confirm && password === confirm;
+  const canSubmit = useMemo(() => {
+    return (
+      email.trim().length > 3 &&
+      password.length >= 1 &&
+      confirmPassword.length >= 1 &&
+      !loading
+    );
+  }, [email, password, confirmPassword, loading]);
 
-  async function onSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setSuccess("");
 
     const cleanEmail = email.trim().toLowerCase();
 
-    if (!cleanEmail) return setError("Email requis.");
-    if (!password) return setError("Mot de passe requis.");
-    if (issues.length) return setError("Mot de passe trop faible.");
-    if (password !== confirm) return setError("Les mots de passe ne correspondent pas.");
+    if (!cleanEmail.includes("@")) {
+      setError("Email invalide.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Les mots de passe ne correspondent pas.");
+      return;
+    }
 
     try {
-      setBusy(true);
-      clearAuth(); // repart propre
+      setLoading(true);
 
-      const data = await apiPublicFetch("/auth/register", {
+      const res = await fetch(`${API_URL}/auth/register`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: cleanEmail, password }),
       });
 
-      // ✅ Toujours afficher un feedback si HTTP 200
-      setSuccess("✅ Inscription enregistrée !");
+      const data = await res.json().catch(() => ({}));
 
-      // Si le backend renvoie un token → auto-login
-      const token = data?.access_token || data?.token || data?.accessToken || null;
-      const returnedEmail = data?.user_email || data?.email || cleanEmail;
-
-      if (token) {
-        setToken(token);
-        setEmail(returnedEmail);
-        setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
-        setTimeout(() => nav("/dashboard"), 600);
+      if (!res.ok) {
+        // FastAPI renvoie souvent { detail: "..." }
+        setError(data?.detail || "Inscription impossible.");
         return;
       }
 
-      // Sinon → redirige vers login après un court délai
+      // ✅ Succès
       setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");
-      setTimeout(() => nav("/login"), 900);
+
+      // Option: vider les champs
+      setPassword("");
+      setConfirmPassword("");
+
+      // Redirection vers login
+      setTimeout(() => navigate("/login"), 1200);
     } catch (err) {
-      setError(err?.message || "Inscription impossible.");
+      setError("Erreur réseau. Réessaie.");
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-[#05060a] via-[#0b1020] to-[#05060a] p-6">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center">
-              <UserPlus className="h-5 w-5 text-white/90" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-white">Créer un compte</h1>
-              <p className="text-sm text-white/60">Accède à ton espace CipherFlow.</p>
-            </div>
-          </div>
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <h1 style={styles.title}>Créer un compte</h1>
+        <p style={styles.subtitle}>Accède à ton espace CipherFlow.</p>
 
-          {error ? (
-            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          ) : null}
+        {error ? <div style={{ ...styles.alert, ...styles.alertError }}>{error}</div> : null}
+        {success ? <div style={{ ...styles.alert, ...styles.alertSuccess }}>{success}</div> : null}
 
-          {success ? (
-            <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-              {success}
-            </div>
-          ) : null}
+        <form onSubmit={handleSubmit} style={styles.form}>
+          <label style={styles.label}>Email</label>
+          <input
+            style={styles.input}
+            type="email"
+            placeholder="ton@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
 
-          <form onSubmit={onSubmit} className="space-y-4">
-            <label className="block">
-              <span className="text-sm text-white/70">Email</span>
-              <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 focus-within:border-white/25">
-                <Mail className="h-4 w-4 text-white/50" />
-                <input
-                  className="w-full bg-transparent outline-none text-white placeholder:text-white/30"
-                  type="email"
-                  placeholder="nom@domaine.com"
-                  value={email}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
-            </label>
+          <label style={styles.label}>Mot de passe</label>
+          <input
+            style={styles.input}
+            type="password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
 
-            <label className="block">
-              <span className="text-sm text-white/70">Mot de passe</span>
-              <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 focus-within:border-white/25">
-                <Lock className="h-4 w-4 text-white/50" />
-                <input
-                  className="w-full bg-transparent outline-none text-white placeholder:text-white/30"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
+          <label style={styles.label}>Confirmer le mot de passe</label>
+          <input
+            style={styles.input}
+            type="password"
+            placeholder="••••••••"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
 
-              <div className="mt-2 text-xs text-white/50">
-                {issues.length ? (
-                  <ul className="list-disc ml-4 space-y-1">
-                    {issues.map((x) => (
-                      <li key={x}>{x}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <span className="text-emerald-300/80">Mot de passe OK ✅</span>
-                )}
-              </div>
-            </label>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ ...styles.button, opacity: canSubmit ? 1 : 0.6 }}
+            disabled={!canSubmit}
+          >
+            {loading ? "Création..." : "S'inscrire"}
+          </button>
+        </form>
 
-            <label className="block">
-              <span className="text-sm text-white/70">Confirmer le mot de passe</span>
-              <div
-                className={[
-                  "mt-2 flex items-center gap-2 rounded-xl border bg-black/20 px-3 py-2 focus-within:border-white/25",
-                  confirm.length === 0
-                    ? "border-white/10"
-                    : passwordsMatch
-                    ? "border-emerald-500/30"
-                    : "border-red-500/30",
-                ].join(" ")}
-              >
-                <Lock className="h-4 w-4 text-white/50" />
-                <input
-                  className="w-full bg-transparent outline-none text-white placeholder:text-white/30"
-                  type="password"
-                  placeholder="••••••••"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-
-              {confirm.length > 0 && !passwordsMatch ? (
-                <div className="mt-2 text-xs text-red-200/90">
-                  Les mots de passe ne correspondent pas.
-                </div>
-              ) : null}
-            </label>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2.5 transition"
-            >
-              {busy ? "Création…" : "S'inscrire"}
-            </button>
-          </form>
-
-          <div className="mt-5 text-center text-sm text-white/60">
-            Déjà un compte ?{" "}
-            <Link to="/login" className="text-white hover:underline">
-              Se connecter
-            </Link>
-          </div>
+        <div style={styles.footer}>
+          <span style={{ opacity: 0.8 }}>Déjà un compte ?</span>{" "}
+          <Link to="/login" style={styles.link}>
+            Se connecter
+          </Link>
         </div>
       </div>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    display: "grid",
+    placeItems: "center",
+    padding: "24px",
+    background:
+      "radial-gradient(1200px 800px at 20% 10%, rgba(120, 90, 255, 0.18), transparent 60%), radial-gradient(1000px 700px at 80% 30%, rgba(100, 200, 255, 0.12), transparent 55%), linear-gradient(180deg, #0b1020, #070a12)",
+  },
+  card: {
+    width: "100%",
+    maxWidth: 440,
+    borderRadius: 16,
+    padding: 24,
+    color: "#e9ecff",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "0 20px 70px rgba(0,0,0,0.35)",
+    backdropFilter: "blur(10px)",
+  },
+  title: { margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: 0.2 },
+  subtitle: { marginTop: 6, marginBottom: 18, opacity: 0.75 },
+  alert: {
+    borderRadius: 12,
+    padding: "10px 12px",
+    marginBottom: 12,
+    fontSize: 14,
+    border: "1px solid rgba(255,255,255,0.12)",
+  },
+  alertError: {
+    background: "rgba(255, 70, 70, 0.12)",
+    borderColor: "rgba(255, 70, 70, 0.25)",
+  },
+  alertSuccess: {
+    background: "rgba(60, 220, 140, 0.12)",
+    borderColor: "rgba(60, 220, 140, 0.25)",
+  },
+  form: { display: "grid", gap: 10 },
+  label: { fontSize: 13, opacity: 0.9, marginTop: 4 },
+  input: {
+    height: 44,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.25)",
+    color: "#e9ecff",
+    padding: "0 12px",
+    outline: "none",
+  },
+  button: {
+    height: 44,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  footer: {
+    marginTop: 14,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  link: {
+    color: "#bfa9ff",
+    textDecoration: "none",
+    fontWeight: 700,
+  },
+};
