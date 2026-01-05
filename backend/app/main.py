@@ -105,6 +105,19 @@ def create_refresh_token() -> str:
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
+def check_password_policy(password: str) -> None:
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Mot de passe trop faible (min 8 caractères).")
+    if not re.search(r"[a-z]", password):
+        raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 minuscule requis).")
+    if not re.search(r"[A-Z]", password):
+        raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 majuscule requise).")
+    if not re.search(r"[0-9]", password):
+        raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 chiffre requis).")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 caractère spécial requis).")
+
+
 def set_refresh_cookie(response: Response, refresh_token: str):
     """
     En prod (Vercel -> Railway):
@@ -488,11 +501,17 @@ def on_startup():
 
 @app.post("/auth/register", response_model=TokenResponse)
 async def register(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+
+    # 1️⃣ Email unique
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
 
-    # SAAS AUTO-ONBOARDING :
+    # 2️⃣ Mot de passe fort ✅ ICI
+    check_password_policy(req.password)
+
+    # 3️⃣ SAAS AUTO-ONBOARDING
     agency_name = f"Agence de {req.email.split('@')[0]}"
+
 
     # ✅ GÉNÉRATION ALIAS AUTOMATIQUE
     clean_alias = re.sub(r"[^a-zA-Z0-9]", "", req.email.split("@")[0]).lower()
@@ -552,7 +571,10 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
-    if not user or not verify_password(req.password, user.hashed_password):
+    if not user:
+        raise HTTPException(status_code=400, detail="Identifiants incorrects")
+    
+    if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
 
     access = create_access_token(
