@@ -23,7 +23,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import TenantFilesPanel from "./components/TenantFilesPanel";
 
 // ✅ NOUVEL ONGLET : Analyse Email
-import EmailAnalyzer from "./components/EmailAnalyzer";
+import EmailProcessor from "./pages/EmailProcessor";
 
 // -----------------------------
 // Config
@@ -138,7 +138,7 @@ function AppShell({ authFetch, onLogout }) {
           {/* ✅ AJOUT : route analyse email */}
           <Route
             path="/emails/analyze"
-            element={<EmailAnalyzer authFetch={authFetch} />}
+            element={<EmailProcessor authFetch={authFetch} />}
           />
 
           <Route
