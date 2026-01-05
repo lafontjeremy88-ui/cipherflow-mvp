@@ -1,230 +1,258 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { useAuth } from "../App";
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+} from "recharts";
 
-function pickArray(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.emails)) return data.emails;
-  if (Array.isArray(data?.history)) return data.history;
+function safeJsonParse(res) {
+  return res.json().catch(() => ({}));
+}
+
+function toArrayHistory(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.emails)) return payload.emails;
+  if (Array.isArray(payload?.data)) return payload.data;
   return [];
 }
 
-function formatDateFR(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+function normalizeStats(payload) {
+  // On accepte plusieurs formats côté backend sans casser le front
+  const emailsProcessed =
+    payload?.emails_processed ??
+    payload?.emailsProcessed ??
+    payload?.emails ??
+    payload?.processed ??
+    0;
+
+  const highUrgency =
+    payload?.high_urgency ??
+    payload?.highUrgency ??
+    payload?.urgent ??
+    0;
+
+  const receiptsGenerated =
+    payload?.receipts_generated ??
+    payload?.receiptsGenerated ??
+    payload?.receipts ??
+    0;
+
+  const categories =
+    payload?.categories ??
+    payload?.category_counts ??
+    payload?.categoryCounts ??
+    payload?.by_category ??
+    {};
+
+  return {
+    emailsProcessed: Number(emailsProcessed) || 0,
+    highUrgency: Number(highUrgency) || 0,
+    receiptsGenerated: Number(receiptsGenerated) || 0,
+    categories: categories && typeof categories === "object" ? categories : {},
+  };
 }
 
-export default function Dashboard() {
-  const { authFetch } = useAuth();
+export default function Dashboard({ authFetch }) {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [stats, setStats] = useState({
+    emailsProcessed: 0,
+    highUrgency: 0,
+    receiptsGenerated: 0,
+    categories: {},
+  });
+  const [recent, setRecent] = useState([]);
+  const [error, setError] = useState("");
+
+  const donutData = useMemo(() => {
+    const entries = Object.entries(stats.categories || {});
+    const cleaned = entries
+      .map(([name, value]) => ({
+        name,
+        value: Number(value) || 0,
+      }))
+      .filter((x) => x.value > 0);
+
+    // fallback (si backend n'envoie pas categories mais qu'on a des mails)
+    return cleaned;
+  }, [stats.categories]);
 
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
 
     async function load() {
       setLoading(true);
+      setError("");
 
       try {
-        const [sRes, hRes] = await Promise.all([
-          authFetch("/dashboard/stats"),
-          authFetch("/email/history"),
-        ]);
+        // 1) stats
+        const resStats = await authFetch("/dashboard/stats");
+        if (!resStats.ok) {
+          const txt = await resStats.text().catch(() => "");
+          throw new Error(`Stats HTTP ${resStats.status} ${txt}`);
+        }
+        const statsPayload = await safeJsonParse(resStats);
+        const normalized = normalizeStats(statsPayload);
 
-        const s = sRes.ok ? await sRes.json() : null;
-        const h = hRes.ok ? await hRes.json() : null;
+        // 2) recent activity (limit 5)
+        const resRecent = await authFetch("/email/history?limit=5");
+        if (!resRecent.ok) {
+          const txt = await resRecent.text().catch(() => "");
+          throw new Error(`History HTTP ${resRecent.status} ${txt}`);
+        }
+        const recentPayload = await safeJsonParse(resRecent);
+        const items = toArrayHistory(recentPayload);
 
-        if (!alive) return;
-
-        setStats(s);
-        setHistory(pickArray(h));
+        if (!cancelled) {
+          setStats(normalized);
+          setRecent(items.slice(0, 5));
+        }
       } catch (e) {
-        if (!alive) return;
-        setStats(null);
-        setHistory([]);
+        if (!cancelled) {
+          setError(e?.message || "Erreur inconnue");
+        }
       } finally {
-        if (alive) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     load();
     return () => {
-      alive = false;
+      cancelled = true;
     };
   }, [authFetch]);
 
-  const kpis = useMemo(() => {
-    const emailsTraites = Number(stats?.emails_traités ?? stats?.emailsTraites ?? stats?.emails_processed ?? stats?.emails_processed_count ?? stats?.emails_count ?? 0);
-    const urgenceHaute = Number(stats?.urgence_haute ?? stats?.urgent_count ?? stats?.urgences ?? 0);
-    const quittances = Number(stats?.quittances_generees ?? stats?.invoices_count ?? 0);
+  const goHistory = () => navigate("/emails");
 
-    return { emailsTraites, urgenceHaute, quittances };
-  }, [stats]);
+  const goHistoryEmail = (emailId) => {
+    if (!emailId) return navigate("/emails");
+    navigate(`/emails?emailId=${encodeURIComponent(emailId)}`);
+  };
 
-  const recent = useMemo(() => {
-    // on prend les 6 derniers par date si dispo
-    const copy = [...history];
-    copy.sort((a, b) => {
-      const da = new Date(a?.created_at || a?.date || a?.received_at || 0).getTime();
-      const db = new Date(b?.created_at || b?.date || b?.received_at || 0).getTime();
-      return db - da;
-    });
-    return copy.slice(0, 6);
-  }, [history]);
-
-  const repartition = useMemo(() => {
-    const map = new Map();
-    for (const e of history) {
-      const cat = (e?.category || e?.type || e?.label || "Autre")?.toString();
-      map.set(cat, (map.get(cat) || 0) + 1);
-    }
-    const total = history.length || 1;
-    const arr = [...map.entries()].map(([name, value]) => ({
-      name,
-      value,
-      pct: Math.round((value / total) * 100),
-    }));
-    // si vide => 0
-    return arr.length ? arr : [{ name: "Aucune donnée", value: 1, pct: 0 }];
-  }, [history]);
-
-  function goHistory(filter) {
-    // tu peux enrichir plus tard : /history?filter=urgent etc.
-    navigate(`/history${filter ? `?filter=${encodeURIComponent(filter)}` : ""}`);
-  }
-
-  function goEmail(emailId) {
-    if (!emailId) return;
-    navigate(`/history?emailId=${encodeURIComponent(emailId)}`);
-  }
-
-  const COLORS = ["#5b5be0", "#49c6a8", "#f3b24e", "#e85c9a", "#7ad1ff", "#a3e635"];
+  // couleurs “fixes” (pas obligatoires, mais c’est mieux pour garder le même style)
+  const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
 
   return (
-    <div style={{ paddingBottom: 24 }}>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ margin: 0, fontSize: 44, letterSpacing: 0.2 }}>Vue d&apos;ensemble</h1>
-        <h2 style={{ margin: "8px 0 6px", fontSize: 30, opacity: 0.95 }}>Tableau de Bord</h2>
-        <div style={{ opacity: 0.8 }}>Vue d’ensemble de l’activité de ton agence.</div>
+    <div className="page">
+      <div className="page-header">
+        <h1>Vue d'ensemble</h1>
+        <h2>Tableau de Bord</h2>
+        <p>Vue d'ensemble de l'activité de ton agence.</p>
       </div>
 
-      {/* KPI */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 18,
-          marginTop: 16,
-        }}
-      >
-        <button
-          onClick={() => goHistory("")}
-          className="card"
-          style={{ textAlign: "left", cursor: "pointer", borderLeft: "4px solid #5b5be0" }}
-        >
-          <div style={{ opacity: 0.75, fontWeight: 700 }}>EMAILS TRAITÉS</div>
-          <div style={{ fontSize: 34, fontWeight: 800, marginTop: 6 }}>{loading ? "…" : kpis.emailsTraites}</div>
-        </button>
+      {error && (
+        <div className="alert error">
+          <strong>Erreur:</strong> {error}
+        </div>
+      )}
 
-        <button
-          onClick={() => goHistory("urgent")}
-          className="card"
-          style={{ textAlign: "left", cursor: "pointer", borderLeft: "4px solid #f3b24e" }}
-        >
-          <div style={{ opacity: 0.75, fontWeight: 700 }}>URGENCE HAUTE</div>
-          <div style={{ fontSize: 34, fontWeight: 800, marginTop: 6 }}>{loading ? "…" : kpis.urgenceHaute}</div>
-        </button>
-
-        <button
-          onClick={() => goHistory("invoices")}
-          className="card"
-          style={{ textAlign: "left", cursor: "pointer", borderLeft: "4px solid #49c6a8" }}
-        >
-          <div style={{ opacity: 0.75, fontWeight: 700 }}>QUITTANCES GÉNÉRÉES</div>
-          <div style={{ fontSize: 34, fontWeight: 800, marginTop: 6 }}>{loading ? "…" : kpis.quittances}</div>
-        </button>
-      </div>
-
-      {/* Donut + Activité */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18 }}>
-        <div className="card">
-          <div style={{ fontWeight: 800, marginBottom: 10 }}>📊 Répartition par Catégorie</div>
-
-          <div style={{ width: "100%", height: 320 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={repartition}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius="60%"
-                  outerRadius="85%"
-                  paddingAngle={2}
-                  labelLine={false}
-                  label={(entry) => (entry?.pct ? `${entry.pct}%` : "")}
-                >
-                  {repartition.map((_, idx) => (
-                    <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 6, opacity: 0.9 }}>
-            {repartition.map((c, idx) => (
-              <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: COLORS[idx % COLORS.length], display: "inline-block" }} />
-                <span>{c.name}</span>
-              </div>
-            ))}
-          </div>
+      <div className="stats-row">
+        <div className="stat-card clickable" onClick={goHistory} role="button" tabIndex={0}>
+          <div className="stat-title">EMAILS TRAITÉS</div>
+          <div className="stat-value">{loading ? "…" : stats.emailsProcessed}</div>
         </div>
 
+        <div className="stat-card clickable" onClick={goHistory} role="button" tabIndex={0}>
+          <div className="stat-title">URGENCE HAUTE</div>
+          <div className="stat-value">{loading ? "…" : stats.highUrgency}</div>
+        </div>
+
+        <div className="stat-card clickable" onClick={() => navigate("/receipts")} role="button" tabIndex={0}>
+          <div className="stat-title">QUITTANCES GÉNÉRÉES</div>
+          <div className="stat-value">{loading ? "…" : stats.receiptsGenerated}</div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        {/* DONUT */}
         <div className="card">
-          <div style={{ fontWeight: 800, marginBottom: 10 }}>⚡ Activité Récente</div>
+          <div className="card-title">📊 Répartition par Catégorie</div>
+
+          {donutData.length === 0 ? (
+            <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
+          ) : (
+            <div style={{ width: "100%", height: 340 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={70}
+                    outerRadius={110}
+                    paddingAngle={2}
+                    labelLine={false}
+                    label={({ percent }) => `${Math.round(percent * 100)}%`}
+                  >
+                    {donutData.map((_, idx) => (
+                      <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {donutData.length > 0 && (
+            <div className="legend">
+              {donutData.map((d, idx) => (
+                <div key={d.name} className="legend-item">
+                  <span
+                    className="dot"
+                    style={{ background: COLORS[idx % COLORS.length] }}
+                  />
+                  <span className="legend-label">{d.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* RECENT */}
+        <div className="card">
+          <div className="card-title">⚡ Activité Récente</div>
 
           {recent.length === 0 ? (
-            <div style={{ opacity: 0.75 }}>Aucune activité pour l’instant.</div>
+            <div className="muted">Aucune activité pour l’instant.</div>
           ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {recent.map((e) => {
-                const id = e?.id || e?._id || e?.email_id || e?.emailId;
-                const subject = e?.subject || e?.title || "(Sans sujet)";
-                const cat = e?.category || e?.type || "Autre";
-                const dt = formatDateFR(e?.created_at || e?.date || e?.received_at);
+            <div className="recent-list">
+              {recent.map((m) => {
+                const id = m.id || m.email_id || m.emailId;
+                const subject = m.subject || m.title || "(Sans sujet)";
+                const category = m.category || "Autre";
+                const date =
+                  m.created_at || m.date || m.received_at || m.receivedAt || "";
 
                 return (
-                  <button
-                    key={id || subject + dt}
-                    onClick={() => goEmail(id)}
-                    className="card"
-                    style={{
-                      cursor: "pointer",
-                      textAlign: "left",
-                      padding: 14,
-                      background: "rgba(255,255,255,0.03)",
-                    }}
+                  <div
+                    key={id || subject + date}
+                    className="recent-item clickable"
+                    onClick={() => goHistoryEmail(id)}
+                    role="button"
+                    tabIndex={0}
                   >
-                    <div style={{ fontWeight: 800, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {subject}
+                    <div className="recent-subject">{subject}</div>
+                    <div className="recent-meta">
+                      <span className="recent-cat">{category}</span>
+                      {date ? <span className="recent-date"> • {String(date).slice(0, 16)}</span> : null}
                     </div>
-                    <div style={{ opacity: 0.75, fontSize: 13 }}>
-                      {cat} • {dt}
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           )}
+
+          <div style={{ marginTop: 12 }}>
+            <button className="btn" onClick={goHistory}>
+              Voir tout l’historique
+            </button>
+          </div>
         </div>
       </div>
     </div>

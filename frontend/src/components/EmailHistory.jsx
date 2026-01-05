@@ -1,217 +1,250 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../App";
+import { useSearchParams } from "react-router-dom";
 
-function safePickArray(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.emails)) return data.emails;
-  if (Array.isArray(data?.history)) return data.history;
+function safeJson(res) {
+  return res.json().catch(() => ({}));
+}
+
+function pickArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.emails)) return payload.emails;
+  if (Array.isArray(payload?.data)) return payload.data;
   return [];
 }
 
-function useQuery() {
-  const { search } = useLocation();
-  return useMemo(() => new URLSearchParams(search), [search]);
+function normalizeEmail(e) {
+  return {
+    id: e.id || e.email_id || e.emailId || "",
+    subject: e.subject || e.title || "(Sans sujet)",
+    from: e.from || e.sender || e.email_from || e.emailFrom || "",
+    category: e.category || "Autre",
+    urgency: e.urgency || e.priority || "FAIBLE",
+    createdAt: e.created_at || e.received_at || e.date || e.createdAt || "",
+    body: e.body || e.text || e.content || "",
+    raw: e,
+  };
 }
 
-function formatDateFR(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+function urgencyBadge(u) {
+  const x = String(u || "").toUpperCase();
+  if (x.includes("HAUT") || x.includes("HIGH")) return "badge badge-high";
+  if (x.includes("MOY") || x.includes("MED")) return "badge badge-med";
+  return "badge badge-low";
 }
 
-export default function EmailHistory() {
-  const { authFetch } = useAuth();
-  const navigate = useNavigate();
-  const query = useQuery();
-
-  const deepEmailId = query.get("emailId") || "";
-  const filter = query.get("filter") || "all";
+export default function EmailHistory({ authFetch }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkEmailId = searchParams.get("emailId") || "";
 
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
-  const [selectedId, setSelectedId] = useState(deepEmailId);
-  const [searchText, setSearchText] = useState("");
+  const [error, setError] = useState("");
 
-  // charge l'historique
-  useEffect(() => {
-    let alive = true;
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("Tout");
+  const [sort, setSort] = useState("recent");
 
-    async function load() {
-      setLoading(true);
-      try {
-        const res = await authFetch("/email/history");
-        const data = res.ok ? await res.json() : null;
-        const arr = safePickArray(data);
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(null);
 
-        if (!alive) return;
+  async function loadHistory() {
+    setLoading(true);
+    setError("");
 
-        setItems(arr);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("limit", "50");
+      const url = `/email/history?${qs.toString()}`;
 
-        // deep-link prioritaire
-        if (deepEmailId) {
-          const found = arr.find((x) => String(x?.id || x?._id || x?.email_id || x?.emailId) === String(deepEmailId));
-          if (found) setSelectedId(String(deepEmailId));
-        } else if (arr.length && !selectedId) {
-          const firstId = arr[0]?.id || arr[0]?._id || arr[0]?.email_id || arr[0]?.emailId;
-          if (firstId) setSelectedId(String(firstId));
+      const res = await authFetch(url);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status} ${txt}`);
+      }
+
+      const payload = await safeJson(res);
+      const arr = pickArray(payload).map(normalizeEmail);
+      setItems(arr);
+
+      // Deep-link open
+      if (deepLinkEmailId) {
+        const found = arr.find((x) => String(x.id) === String(deepLinkEmailId));
+        if (found) {
+          setSelected(found);
+          setOpen(true);
         }
-      } catch (e) {
-        if (!alive) return;
-        setItems([]);
-      } finally {
-        if (alive) setLoading(false);
       }
+    } catch (e) {
+      setError(e?.message || "Erreur inconnue");
+    } finally {
+      setLoading(false);
     }
-
-    load();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authFetch]);
-
-  // si on arrive via dashboard /history?emailId=...
-  useEffect(() => {
-    if (!deepEmailId) return;
-    setSelectedId(deepEmailId);
-  }, [deepEmailId]);
-
-  const filtered = useMemo(() => {
-    const s = searchText.trim().toLowerCase();
-
-    return items.filter((e) => {
-      const cat = (e?.category || e?.type || "autre").toString().toLowerCase();
-
-      if (filter === "urgent") {
-        const urgent = Boolean(e?.urgent || e?.is_urgent || e?.priority === "high" || e?.urgency === "high");
-        if (!urgent) return false;
-      }
-
-      if (filter === "invoices") {
-        // à adapter si tu as un champ spécial quittance
-        const isInvoice = cat.includes("quittance") || cat.includes("loyer") || Boolean(e?.invoice_generated);
-        if (!isInvoice) return false;
-      }
-
-      if (!s) return true;
-
-      const subject = (e?.subject || e?.title || "").toString().toLowerCase();
-      const from = (e?.from || e?.sender || e?.expediteur || "").toString().toLowerCase();
-      const body = (e?.body || e?.content || e?.snippet || "").toString().toLowerCase();
-
-      return subject.includes(s) || from.includes(s) || body.includes(s) || cat.includes(s);
-    });
-  }, [items, searchText, filter]);
-
-  const selected = useMemo(() => {
-    if (!selectedId) return null;
-    return (
-      items.find((x) => String(x?.id || x?._id || x?.email_id || x?.emailId) === String(selectedId)) || null
-    );
-  }, [items, selectedId]);
-
-  function openEmail(id) {
-    if (!id) return;
-    const strId = String(id);
-    setSelectedId(strId);
-    navigate(`/history?emailId=${encodeURIComponent(strId)}`, { replace: true });
   }
 
+  useEffect(() => {
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Si l’URL change (emailId=...), on ouvre le mail si on le trouve déjà en liste
+  useEffect(() => {
+    if (!deepLinkEmailId) return;
+    const found = items.find((x) => String(x.id) === String(deepLinkEmailId));
+    if (found) {
+      setSelected(found);
+      setOpen(true);
+    }
+  }, [deepLinkEmailId, items]);
+
+  const filtered = useMemo(() => {
+    let arr = [...items];
+
+    // filter
+    if (filter !== "Tout") {
+      arr = arr.filter((x) => (x.category || "Autre") === filter);
+    }
+
+    // search
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      arr = arr.filter(
+        (x) =>
+          String(x.subject).toLowerCase().includes(q) ||
+          String(x.from).toLowerCase().includes(q) ||
+          String(x.category).toLowerCase().includes(q)
+      );
+    }
+
+    // sort
+    if (sort === "recent") {
+      arr.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    } else if (sort === "old") {
+      arr.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    }
+
+    return arr;
+  }, [items, filter, search, sort]);
+
+  const categories = useMemo(() => {
+    const set = new Set(items.map((x) => x.category || "Autre"));
+    return ["Tout", ...Array.from(set)];
+  }, [items]);
+
+  const openEmail = (email) => {
+    setSelected(email);
+    setOpen(true);
+    // On push le deep-link dans l’URL
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.set("emailId", email.id);
+      return p;
+    });
+  };
+
+  const closeModal = () => {
+    setOpen(false);
+    setSelected(null);
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.delete("emailId");
+      return p;
+    });
+  };
+
   return (
-    <div style={{ paddingBottom: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 36 }}>Historique</h1>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 10, width: 520, maxWidth: "50vw" }}>
-          <input
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Rechercher..."
-            style={{ width: "100%" }}
-          />
-        </div>
+    <div className="page">
+      <div className="page-header">
+        <h1>Historique des Activités</h1>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 18 }}>
-        {/* LISTE */}
-        <div className="card" style={{ padding: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 10, opacity: 0.9 }}>
-            {loading ? "Chargement…" : `${filtered.length} email(s)`}
-          </div>
+      {error && (
+        <div className="alert error">
+          <strong>Erreur:</strong> {error}
+        </div>
+      )}
 
-          <div style={{ display: "grid", gap: 10, maxHeight: "70vh", overflow: "auto", paddingRight: 6 }}>
-            {filtered.map((e) => {
-              const id = e?.id || e?._id || e?.email_id || e?.emailId;
-              const subject = e?.subject || e?.title || "(Sans sujet)";
-              const from = e?.from || e?.sender || e?.expediteur || "";
-              const cat = e?.category || e?.type || "Autre";
-              const dt = formatDateFR(e?.created_at || e?.date || e?.received_at);
+      <div className="toolbar">
+        <input
+          className="input"
+          placeholder="Rechercher..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
 
-              const active = String(id) === String(selectedId);
+        <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              Filtre: {c}
+            </option>
+          ))}
+        </select>
 
-              return (
-                <button
-                  key={String(id)}
-                  onClick={() => openEmail(id)}
-                  className="card"
-                  style={{
-                    cursor: "pointer",
-                    textAlign: "left",
-                    padding: 12,
-                    border: active ? "1px solid rgba(255,255,255,0.28)" : "1px solid rgba(255,255,255,0.10)",
-                    background: active ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                  }}
-                >
-                  <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {subject}
-                  </div>
-                  <div style={{ opacity: 0.75, fontSize: 13, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {from}
-                  </div>
-                  <div style={{ opacity: 0.65, fontSize: 12, marginTop: 2 }}>
-                    {cat} • {dt}
-                  </div>
+        <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="recent">Plus récents (Défaut)</option>
+          <option value="old">Plus anciens</option>
+        </select>
+
+        <button className="btn" onClick={loadHistory} disabled={loading}>
+          Rafraîchir
+        </button>
+      </div>
+
+      <div className="list">
+        {loading ? (
+          <div className="muted">Chargement...</div>
+        ) : filtered.length === 0 ? (
+          <div className="muted">Aucun email trouvé.</div>
+        ) : (
+          filtered.map((m) => (
+            <div key={m.id} className="list-row">
+              <div className={urgencyBadge(m.urgency)}>{String(m.urgency || "FAIBLE").toUpperCase()}</div>
+
+              <div className="list-main">
+                <div className="list-subject">{m.subject}</div>
+                <div className="list-meta">
+                  <span className="meta-from">{m.from}</span>
+                  {m.createdAt ? <span className="meta-date"> • {String(m.createdAt).slice(0, 16)}</span> : null}
+                  <span className="meta-cat"> • {m.category}</span>
+                </div>
+              </div>
+
+              <div className="list-actions">
+                <button className="icon-btn" onClick={() => openEmail(m)} title="Voir">
+                  👁️
                 </button>
-              );
-            })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
 
-            {!loading && filtered.length === 0 ? (
-              <div style={{ opacity: 0.75 }}>Aucun email ne correspond à vos critères.</div>
-            ) : null}
+      {/* Modal */}
+      {open && selected && (
+        <div className="modal-backdrop" onClick={closeModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{selected.subject}</div>
+                <div className="modal-subtitle">
+                  {selected.from} • {selected.category} • {String(selected.createdAt).slice(0, 16)}
+                </div>
+              </div>
+              <button className="icon-btn" onClick={closeModal} title="Fermer">
+                ✖
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {selected.body ? (
+                <pre className="email-body">{selected.body}</pre>
+              ) : (
+                <div className="muted">Aucun contenu disponible.</div>
+              )}
+            </div>
           </div>
         </div>
-
-        {/* DÉTAIL */}
-        <div className="card" style={{ padding: 16, minHeight: 520 }}>
-          {!selected ? (
-            <div style={{ opacity: 0.75 }}>Sélectionne un email à gauche.</div>
-          ) : (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ fontSize: 18, fontWeight: 900, flex: 1 }}>
-                  {selected.subject || selected.title || "(Sans sujet)"}
-                </div>
-              </div>
-
-              <div style={{ opacity: 0.75, marginTop: 8, fontSize: 13 }}>
-                <div><b>De :</b> {selected.from || selected.sender || selected.expediteur || "-"}</div>
-                <div><b>Catégorie :</b> {selected.category || selected.type || "Autre"}</div>
-                <div><b>Date :</b> {formatDateFR(selected.created_at || selected.date || selected.received_at)}</div>
-                <div><b>ID :</b> {String(selected.id || selected._id || selected.email_id || selected.emailId)}</div>
-              </div>
-
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                <div style={{ fontWeight: 800, marginBottom: 8 }}>Contenu</div>
-                <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5, opacity: 0.92 }}>
-                  {selected.body || selected.content || selected.text || selected.snippet || "—"}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
