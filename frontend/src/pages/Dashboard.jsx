@@ -1,12 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-} from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
+
+import { authFetch } from "../services/api"; // ✅ on utilise la vraie authFetch (source unique)
 
 function safeJsonParse(res) {
   return res.json().catch(() => ({}));
@@ -21,7 +17,6 @@ function toArrayHistory(payload) {
 }
 
 function normalizeStats(payload) {
-  // On accepte plusieurs formats côté backend sans casser le front
   const emailsProcessed =
     payload?.emails_processed ??
     payload?.emailsProcessed ??
@@ -39,6 +34,7 @@ function normalizeStats(payload) {
     payload?.receipts_generated ??
     payload?.receiptsGenerated ??
     payload?.receipts ??
+    payload?.quittances ??
     0;
 
   const categories =
@@ -52,11 +48,11 @@ function normalizeStats(payload) {
     emailsProcessed: Number(emailsProcessed) || 0,
     highUrgency: Number(highUrgency) || 0,
     receiptsGenerated: Number(receiptsGenerated) || 0,
-    categories: categories && typeof categories === "object" ? categories : {},
+    categories: typeof categories === "object" && categories ? categories : {},
   };
 }
 
-export default function Dashboard({ authFetch }) {
+export default function Dashboard() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -78,7 +74,6 @@ export default function Dashboard({ authFetch }) {
       }))
       .filter((x) => x.value > 0);
 
-    // fallback (si backend n'envoie pas categories mais qu'on a des mails)
     return cleaned;
   }, [stats.categories]);
 
@@ -99,7 +94,7 @@ export default function Dashboard({ authFetch }) {
         const statsPayload = await safeJsonParse(resStats);
         const normalized = normalizeStats(statsPayload);
 
-        // 2) recent activity (limit 5)
+        // 2) recent history
         const resRecent = await authFetch("/email/history?limit=5");
         if (!resRecent.ok) {
           const txt = await resRecent.text().catch(() => "");
@@ -125,24 +120,23 @@ export default function Dashboard({ authFetch }) {
     return () => {
       cancelled = true;
     };
-  }, [authFetch]);
+  }, []);
 
-  const goHistory = () => navigate("/emails");
-
+  // ✅ routes alignées avec ton App.jsx
+  const goHistory = () => navigate("/emails/history");
   const goHistoryEmail = (emailId) => {
-    if (!emailId) return navigate("/emails");
-    navigate(`/emails?emailId=${encodeURIComponent(emailId)}`);
+    if (!emailId) return navigate("/emails/history");
+    navigate(`/emails/history?emailId=${encodeURIComponent(emailId)}`);
   };
 
-  // couleurs “fixes” (pas obligatoires, mais c’est mieux pour garder le même style)
   const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
 
   return (
     <div className="page">
-      <div className="page-header">
-        <h1>Vue d'ensemble</h1>
+      <div className="page-title">
+        <h1>Vue d&apos;ensemble</h1>
         <h2>Tableau de Bord</h2>
-        <p>Vue d'ensemble de l'activité de ton agence.</p>
+        <p>Vue d&apos;ensemble de l&apos;activité de ton agence.</p>
       </div>
 
       {error && (
@@ -162,7 +156,7 @@ export default function Dashboard({ authFetch }) {
           <div className="stat-value">{loading ? "…" : stats.highUrgency}</div>
         </div>
 
-        <div className="stat-card clickable" onClick={() => navigate("/receipts")} role="button" tabIndex={0}>
+        <div className="stat-card clickable" onClick={() => navigate("/invoices")} role="button" tabIndex={0}>
           <div className="stat-title">QUITTANCES GÉNÉRÉES</div>
           <div className="stat-value">{loading ? "…" : stats.receiptsGenerated}</div>
         </div>
@@ -187,7 +181,7 @@ export default function Dashboard({ authFetch }) {
                     outerRadius={110}
                     paddingAngle={2}
                     labelLine={false}
-                    label={({ percent }) => `${Math.round(percent * 100)}%`}
+                    label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
                   >
                     {donutData.map((_, idx) => (
                       <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
@@ -203,10 +197,7 @@ export default function Dashboard({ authFetch }) {
             <div className="legend">
               {donutData.map((d, idx) => (
                 <div key={d.name} className="legend-item">
-                  <span
-                    className="dot"
-                    style={{ background: COLORS[idx % COLORS.length] }}
-                  />
+                  <span className="dot" style={{ background: COLORS[idx % COLORS.length] }} />
                   <span className="legend-label">{d.name}</span>
                 </div>
               ))}
@@ -218,30 +209,26 @@ export default function Dashboard({ authFetch }) {
         <div className="card">
           <div className="card-title">⚡ Activité Récente</div>
 
-          {recent.length === 0 ? (
+          {loading ? (
+            <div className="muted">Chargement…</div>
+          ) : recent.length === 0 ? (
             <div className="muted">Aucune activité pour l’instant.</div>
           ) : (
             <div className="recent-list">
-              {recent.map((m) => {
-                const id = m.id || m.email_id || m.emailId;
-                const subject = m.subject || m.title || "(Sans sujet)";
-                const category = m.category || "Autre";
-                const date =
-                  m.created_at || m.date || m.received_at || m.receivedAt || "";
-
+              {recent.map((item, idx) => {
+                const id = item?.id || item?._id || item?.email_id || item?.emailId;
+                const subject = item?.subject || item?.title || "Email";
+                const category = item?.category || item?.label || "";
                 return (
                   <div
-                    key={id || subject + date}
+                    key={id || idx}
                     className="recent-item clickable"
                     onClick={() => goHistoryEmail(id)}
                     role="button"
                     tabIndex={0}
                   >
                     <div className="recent-subject">{subject}</div>
-                    <div className="recent-meta">
-                      <span className="recent-cat">{category}</span>
-                      {date ? <span className="recent-date"> • {String(date).slice(0, 16)}</span> : null}
-                    </div>
+                    {category ? <div className="recent-meta">{category}</div> : null}
                   </div>
                 );
               })}
