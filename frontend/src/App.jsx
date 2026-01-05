@@ -1,8 +1,13 @@
 // frontend/src/App.jsx
-import React, { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
-
-import "./App.css";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  Link,
+  useNavigate,
+} from "react-router-dom";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -17,11 +22,49 @@ import TenantFilesPanel from "./components/TenantFilesPanel";
 import FileAnalyzer from "./components/FileAnalyzer";
 import SettingsPanel from "./components/SettingsPanel";
 
-// API (ton fichier centralisé)
 import { getToken, clearAuth, logout as apiLogout } from "./services/api";
 
-function Protected({ children }) {
-  const isAuthed = Boolean(getToken());
+function PrivateLayout({ onLogout, children }) {
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-icon">⚡</span>
+          <span className="brand-title">CipherFlow V2</span>
+        </div>
+
+        <nav className="nav">
+          <Link className="nav-item" to="/dashboard">
+            Vue d&apos;ensemble
+          </Link>
+          <Link className="nav-item" to="/emails">
+            Traitement Email
+          </Link>
+          <Link className="nav-item" to="/invoices">
+            Quittances &amp; Loyers
+          </Link>
+          <Link className="nav-item" to="/tenants">
+            Dossiers Locataires
+          </Link>
+          <Link className="nav-item" to="/docs">
+            Analyse Docs
+          </Link>
+          <Link className="nav-item" to="/settings">
+            Paramètres
+          </Link>
+        </nav>
+
+        <button className="nav-logout" onClick={onLogout}>
+          Déconnexion
+        </button>
+      </aside>
+
+      <main className="main-content">{children}</main>
+    </div>
+  );
+}
+
+function Protected({ isAuthed, children }) {
   if (!isAuthed) return <Navigate to="/login" replace />;
   return children;
 }
@@ -31,85 +74,86 @@ function AppRoutes() {
   const [isAuthed, setIsAuthed] = useState(Boolean(getToken()));
 
   useEffect(() => {
-    setIsAuthed(Boolean(getToken()));
+    const onStorage = () => setIsAuthed(Boolean(getToken()));
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const handleLogout = async () => {
     try {
       await apiLogout();
     } catch (e) {
-      // même si l’API échoue, on nettoie côté front
-      console.warn("Logout API failed:", e);
+      console.warn("Logout backend failed:", e);
+    } finally {
+      clearAuth();
+      setIsAuthed(false);
+      navigate("/login", { replace: true });
     }
-    clearAuth();
-    setIsAuthed(false);
-    navigate("/login", { replace: true });
   };
+
+  const authMemo = useMemo(() => ({ isAuthed }), [isAuthed]);
 
   return (
     <Routes>
       {/* Public */}
-      <Route path="/login" element={<Login onAuthed={() => setIsAuthed(true)} />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/oauth/callback" element={<OAuthCallback onAuthed={() => setIsAuthed(true)} />} />
+      <Route
+        path="/login"
+        element={
+          authMemo.isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Login
+              onLoginSuccess={() => {
+                setIsAuthed(true);
+                navigate("/dashboard", { replace: true });
+              }}
+            />
+          )
+        }
+      />
+
+      <Route
+        path="/register"
+        element={
+          authMemo.isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Register onRegisterSuccess={() => navigate("/login", { replace: true })} />
+          )
+        }
+      />
+
+      <Route
+        path="/oauth/callback"
+        element={
+          <OAuthCallback
+            onSuccess={() => {
+              setIsAuthed(true);
+              navigate("/dashboard", { replace: true });
+            }}
+          />
+        }
+      />
 
       {/* Private */}
       <Route
-        path="/"
+        path="/*"
         element={
-          <Protected>
-            <Dashboard onLogout={handleLogout} />
+          <Protected isAuthed={authMemo.isAuthed}>
+            <PrivateLayout onLogout={handleLogout}>
+              <Routes>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/emails" element={<EmailHistory />} />
+                <Route path="/invoices" element={<InvoiceGenerator />} />
+                <Route path="/tenants" element={<TenantFilesPanel />} />
+                <Route path="/docs" element={<FileAnalyzer />} />
+                <Route path="/settings" element={<SettingsPanel />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Routes>
+            </PrivateLayout>
           </Protected>
         }
       />
-
-      <Route
-        path="/history"
-        element={
-          <Protected>
-            <EmailHistory />
-          </Protected>
-        }
-      />
-
-      <Route
-        path="/invoices"
-        element={
-          <Protected>
-            <InvoiceGenerator />
-          </Protected>
-        }
-      />
-
-      <Route
-        path="/tenants"
-        element={
-          <Protected>
-            <TenantFilesPanel />
-          </Protected>
-        }
-      />
-
-      <Route
-        path="/documents"
-        element={
-          <Protected>
-            <FileAnalyzer />
-          </Protected>
-        }
-      />
-
-      <Route
-        path="/settings"
-        element={
-          <Protected>
-            <SettingsPanel />
-          </Protected>
-        }
-      />
-
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to={isAuthed ? "/" : "/login"} replace />} />
     </Routes>
   );
 }
