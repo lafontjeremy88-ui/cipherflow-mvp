@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Mail, Lock, UserPlus, AlertCircle } from "lucide-react";
 
-import { apiPublicFetch, setStoredToken, setStoredEmail, clearAuth } from "../services/api";
+import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
 
 function passwordIssues(pw) {
   const issues = [];
@@ -14,10 +14,10 @@ function passwordIssues(pw) {
   return issues;
 }
 
-export default function Register({ onLogin }) {
+export default function Register() {
   const nav = useNavigate();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmailInput] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
 
@@ -44,34 +44,30 @@ export default function Register({ onLogin }) {
       setBusy(true);
       clearAuth(); // repart propre
 
-      // ✅ apiPublicFetch renvoie DIRECTEMENT le JSON ou throw une erreur
       const data = await apiPublicFetch("/auth/register", {
         method: "POST",
         body: JSON.stringify({ email: cleanEmail, password }),
       });
 
-      // ✅ feedback immédiat (ton besoin)
+      // ✅ Toujours afficher un feedback si HTTP 200
       setSuccess("✅ Inscription enregistrée !");
 
       // Si le backend renvoie un token → auto-login
       const token = data?.access_token || data?.token || data?.accessToken || null;
+      const returnedEmail = data?.user_email || data?.email || cleanEmail;
+
       if (token) {
-        setStoredToken(token);
-        setStoredEmail(data?.user_email || data?.email || cleanEmail);
+        setToken(token);
+        setEmail(returnedEmail);
         setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
-
-        // soit on laisse App gérer onLogin, soit on va direct au dashboard
-        if (typeof onLogin === "function") onLogin();
-        else nav("/dashboard");
-
+        setTimeout(() => nav("/dashboard"), 600);
         return;
       }
 
-      // Sinon → on redirige vers login (après petit délai pour voir le message)
+      // Sinon → redirige vers login après un court délai
       setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");
-      setTimeout(() => nav("/login"), 800);
+      setTimeout(() => nav("/login"), 900);
     } catch (err) {
-      // apiPublicFetch throw déjà un message propre (err.message)
       setError(err?.message || "Inscription impossible.");
     } finally {
       setBusy(false);
@@ -115,7 +111,7 @@ export default function Register({ onLogin }) {
                   type="email"
                   placeholder="nom@domaine.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => setEmailInput(e.target.value)}
                   autoComplete="email"
                 />
               </div>
@@ -170,8 +166,11 @@ export default function Register({ onLogin }) {
                   autoComplete="new-password"
                 />
               </div>
+
               {confirm.length > 0 && !passwordsMatch ? (
-                <div className="mt-2 text-xs text-red-200/90">Les mots de passe ne correspondent pas.</div>
+                <div className="mt-2 text-xs text-red-200/90">
+                  Les mots de passe ne correspondent pas.
+                </div>
               ) : null}
             </label>
 
