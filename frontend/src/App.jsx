@@ -1,6 +1,7 @@
 // frontend/src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Routes, Route, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import "./App.css";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
