@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { Lock, Mail, ArrowRight, Zap } from "lucide-react";
 import { login, API_URL, clearAuth } from "../services/api";
 
@@ -16,13 +17,12 @@ export default function Login({ onLogin }) {
     try {
       clearAuth(); // on repart propre
 
-      // ✅ IMPORTANT : login() retourne déjà le JSON
+      // ✅ login() retourne déjà le JSON
       const data = await login(email, password);
 
       const token = data?.access_token || data?.token || data?.accessToken;
       if (!token) {
         setError(data?.detail || "Token manquant dans la réponse /auth/login");
-        setLoading(false);
         return;
       }
 
@@ -44,10 +44,11 @@ export default function Login({ onLogin }) {
       <div className="w-full max-w-md bg-[#121A2F] rounded-2xl p-8 shadow-lg border border-white/10">
         <div className="flex items-center gap-2 mb-6">
           <Zap className="text-purple-400" />
-          <h1 className="text-2xl font-bold">CipherFlow V2</h1>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">CipherFlow V2</h1>
+            <p className="text-white/60 text-sm">Connexion à l’espace pro</p>
+          </div>
         </div>
-
-        <p className="text-white/70 mb-6">Connexion à l’espace pro</p>
 
         {error && (
           <div className="bg-red-500/15 border border-red-500/30 text-red-200 p-3 rounded-xl mb-4">
@@ -86,6 +87,16 @@ export default function Login({ onLogin }) {
                 required
               />
             </div>
+
+            {/* ✅ Prépare la feature "forgot password" */}
+            <div className="mt-2 text-right">
+              <Link
+                to="/forgot-password"
+                className="text-sm text-white/60 hover:text-white underline-offset-4 hover:underline"
+              >
+                Mot de passe oublié ?
+              </Link>
+            </div>
           </div>
 
           <button
@@ -107,6 +118,17 @@ export default function Login({ onLogin }) {
         >
           Continuer avec Google
         </button>
+
+        {/* ✅ Le bouton/lien qui te manque */}
+        <div className="mt-6 text-center">
+          <p className="text-white/60 text-sm">Pas encore de compte ?</p>
+          <Link
+            to="/register"
+            className="inline-flex mt-2 items-center justify-center w-full bg-white/5 hover:bg-white/10 transition rounded-xl py-3 font-semibold"
+          >
+            Créer un compte gratuitement
+          </Link>
+        </div>
       </div>
     </div>
   );
