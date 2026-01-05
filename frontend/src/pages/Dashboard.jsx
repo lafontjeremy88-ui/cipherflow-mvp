@@ -1,3 +1,4 @@
+// frontend/src/pages/Dashboard.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -5,144 +6,148 @@ import {
   Pie,
   Cell,
   ResponsiveContainer,
-  Legend,
   Tooltip,
+  Legend,
 } from "recharts";
-import {
-  Mail,
-  AlertTriangle,
-  FileText,
-  Activity,
-  PieChart as PieIcon,
-} from "lucide-react";
 
 import StatCard from "../components/StatCard";
 import { authFetch } from "../services/api";
 
-function formatDateFR(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yy = String(d.getFullYear()).slice(-2);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yy} ${hh}:${min}`;
+// Couleurs (doivent matcher ton thème)
+const PIE_COLORS = ["#5B5CEB", "#34D399", "#FBBF24", "#FB7185", "#60A5FA"];
+
+function safeArray(x) {
+  if (Array.isArray(x)) return x;
+  if (!x) return [];
+  if (Array.isArray(x.items)) return x.items;
+  if (Array.isArray(x.data)) return x.data;
+  return [];
 }
 
-function normalizeCategory(cat) {
-  if (!cat) return "Autre";
-  const c = String(cat).trim();
-  if (!c) return "Autre";
-  return c;
+function safeObj(x) {
+  return x && typeof x === "object" ? x : {};
+}
+
+// Label % au milieu de chaque slice (si la slice est trop petite, on évite d’afficher)
+function renderPercentLabel(props) {
+  const { cx, cy, midAngle, innerRadius, outerRadius, percent } = props;
+  if (!percent || percent < 0.06) return null; // < 6% -> pas lisible, on masque
+
+  const RADIAN = Math.PI / 180;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.65;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="rgba(255,255,255,0.85)"
+      textAnchor="middle"
+      dominantBaseline="central"
+      style={{ fontSize: 12, fontWeight: 700 }}
+    >
+      {`${Math.round(percent * 100)}%`}
+    </text>
+  );
 }
 
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const [stats, setStats] = useState(null);
-  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    emails_processed: 0,
+    urgent_high: 0,
+    invoices_generated: 0,
+    categories: {}, // { Administratif: 4, Autre: 2, ... }
+  });
+  const [recent, setRecent] = useState([]); // emails récents (activité)
 
-  // --- Fetch stats + history
-  useEffect(() => {
-    let alive = true;
-
-    async function load() {
+  const fetchAll = async () => {
+    try {
       setLoading(true);
-      try {
-        const [statsRes, histRes] = await Promise.all([
-          authFetch("/dashboard/stats"),
-          authFetch("/email/history"),
-        ]);
 
-        if (!alive) return;
+      // 1) Stats
+      const s = await authFetch("/dashboard/stats");
+      const sObj = safeObj(s);
 
-        const s = await statsRes.json();
-        const h = await histRes.json();
+      // Harmonisation de clés (au cas où ton backend renvoie d’autres noms)
+      const emailsProcessed =
+        sObj.emails_processed ?? sObj.emailsProcessed ?? sObj.processed ?? 0;
+      const urgentHigh = sObj.urgent_high ?? sObj.urgentHigh ?? sObj.urgent ?? 0;
+      const invoicesGenerated =
+        sObj.invoices_generated ?? sObj.invoicesGenerated ?? sObj.invoices ?? 0;
 
-        setStats(s);
-        setHistory(Array.isArray(h) ? h : []);
-      } catch (e) {
-        console.error("Dashboard load error:", e);
-        setStats(null);
-        setHistory([]);
-      } finally {
-        if (alive) setLoading(false);
-      }
+      const categories = safeObj(sObj.categories ?? sObj.by_category ?? sObj.category_counts);
+
+      setStats({
+        emails_processed: Number(emailsProcessed) || 0,
+        urgent_high: Number(urgentHigh) || 0,
+        invoices_generated: Number(invoicesGenerated) || 0,
+        categories,
+      });
+
+      // 2) Activité récente : on prend l’historique email et on garde les 6 derniers
+      const h = await authFetch("/email/history");
+      const list = safeArray(h);
+
+      // tri décroissant par date (si dispo)
+      const sorted = [...list].sort((a, b) => {
+        const da = new Date(a.created_at || a.date || a.received_at || 0).getTime();
+        const db = new Date(b.created_at || b.date || b.received_at || 0).getTime();
+        return db - da;
+      });
+
+      setRecent(sorted.slice(0, 6));
+    } catch (e) {
+      console.error("Dashboard fetch error:", e);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    load();
-    return () => {
-      alive = false;
-    };
+  useEffect(() => {
+    fetchAll();
+    // rafraîchit léger toutes les 30s
+    const t = setInterval(fetchAll, 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- KPIs (avec fallback si stats null)
-  const emailsTraites = stats?.emails_processed ?? stats?.emails_treated ?? 0;
-  const urgenceHaute = stats?.urgent_count ?? stats?.urgences_hautes ?? 0;
-  const quittancesGen = stats?.invoices_generated ?? stats?.quittances_generees ?? 0;
-
-  // --- Donut data : basé sur history
+  // Données du donut
   const donutData = useMemo(() => {
-    const map = new Map();
-    for (const email of history) {
-      const cat = normalizeCategory(email.category);
-      map.set(cat, (map.get(cat) || 0) + 1);
+    const entries = Object.entries(stats.categories || {});
+    if (!entries.length) return [];
+
+    const total = entries.reduce((acc, [, v]) => acc + (Number(v) || 0), 0);
+    if (!total) return [];
+
+    return entries
+      .map(([name, value]) => ({ name, value: Number(value) || 0 }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [stats.categories]);
+
+  // --- NAVIGATION ---
+  // Stat cards → historique (tu peux aussi envoyer un filtre)
+  const goHistory = (filterKey) => {
+    // Exemple: /history?filter=urgent
+    if (filterKey) {
+      navigate(`/history?filter=${encodeURIComponent(filterKey)}`);
+      return;
     }
-    // si vide -> placeholder
-    if (map.size === 0) {
-      return [{ name: "Aucun", value: 1 }];
+    navigate("/history");
+  };
+
+  // Activité récente → historique ciblé sur un email
+  const openEmailFromActivity = (email) => {
+    const id = email?.id ?? email?.email_id ?? email?.message_id;
+    if (!id) {
+      navigate("/history");
+      return;
     }
-    return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
-  }, [history]);
-
-  // --- Couleurs (pas besoin d’être parfait, juste stable)
-  const pieColors = ["#6366F1", "#34D399", "#FBBF24", "#60A5FA", "#F87171", "#A78BFA"];
-
-  // --- Activité récente : 5 derniers emails (par created_at)
-  const recentActivity = useMemo(() => {
-    const sorted = [...history].sort((a, b) => {
-      const ta = new Date(a.created_at || 0).getTime();
-      const tb = new Date(b.created_at || 0).getTime();
-      return tb - ta;
-    });
-    return sorted.slice(0, 6);
-  }, [history]);
-
-  // --- Navigation “intelligente”
-  function goHistory(filter = {}) {
-    // filter = { category, urgency, q } etc.
-    const params = new URLSearchParams();
-    if (filter.category) params.set("category", filter.category);
-    if (filter.urgency) params.set("urgency", filter.urgency);
-    if (filter.q) params.set("q", filter.q);
-
-    const qs = params.toString();
-    navigate(qs ? `/history?${qs}` : "/history");
-  }
-
-  function openEmailInHistory(emailId) {
-    // on ouvre /history avec emailId pour que la page sélectionne le mail
-    navigate(`/history?emailId=${encodeURIComponent(emailId)}`);
-  }
-
-  // --- Pie labels en %
-  const renderPercentLabel = (props) => {
-    const { percent, x, y } = props;
-    if (!percent || percent <= 0.02) return null; // évite les minis labels
-    return (
-      <text
-        x={x}
-        y={y}
-        fill="white"
-        textAnchor="middle"
-        dominantBaseline="central"
-        style={{ fontSize: 12, fontWeight: 700 }}
-      >
-        {`${Math.round(percent * 100)}%`}
-      </text>
-    );
+    navigate(`/history?emailId=${encodeURIComponent(id)}`);
   };
 
   return (
@@ -150,104 +155,132 @@ export default function Dashboard() {
       <div className="page-header">
         <h1>Vue d&apos;ensemble</h1>
         <h2>Tableau de Bord</h2>
-        <p className="muted">Vue d&apos;ensemble de l&apos;activité de ton agence.</p>
+        <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
       </div>
 
-      {/* --- KPI Cards */}
-      <div className="stats-grid">
-        <StatCard
-          icon={<Mail size={20} />}
-          label="Emails Traités"
-          value={loading ? "…" : emailsTraites}
-          accent="purple"
-          onClick={() => goHistory()}
-        />
-        <StatCard
-          icon={<AlertTriangle size={20} />}
-          label="Urgence Haute"
-          value={loading ? "…" : urgenceHaute}
-          accent="orange"
-          onClick={() => goHistory({ urgency: "high" })}
-        />
-        <StatCard
-          icon={<FileText size={20} />}
-          label="Quittances Générées"
-          value={loading ? "…" : quittancesGen}
-          accent="green"
-          onClick={() => navigate("/invoices")}
-        />
-      </div>
-
-      {/* --- Donut + Activity */}
-      <div className="dashboard-grid">
-        {/* Donut */}
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">
-              <PieIcon size={18} />
-            </span>
-            <span>Répartition par Catégorie</span>
-          </div>
-
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Tooltip />
-                <Legend verticalAlign="bottom" height={36} />
-                <Pie
-                  data={donutData}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={85}
-                  outerRadius={120}
-                  paddingAngle={2}
-                  labelLine={false}
-                  label={renderPercentLabel}
-                  isAnimationActive={false}
-                >
-                  {donutData.map((entry, idx) => (
-                    <Cell
-                      key={`cell-${idx}`}
-                      fill={pieColors[idx % pieColors.length]}
-                    />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
+      {/* KPIs */}
+      <div className="stats-row">
+        <div onClick={() => goHistory()} style={{ cursor: "pointer" }}>
+          <StatCard
+            title="Emails traités"
+            value={loading ? "…" : stats.emails_processed}
+            tone="primary"
+          />
         </div>
 
-        {/* Activity */}
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">
-              <Activity size={18} />
-            </span>
-            <span>Activité Récente</span>
-          </div>
+        <div onClick={() => goHistory("urgent")} style={{ cursor: "pointer" }}>
+          <StatCard
+            title="Urgence haute"
+            value={loading ? "…" : stats.urgent_high}
+            tone="warning"
+          />
+        </div>
 
-          <div className="activity-list">
-            {recentActivity.length === 0 ? (
-              <div className="muted" style={{ padding: 12 }}>
-                Aucun email pour l’instant.
-              </div>
-            ) : (
-              recentActivity.map((email) => (
-                <button
-                  key={email.id}
-                  className="activity-item"
-                  onClick={() => openEmailInHistory(email.id)}
-                >
-                  <div className="activity-subject">
-                    {email.subject || "(Sans sujet)"}
-                  </div>
-                  <div className="activity-meta">
-                    {normalizeCategory(email.category)} • {formatDateFR(email.created_at)}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
+        <div onClick={() => goHistory("invoices")} style={{ cursor: "pointer" }}>
+          <StatCard
+            title="Quittances générées"
+            value={loading ? "…" : stats.invoices_generated}
+            tone="success"
+          />
+        </div>
+      </div>
+
+      {/* Bloc bas : Donut + Activité */}
+      <div className="dashboard-grid">
+        {/* Donut */}
+        <div className="card card-large">
+          <div className="card-title">📊 Répartition par Catégorie</div>
+
+          {donutData.length === 0 ? (
+            <div className="empty">Aucune donnée de catégorie pour l’instant.</div>
+          ) : (
+            <div
+              className="chart-wrap"
+              style={{
+                width: "100%",
+                height: 320, // IMPORTANT: évite width/height = -1
+                minHeight: 320,
+              }}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={78}
+                    outerRadius={120}
+                    paddingAngle={2}
+                    labelLine={false}
+                    label={renderPercentLabel}
+                  >
+                    {donutData.map((_, idx) => (
+                      <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+
+                  <Tooltip
+                    formatter={(value, name) => [value, name]}
+                    contentStyle={{
+                      background: "rgba(15,20,40,0.95)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      borderRadius: 12,
+                    }}
+                  />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={24}
+                    wrapperStyle={{ color: "rgba(255,255,255,0.75)" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        {/* Activité récente */}
+        <div className="card card-large">
+          <div className="card-title">⚡ Activité Récente</div>
+
+          {loading ? (
+            <div className="empty">Chargement…</div>
+          ) : recent.length === 0 ? (
+            <div className="empty">Aucune activité pour l’instant.</div>
+          ) : (
+            <div className="activity-list">
+              {recent.map((e) => {
+                const id = e?.id ?? e?.email_id ?? e?.message_id;
+                const subject = e?.subject ?? e?.objet ?? "(Sans sujet)";
+                const category = e?.category ?? e?.categorie ?? "Autre";
+                const dateRaw = e?.created_at || e?.date || e?.received_at;
+                const date = dateRaw ? new Date(dateRaw) : null;
+
+                const dateLabel = date
+                  ? `${String(date.getDate()).padStart(2, "0")}/${String(
+                      date.getMonth() + 1
+                    ).padStart(2, "0")}/${String(date.getFullYear()).slice(2)} ${String(
+                      date.getHours()
+                    ).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+                  : "";
+
+                return (
+                  <button
+                    key={id || subject}
+                    className="activity-item"
+                    onClick={() => openEmailFromActivity(e)}
+                    type="button"
+                  >
+                    <div className="activity-subject">{subject}</div>
+                    <div className="activity-meta">
+                      {category} {dateLabel ? `• ${dateLabel}` : ""}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
