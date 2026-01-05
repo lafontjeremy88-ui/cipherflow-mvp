@@ -1,329 +1,251 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   PieChart,
   Pie,
   Cell,
   ResponsiveContainer,
-  Tooltip,
   Legend,
+  Tooltip,
 } from "recharts";
+import {
+  Mail,
+  AlertTriangle,
+  FileText,
+  Activity,
+  PieChart as PieIcon,
+} from "lucide-react";
 
-import { authFetch, getDashboardStats } from "../services/api";
 import StatCard from "../components/StatCard";
+import { authFetch } from "../services/api";
 
-// Helpers
-function safeNumber(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function fmtDateTime(isoString) {
-  if (!isoString) return "";
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function formatDateFR(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = String(d.getFullYear()).slice(-2);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm}/${yy} ${hh}:${min}`;
 }
 
 function normalizeCategory(cat) {
   if (!cat) return "Autre";
   const c = String(cat).trim();
-  return c ? c : "Autre";
+  if (!c) return "Autre";
+  return c;
 }
 
-const DONUT_COLORS = ["#5B5FEF", "#49C17A", "#F4A340", "#9B59B6", "#2DB4D6"];
+export default function Dashboard() {
+  const navigate = useNavigate();
 
-export default function Dashboard({ onNavigate }) {
+  const [stats, setStats] = useState(null);
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [kpis, setKpis] = useState({
-    emails_processed: 0,
-    high_urgency: 0,
-    invoices_generated: 0,
-  });
-  const [history, setHistory] = useState([]); // emails history
 
-  const donutData = useMemo(() => {
-    const counts = new Map();
-    for (const e of history) {
-      const cat = normalizeCategory(e?.category);
-      counts.set(cat, (counts.get(cat) || 0) + 1);
-    }
-    const total = Array.from(counts.values()).reduce((a, b) => a + b, 0) || 1;
-
-    return Array.from(counts.entries())
-      .map(([name, value]) => ({
-        name,
-        value,
-        pct: Math.round((value / total) * 100),
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [history]);
-
-  const recentActivity = useMemo(() => {
-    const arr = [...history];
-    arr.sort((a, b) => {
-      const ta =
-        new Date(a?.analyzed_at || a?.created_at || a?.received_at || 0).getTime() || 0;
-      const tb =
-        new Date(b?.analyzed_at || b?.created_at || b?.received_at || 0).getTime() || 0;
-      return tb - ta;
-    });
-    return arr.slice(0, 6);
-  }, [history]);
-
+  // --- Fetch stats + history
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
 
     async function load() {
       setLoading(true);
       try {
-        // KPIs
-        try {
-          const stats = await getDashboardStats();
-          if (!cancelled && stats && typeof stats === "object") {
-            setKpis({
-              emails_processed: safeNumber(
-                stats.emails_processed ??
-                  stats.emails_processed_count ??
-                  stats.emails ??
-                  stats.count_emails,
-                0
-              ),
-              high_urgency: safeNumber(
-                stats.high_urgency ?? stats.urgent_high ?? stats.urgency_high ?? stats.urgent,
-                0
-              ),
-              invoices_generated: safeNumber(
-                stats.invoices_generated ??
-                  stats.quittances_generated ??
-                  stats.invoices ??
-                  stats.quittances,
-                0
-              ),
-            });
-          }
-        } catch {
-          // ignore
-        }
+        const [statsRes, histRes] = await Promise.all([
+          authFetch("/dashboard/stats"),
+          authFetch("/email/history"),
+        ]);
 
-        // History
-        const res = await authFetch("/email/history");
-        const data = await res.json();
-        if (!cancelled) {
-          const arr = Array.isArray(data) ? data : [];
-          setHistory(arr);
+        if (!alive) return;
 
-          // fallback KPI
-          setKpis((prev) => {
-            const emailsCount = arr.length;
-            const urgentCount = arr.reduce((acc, e) => {
-              const u = String(e?.urgency || "").toLowerCase();
-              if (u === "high" || u === "haute" || u === "urgent" || u === "3") return acc + 1;
-              return acc;
-            }, 0);
+        const s = await statsRes.json();
+        const h = await histRes.json();
 
-            return {
-              emails_processed: prev.emails_processed > 0 ? prev.emails_processed : emailsCount,
-              high_urgency: prev.high_urgency > 0 ? prev.high_urgency : urgentCount,
-              invoices_generated: safeNumber(prev.invoices_generated, 0),
-            };
-          });
-        }
-      } catch (err) {
-        console.error("Dashboard load error:", err);
+        setStats(s);
+        setHistory(Array.isArray(h) ? h : []);
+      } catch (e) {
+        console.error("Dashboard load error:", e);
+        setStats(null);
+        setHistory([]);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (alive) setLoading(false);
       }
     }
 
     load();
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, []);
 
-  // --- Click actions
-  const goHistory = () => {
-    if (typeof onNavigate === "function") onNavigate("history");
-  };
-  const goHistoryWithEmail = (emailId) => {
-    if (typeof onNavigate === "function") onNavigate("history", emailId);
-    else window.location.href = "/history";
-  };
+  // --- KPIs (avec fallback si stats null)
+  const emailsTraites = stats?.emails_processed ?? stats?.emails_treated ?? 0;
+  const urgenceHaute = stats?.urgent_count ?? stats?.urgences_hautes ?? 0;
+  const quittancesGen = stats?.invoices_generated ?? stats?.quittances_generees ?? 0;
 
-  // Donut label (%)
-  const renderPctLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, payload }) => {
-    const p = payload?.pct ?? Math.round((percent || 0) * 100);
-    if (!p || p < 6) return null; // évite d’encombrer pour les petites parts
+  // --- Donut data : basé sur history
+  const donutData = useMemo(() => {
+    const map = new Map();
+    for (const email of history) {
+      const cat = normalizeCategory(email.category);
+      map.set(cat, (map.get(cat) || 0) + 1);
+    }
+    // si vide -> placeholder
+    if (map.size === 0) {
+      return [{ name: "Aucun", value: 1 }];
+    }
+    return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+  }, [history]);
 
-    const RADIAN = Math.PI / 180;
-    const r = innerRadius + (outerRadius - innerRadius) * 0.6;
-    const x = cx + r * Math.cos(-midAngle * RADIAN);
-    const y = cy + r * Math.sin(-midAngle * RADIAN);
+  // --- Couleurs (pas besoin d’être parfait, juste stable)
+  const pieColors = ["#6366F1", "#34D399", "#FBBF24", "#60A5FA", "#F87171", "#A78BFA"];
 
+  // --- Activité récente : 5 derniers emails (par created_at)
+  const recentActivity = useMemo(() => {
+    const sorted = [...history].sort((a, b) => {
+      const ta = new Date(a.created_at || 0).getTime();
+      const tb = new Date(b.created_at || 0).getTime();
+      return tb - ta;
+    });
+    return sorted.slice(0, 6);
+  }, [history]);
+
+  // --- Navigation “intelligente”
+  function goHistory(filter = {}) {
+    // filter = { category, urgency, q } etc.
+    const params = new URLSearchParams();
+    if (filter.category) params.set("category", filter.category);
+    if (filter.urgency) params.set("urgency", filter.urgency);
+    if (filter.q) params.set("q", filter.q);
+
+    const qs = params.toString();
+    navigate(qs ? `/history?${qs}` : "/history");
+  }
+
+  function openEmailInHistory(emailId) {
+    // on ouvre /history avec emailId pour que la page sélectionne le mail
+    navigate(`/history?emailId=${encodeURIComponent(emailId)}`);
+  }
+
+  // --- Pie labels en %
+  const renderPercentLabel = (props) => {
+    const { percent, x, y } = props;
+    if (!percent || percent <= 0.02) return null; // évite les minis labels
     return (
       <text
         x={x}
         y={y}
-        fill="#fff"
+        fill="white"
         textAnchor="middle"
         dominantBaseline="central"
-        style={{ fontWeight: 800, fontSize: 12, opacity: 0.95 }}
+        style={{ fontSize: 12, fontWeight: 700 }}
       >
-        {p}%
+        {`${Math.round(percent * 100)}%`}
       </text>
     );
   };
 
-  const wrapStyle = { display: "flex", flexDirection: "column", gap: 18 };
-  const statsRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
-    gap: 18,
-  };
-  const bottomGridStyle = {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 18,
-    alignItems: "stretch",
-  };
-  const cardTitleStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    fontWeight: 800,
-    fontSize: 16,
-    marginBottom: 10,
-  };
-  const emptyStyle = { opacity: 0.75, padding: "18px 0" };
-
   return (
     <div className="page">
-      <div style={wrapStyle}>
-        <div className="page-header">
-          <div>
-            <h1 className="page-title">Vue d&apos;ensemble</h1>
-            <h2 className="page-subtitle" style={{ marginTop: 6 }}>
-              Tableau de Bord
-            </h2>
-            <p className="page-description">Vue d&apos;ensemble de l&apos;activité de ton agence.</p>
+      <div className="page-header">
+        <h1>Vue d&apos;ensemble</h1>
+        <h2>Tableau de Bord</h2>
+        <p className="muted">Vue d&apos;ensemble de l&apos;activité de ton agence.</p>
+      </div>
+
+      {/* --- KPI Cards */}
+      <div className="stats-grid">
+        <StatCard
+          icon={<Mail size={20} />}
+          label="Emails Traités"
+          value={loading ? "…" : emailsTraites}
+          accent="purple"
+          onClick={() => goHistory()}
+        />
+        <StatCard
+          icon={<AlertTriangle size={20} />}
+          label="Urgence Haute"
+          value={loading ? "…" : urgenceHaute}
+          accent="orange"
+          onClick={() => goHistory({ urgency: "high" })}
+        />
+        <StatCard
+          icon={<FileText size={20} />}
+          label="Quittances Générées"
+          value={loading ? "…" : quittancesGen}
+          accent="green"
+          onClick={() => navigate("/invoices")}
+        />
+      </div>
+
+      {/* --- Donut + Activity */}
+      <div className="dashboard-grid">
+        {/* Donut */}
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">
+              <PieIcon size={18} />
+            </span>
+            <span>Répartition par Catégorie</span>
           </div>
-        </div>
 
-        {/* KPIs (cliquables -> Historique) */}
-        <div style={statsRowStyle}>
-          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
-            <StatCard
-              title="Emails Traités"
-              value={loading ? "…" : kpis.emails_processed}
-              icon="mail"
-              accent="purple"
-            />
-          </div>
-
-          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
-            <StatCard
-              title="Urgence Haute"
-              value={loading ? "…" : kpis.high_urgency}
-              icon="alert"
-              accent="orange"
-            />
-          </div>
-
-          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
-            <StatCard
-              title="Quittances Générées"
-              value={loading ? "…" : kpis.invoices_generated}
-              icon="invoice"
-              accent="green"
-            />
-          </div>
-        </div>
-
-        {/* Donut + Activité */}
-        <div style={bottomGridStyle}>
-          <div className="card">
-            <div style={cardTitleStyle}>📊 Répartition par Catégorie</div>
-
-            {donutData.length === 0 ? (
-              <div style={emptyStyle}>Aucune donnée pour l’instant.</div>
-            ) : (
-              <div style={{ width: "100%", height: 320 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={donutData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={70}
-                      outerRadius={105}
-                      paddingAngle={3}
-                      stroke="rgba(255,255,255,0.10)"
-                      label={renderPctLabel}
-                      labelLine={false}
-                    >
-                      {donutData.map((entry, index) => (
-                        <Cell key={`cell-${entry.name}`} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
-                      ))}
-                    </Pie>
-
-                    <Tooltip
-                      formatter={(val, name, props) => {
-                        const pct = props?.payload?.pct ?? "";
-                        return [`${val} (${pct}%)`, name];
-                      }}
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={280}>
+              <PieChart>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} />
+                <Pie
+                  data={donutData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={85}
+                  outerRadius={120}
+                  paddingAngle={2}
+                  labelLine={false}
+                  label={renderPercentLabel}
+                  isAnimationActive={false}
+                >
+                  {donutData.map((entry, idx) => (
+                    <Cell
+                      key={`cell-${idx}`}
+                      fill={pieColors[idx % pieColors.length]}
                     />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
 
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+        {/* Activity */}
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">
+              <Activity size={18} />
+            </span>
+            <span>Activité Récente</span>
           </div>
 
-          <div className="card">
-            <div style={cardTitleStyle}>⚡ Activité Récente</div>
-
+          <div className="activity-list">
             {recentActivity.length === 0 ? (
-              <div style={emptyStyle}>Aucune activité récente.</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {recentActivity.map((e) => {
-                  const when = fmtDateTime(e?.analyzed_at || e?.created_at || e?.received_at);
-                  const emailId = e?.id ?? e?.email_id ?? null;
-
-                  return (
-                    <div
-                      key={emailId ?? `${e?.subject}-${when}`}
-                      onClick={() => emailId && goHistoryWithEmail(emailId)}
-                      title={emailId ? "Ouvrir cet email dans l'historique" : ""}
-                      style={{
-                        cursor: emailId ? "pointer" : "default",
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        background: "rgba(0,0,0,0.12)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      <div style={{ fontWeight: 700 }}>{e?.subject || "(Sans sujet)"}</div>
-                      <div style={{ opacity: 0.85, fontSize: 12 }}>
-                        {normalizeCategory(e?.category)}
-                        {when ? ` • ${when}` : ""}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="muted" style={{ padding: 12 }}>
+                Aucun email pour l’instant.
               </div>
+            ) : (
+              recentActivity.map((email) => (
+                <button
+                  key={email.id}
+                  className="activity-item"
+                  onClick={() => openEmailInHistory(email.id)}
+                >
+                  <div className="activity-subject">
+                    {email.subject || "(Sans sujet)"}
+                  </div>
+                  <div className="activity-meta">
+                    {normalizeCategory(email.category)} • {formatDateFR(email.created_at)}
+                  </div>
+                </button>
+              ))
             )}
           </div>
         </div>

@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Routes, Route, Navigate, NavLink, useLocation } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  Navigate,
+  NavLink,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
+
 import {
   Zap,
   PieChart,
@@ -40,6 +49,19 @@ function setStoredToken(t) {
 function clearStoredAuth() {
   localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_EMAIL);
+}
+
+/**
+ * Wrapper route pour compat:
+ * - /emails/:emailId
+ * - /history/:emailId
+ *
+ * => on renvoie EmailHistory avec un prop emailId
+ * (EmailHistory devra l'utiliser si tu veux ouvrir automatiquement un mail)
+ */
+function EmailHistoryRoute({ token, authFetch }) {
+  const { emailId } = useParams();
+  return <EmailHistory token={token} authFetch={authFetch} emailId={emailId} />;
 }
 
 export default function App() {
@@ -274,10 +296,7 @@ export default function App() {
       <Route
         path="/*"
         element={
-          <AppLayout
-            userEmail={userEmail}
-            onLogout={handleLogout}
-          >
+          <AppLayout userEmail={userEmail} onLogout={handleLogout}>
             <AppRoutes authFetch={authFetch} token={token} />
           </AppLayout>
         }
@@ -289,37 +308,65 @@ export default function App() {
 }
 
 function AppRoutes({ authFetch, token }) {
-  // routes “produit”
+  const navigate = useNavigate();
+
+  // Helpers navigation Dashboard -> Historique / Email
+  const onGoHistory = useCallback(
+    (opts = {}) => {
+      // opts peut contenir un filtre (ex: { filter: "urgent" })
+      const qs =
+        opts && opts.filter ? `?filter=${encodeURIComponent(opts.filter)}` : "";
+      navigate(`/history${qs}`);
+    },
+    [navigate]
+  );
+
+  const onOpenEmail = useCallback(
+    (emailId) => {
+      if (!emailId) return navigate("/history");
+      // Option A: route param
+      // navigate(`/history/${encodeURIComponent(emailId)}`);
+
+      // Option B: query param (souvent plus simple)
+      navigate(`/history?open=${encodeURIComponent(emailId)}`);
+    },
+    [navigate]
+  );
+
   return (
     <Routes>
       <Route
         path="/dashboard"
-        element={<DashboardPage token={token} authFetch={authFetch} />}
+        element={
+          <DashboardPage
+            token={token}
+            authFetch={authFetch}
+            onGoHistory={onGoHistory}
+            onOpenEmail={onOpenEmail}
+          />
+        }
       />
-      <Route
-        path="/emails"
-        element={<EmailHistory token={token} authFetch={authFetch} />}
-      />
-      <Route
-        path="/invoices"
-        element={<InvoiceGenerator token={token} authFetch={authFetch} />}
-      />
-      <Route
-        path="/tenants"
-        element={<TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />}
-      />
-      <Route
-        path="/docs"
-        element={<FileAnalyzer authFetch={authFetch} apiBase={API_BASE} />}
-      />
-      <Route
-        path="/history"
-        element={<EmailHistory token={token} authFetch={authFetch} />}
-      />
-      <Route
-        path="/settings"
-        element={<SettingsPanel token={token} authFetch={authFetch} />}
-      />
+
+      {/* Traitement email */}
+      <Route path="/emails" element={<EmailHistory token={token} authFetch={authFetch} />} />
+      <Route path="/emails/:emailId" element={<EmailHistoryRoute token={token} authFetch={authFetch} />} />
+
+      {/* Quittances */}
+      <Route path="/invoices" element={<InvoiceGenerator token={token} authFetch={authFetch} />} />
+
+      {/* Dossiers locataires */}
+      <Route path="/tenants" element={<TenantFilesPanel authFetch={authFetch} apiBase={API_BASE} />} />
+
+      {/* Analyse docs */}
+      <Route path="/docs" element={<FileAnalyzer authFetch={authFetch} apiBase={API_BASE} />} />
+
+      {/* Historique */}
+      <Route path="/history" element={<EmailHistory token={token} authFetch={authFetch} />} />
+      <Route path="/history/:emailId" element={<EmailHistoryRoute token={token} authFetch={authFetch} />} />
+
+      {/* Settings */}
+      <Route path="/settings" element={<SettingsPanel token={token} authFetch={authFetch} />} />
+
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
@@ -341,11 +388,16 @@ function AppLayout({ userEmail, onLogout, children }) {
     []
   );
 
-  // Titre de page (optionnel mais ça aide à retrouver l'ancien rendu)
   const pageTitle = useMemo(() => {
     const hit = navItems.find((x) => location.pathname.startsWith(x.to));
     return hit?.label || "CipherFlow";
   }, [location.pathname, navItems]);
+
+  // Important: sur /dashboard, ton composant Dashboard affiche déjà un gros titre.
+  // Donc on masque le header global pour éviter "Vue d'ensemble" en double.
+  const showGlobalHeader = useMemo(() => {
+    return !location.pathname.startsWith("/dashboard");
+  }, [location.pathname]);
 
   return (
     <div className="app-container">
@@ -355,7 +407,7 @@ function AppLayout({ userEmail, onLogout, children }) {
           <span>CipherFlow V2</span>
         </div>
 
-        {/* Bloc user "comme avant" */}
+        {/* Bloc user */}
         <div
           style={{
             padding: "0 20px 20px 20px",
@@ -394,7 +446,7 @@ function AppLayout({ userEmail, onLogout, children }) {
           </div>
         </div>
 
-        <nav>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -405,30 +457,32 @@ function AppLayout({ userEmail, onLogout, children }) {
             </NavLink>
           ))}
 
-          <div
+          {/* Logout en bas */}
+          <button
+            type="button"
             className="nav-item"
-            style={{ marginTop: "auto", color: "#f87171" }}
+            style={{
+              marginTop: "auto",
+              color: "#f87171",
+              background: "transparent",
+              border: "none",
+              textAlign: "left",
+            }}
             onClick={onLogout}
-            role="button"
-            tabIndex={0}
           >
             <LogOut size={20} /> <span>Déconnexion</span>
-          </div>
+          </button>
         </nav>
       </aside>
 
       <main className="main-content">
-        {/* Wrapper FORCÉ pour éviter les pages trop étroites */}
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 1400,
-            margin: "0 auto",
-          }}
-        >
-          <header style={{ marginBottom: "1.6rem" }}>
-            <h1 style={{ fontSize: "2rem", fontWeight: 900 }}>{pageTitle}</h1>
-          </header>
+        {/* Wrapper pour éviter pages trop étroites */}
+        <div style={{ width: "100%", maxWidth: 1400, margin: "0 auto" }}>
+          {showGlobalHeader && (
+            <header style={{ marginBottom: "1.6rem" }}>
+              <h1 style={{ fontSize: "2rem", fontWeight: 900 }}>{pageTitle}</h1>
+            </header>
+          )}
 
           {children}
         </div>
