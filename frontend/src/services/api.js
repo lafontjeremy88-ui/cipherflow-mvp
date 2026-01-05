@@ -1,189 +1,201 @@
 // frontend/src/services/api.js
 
-const LS_TOKEN = "cipherflow_token";
-const LS_EMAIL = "cipherflow_email";
-
-// Ton backend Railway (tu peux aussi le mettre dans Vercel: VITE_API_URL)
+// ==============================
+// Config
+// ==============================
 export const API_URL =
-  import.meta.env.VITE_API_URL || "https://cipherflow-mvp-production.up.railway.app";
+  import.meta.env.VITE_API_URL?.trim() ||
+  "https://cipherflow-mvp-production.up.railway.app";
 
+export const LS_TOKEN = "cipherflow_token";
+export const LS_EMAIL = "cipherflow_email";
+
+// ==============================
+// Storage helpers
+// ==============================
 export function getToken() {
-  return localStorage.getItem(LS_TOKEN) || "";
+  return localStorage.getItem(LS_TOKEN);
 }
 
 export function setToken(token) {
   if (token) localStorage.setItem(LS_TOKEN, token);
 }
 
-export function clearToken() {
-  localStorage.removeItem(LS_TOKEN);
-}
-
 export function getEmail() {
-  return localStorage.getItem(LS_EMAIL) || "";
+  return localStorage.getItem(LS_EMAIL);
 }
 
 export function setEmail(email) {
   if (email) localStorage.setItem(LS_EMAIL, email);
 }
 
-export function clearEmail() {
+export function clearAuth() {
+  localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_EMAIL);
 }
 
-export function clearAuth() {
-  clearToken();
-  clearEmail();
-}
-
-export function isAuthed() {
-  return !!getToken();
-}
-
+// ==============================
+// URL + JSON helpers
+// ==============================
 export function buildUrl(path) {
-  // path doit être du type "/auth/login", "/dashboard/stats" etc.
-  return `${API_URL}${path}`;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_URL}${p}`;
 }
 
-async function safeJson(res) {
+export async function safeJson(res) {
+  const text = await res.text();
+  if (!text) return null;
   try {
-    return await res.json();
+    return JSON.parse(text);
   } catch {
-    return null;
+    return text; // fallback si backend renvoie autre chose
   }
 }
 
-/**
- * Appel API bas niveau
- * - credentials: "include" indispensable pour envoyer/recevoir le refresh_token cookie
- */
-export async function apiFetch(path, options = {}) {
+// ==============================
+// Public fetch (sans token)
+// ==============================
+export async function apiPublicFetch(path, options = {}) {
   const url = buildUrl(path);
 
   const res = await fetch(url, {
     ...options,
     headers: {
+      "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-    credentials: "include",
-  });
-
-  return res;
-}
-
-/**
- * Refresh access token via cookie HttpOnly refresh_token
- */
-export async function refreshAccessToken() {
-  const res = await apiFetch("/auth/refresh", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-
-  if (!res.ok) {
-    return { ok: false, status: res.status };
-  }
-
-  const data = await safeJson(res);
-
-  if (data?.access_token) {
-    setToken(data.access_token);
-  }
-  if (data?.user_email) {
-    setEmail(data.user_email);
-  }
-
-  return { ok: true, data };
-}
-
-/**
- * Fetch authentifié:
- * - Ajoute Authorization Bearer
- * - Si 401 -> tente refresh -> rejoue la requête 1 fois
- */
-export async function authFetch(path, options = {}) {
-  const token = getToken();
-
-  const first = await apiFetch(path, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      Authorization: token ? `Bearer ${token}` : "",
-    },
-  });
-
-  if (first.status !== 401) return first;
-
-  // 401 -> on tente refresh puis retry une seule fois
-  const refreshed = await refreshAccessToken();
-  if (!refreshed.ok) {
-    clearAuth();
-    return first; // renvoie le 401 initial
-  }
-
-  const token2 = getToken();
-
-  const retry = await apiFetch(path, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      Authorization: token2 ? `Bearer ${token2}` : "",
-    },
-  });
-
-  return retry;
-}
-
-// -------------------- AUTH --------------------
-
-export async function login(email, password) {
-  const res = await apiFetch("/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    credentials: "include", // utile si backend pose cookie refresh
   });
 
   const data = await safeJson(res);
 
   if (!res.ok) {
-    const msg = data?.detail || "Login failed";
+    const msg =
+      (data && (data.detail || data.message || data.error)) ||
+      `HTTP ${res.status}`;
     throw new Error(msg);
   }
-
-  if (data?.access_token) setToken(data.access_token);
-  if (data?.user_email) setEmail(data.user_email);
-  else setEmail(email);
 
   return data;
 }
 
-export async function register(email, password) {
-  const res = await apiFetch("/auth/register", {
+// ==============================
+// Auth fetch (avec Bearer token)
+// - si 401 => tente refresh => retry 1 fois
+// ==============================
+export async function authFetch(path, options = {}) {
+  const url = buildUrl(path);
+
+  const doRequest = async (accessToken) => {
+    const headers = {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    const isFormData = options.body instanceof FormData;
+    if (!isFormData && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (isFormData) {
+      delete headers["Content-Type"];
+      delete headers["content-type"];
+    }
+
+    return fetch(url, {
+      ...options,
+      headers,
+      credentials: "include",
+    });
+  };
+
+  const token = getToken();
+  if (!token) {
+    throw new Error("Non authentifié : token absent.");
+  }
+
+  // 1) requête normale
+  let res = await doRequest(token);
+
+  // 2) si 401 => refresh => retry
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (!newToken) {
+      clearAuth();
+      throw new Error("Session expirée, veuillez vous reconnecter.");
+    }
+    res = await doRequest(newToken);
+  }
+
+  return res;
+}
+
+// ==============================
+// Refresh token (cookie HttpOnly)
+// ==============================
+export async function refreshAccessToken() {
+  try {
+    const res = await fetch(buildUrl("/auth/refresh"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!res.ok) return null;
+
+    const data = await safeJson(res);
+    const newAccess =
+      data?.access_token || data?.token || data?.accessToken || null;
+
+    if (newAccess) {
+      setToken(newAccess);
+      return newAccess;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ==============================
+// API calls
+// ==============================
+export async function login(email, password) {
+  // adapte si ton backend attend un autre schema
+  const data = await apiPublicFetch("/auth/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
 
-  const data = await safeJson(res);
-
-  if (!res.ok) {
-    const msg = data?.detail || "Register failed";
-    throw new Error(msg);
-  }
+  const token = data?.access_token || data?.token || data?.accessToken;
+  if (token) setToken(token);
+  setEmail(email);
 
   return data;
 }
 
 export async function logout() {
-  // On appelle le backend pour nettoyer cookie refresh côté serveur si tu le fais
-  await apiFetch("/auth/logout", { method: "POST" });
-  clearAuth();
+  // si ton backend a /auth/logout (sinon ça ne casse rien)
+  try {
+    await fetch(buildUrl("/auth/logout"), {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // ignore
+  } finally {
+    clearAuth();
+  }
 }
-
-// -------------------- DATA --------------------
 
 export async function getDashboardStats() {
   const res = await authFetch("/dashboard/stats");
   const data = await safeJson(res);
-  return { res, data };
+
+  if (!res.ok) {
+    throw new Error(data?.detail || "Erreur récupération stats.");
+  }
+
+  // On renvoie DIRECTEMENT les stats (pas {res,data})
+  return data;
 }
