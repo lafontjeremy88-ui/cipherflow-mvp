@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { API_URL } from "../services/api";
+import { API_URL, setToken, setEmail, clearAuth } from "../services/api";
 
 export default function Register() {
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmailInput] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -40,6 +40,7 @@ export default function Register() {
 
     try {
       setLoading(true);
+      clearAuth();
 
       const res = await fetch(`${API_URL}/auth/register`, {
         method: "POST",
@@ -50,20 +51,29 @@ export default function Register() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // FastAPI renvoie souvent { detail: "..." }
         setError(data?.detail || "Inscription impossible.");
         return;
       }
 
-      // ✅ Succès
+      // ✅ Succès (message visible)
+      setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
+
+      // ✅ Auto-login si le backend renvoie un token
+      const token =
+        data?.access_token || data?.token || data?.accessToken || null;
+
+      if (token) {
+        setToken(token);
+        setEmail(data?.user_email || data?.email || cleanEmail);
+
+        // ✅ laisse 3 secondes pour voir le message
+        setTimeout(() => navigate("/dashboard"), 3000);
+        return;
+      }
+
+      // Sinon fallback : login manuel
       setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");
-
-      // Option: vider les champs
-      setPassword("");
-      setConfirmPassword("");
-
-      // Redirection vers login
-      setTimeout(() => navigate("/login"), 1200);
+      setTimeout(() => navigate("/login"), 3000);
     } catch (err) {
       setError("Erreur réseau. Réessaie.");
     } finally {
@@ -77,8 +87,13 @@ export default function Register() {
         <h1 style={styles.title}>Créer un compte</h1>
         <p style={styles.subtitle}>Accède à ton espace CipherFlow.</p>
 
-        {error ? <div style={{ ...styles.alert, ...styles.alertError }}>{error}</div> : null}
-        {success ? <div style={{ ...styles.alert, ...styles.alertSuccess }}>{success}</div> : null}
+        {error ? (
+          <div style={{ ...styles.alert, ...styles.alertError }}>{error}</div>
+        ) : null}
+
+        {success ? (
+          <div style={{ ...styles.alert, ...styles.alertSuccess }}>{success}</div>
+        ) : null}
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <label style={styles.label}>Email</label>
@@ -87,7 +102,7 @@ export default function Register() {
             type="email"
             placeholder="ton@email.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => setEmailInput(e.target.value)}
             autoComplete="email"
             required
           />
