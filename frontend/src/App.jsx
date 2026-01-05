@@ -1,7 +1,6 @@
 // frontend/src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  BrowserRouter,
   Routes,
   Route,
   Navigate,
@@ -22,8 +21,12 @@ import TenantFilesPanel from "./components/TenantFilesPanel";
 import FileAnalyzer from "./components/FileAnalyzer";
 import SettingsPanel from "./components/SettingsPanel";
 
+// API helpers
 import { getToken, clearAuth, logout as apiLogout } from "./services/api";
 
+/* =========================
+   Layout privé
+========================= */
 function PrivateLayout({ onLogout, children }) {
   return (
     <div className="app-shell">
@@ -34,24 +37,12 @@ function PrivateLayout({ onLogout, children }) {
         </div>
 
         <nav className="nav">
-          <Link className="nav-item" to="/dashboard">
-            Vue d&apos;ensemble
-          </Link>
-          <Link className="nav-item" to="/emails">
-            Traitement Email
-          </Link>
-          <Link className="nav-item" to="/invoices">
-            Quittances &amp; Loyers
-          </Link>
-          <Link className="nav-item" to="/tenants">
-            Dossiers Locataires
-          </Link>
-          <Link className="nav-item" to="/docs">
-            Analyse Docs
-          </Link>
-          <Link className="nav-item" to="/settings">
-            Paramètres
-          </Link>
+          <Link className="nav-item" to="/dashboard">Vue d&apos;ensemble</Link>
+          <Link className="nav-item" to="/emails">Traitement Email</Link>
+          <Link className="nav-item" to="/invoices">Quittances &amp; Loyers</Link>
+          <Link className="nav-item" to="/tenants">Dossiers Locataires</Link>
+          <Link className="nav-item" to="/docs">Analyse Docs</Link>
+          <Link className="nav-item" to="/settings">Paramètres</Link>
         </nav>
 
         <button className="nav-logout" onClick={onLogout}>
@@ -64,11 +55,17 @@ function PrivateLayout({ onLogout, children }) {
   );
 }
 
+/* =========================
+   Protection de route
+========================= */
 function Protected({ isAuthed, children }) {
   if (!isAuthed) return <Navigate to="/login" replace />;
   return children;
 }
 
+/* =========================
+   Routes principales
+========================= */
 function AppRoutes() {
   const navigate = useNavigate();
   const [isAuthed, setIsAuthed] = useState(Boolean(getToken()));
@@ -95,7 +92,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      {/* Public */}
+      {/* ===== PUBLIC ===== */}
       <Route
         path="/login"
         element={
@@ -118,7 +115,9 @@ function AppRoutes() {
           authMemo.isAuthed ? (
             <Navigate to="/dashboard" replace />
           ) : (
-            <Register onRegisterSuccess={() => navigate("/login", { replace: true })} />
+            <Register
+              onRegisterSuccess={() => navigate("/login", { replace: true })}
+            />
           )
         }
       />
@@ -135,7 +134,7 @@ function AppRoutes() {
         }
       />
 
-      {/* Private */}
+      {/* ===== PRIVÉ ===== */}
       <Route
         path="/*"
         element={
@@ -158,10 +157,9 @@ function AppRoutes() {
   );
 }
 
+/* =========================
+   Export App (SANS Router)
+========================= */
 export default function App() {
-  return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
-  );
+  return <AppRoutes />;
 }
