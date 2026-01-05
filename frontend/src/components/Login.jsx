@@ -14,25 +14,21 @@ export default function Login({ onLogin }) {
     setError("");
 
     try {
-      // IMPORTANT : on utilise la fonction login() de services/api.js
-      // Elle gère apiPublicFetch + setToken + setEmail
+      clearAuth(); // on repart propre
+
+      // ✅ IMPORTANT : login() retourne déjà le JSON
       const data = await login(email, password);
 
       const token = data?.access_token || data?.token || data?.accessToken;
       if (!token) {
-        setError(data?.detail || "Token manquant (login incomplet)");
+        setError(data?.detail || "Token manquant dans la réponse /auth/login");
         setLoading(false);
         return;
       }
 
-      // Préviens App.jsx que le login est OK
       if (typeof onLogin === "function") onLogin();
     } catch (err) {
-      const msg =
-        err?.message ||
-        err?.detail ||
-        "Erreur de connexion (vérifie email / mot de passe)";
-      setError(msg);
+      setError(err?.message || "Erreur réseau");
       clearAuth();
     } finally {
       setLoading(false);
@@ -40,7 +36,6 @@ export default function Login({ onLogin }) {
   };
 
   const handleGoogle = () => {
-    // Démarre l’OAuth côté backend
     window.location.href = `${API_URL}/auth/google/login`;
   };
 
@@ -49,7 +44,7 @@ export default function Login({ onLogin }) {
       <div className="w-full max-w-md bg-[#121A2F] rounded-2xl p-8 shadow-lg border border-white/10">
         <div className="flex items-center gap-2 mb-6">
           <Zap className="text-purple-400" />
-          <h1 className="text-2xl font-bold">CipherFlow</h1>
+          <h1 className="text-2xl font-bold">CipherFlow V2</h1>
         </div>
 
         <p className="text-white/70 mb-6">Connexion à l’espace pro</p>
@@ -71,7 +66,7 @@ export default function Login({ onLogin }) {
                 onChange={(e) => setEmailState(e.target.value)}
                 type="email"
                 autoComplete="email"
-                placeholder="toi@agence.com"
+                placeholder="admin@cipherflow.com"
                 required
               />
             </div>
@@ -112,10 +107,6 @@ export default function Login({ onLogin }) {
         >
           Continuer avec Google
         </button>
-
-        <p className="text-xs text-white/50 mt-4">
-          Astuce : si ça boucle, vide le storage (localStorage) et reconnecte-toi.
-        </p>
       </div>
     </div>
   );

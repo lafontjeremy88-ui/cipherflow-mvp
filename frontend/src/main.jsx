@@ -6,7 +6,7 @@ import App from "./App.jsx";
 import "./index.css";
 import "./App.css";
 
-ReactDOM.createRoot(document.get_derived_state_from_propsdocument.getElementById("root")).render(
+ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
       <App />

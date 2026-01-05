@@ -30,7 +30,6 @@ export default function App() {
 
   const userEmail = useMemo(() => getEmail() || "", [authed]);
 
-  // Synchronise si token change (login/logout)
   useEffect(() => {
     const onStorage = () => setAuthed(!!getToken());
     window.addEventListener("storage", onStorage);
@@ -48,12 +47,10 @@ export default function App() {
     navigate("/dashboard", { replace: true });
   };
 
-  const navItemClass = ({ isActive }) =>
-    cx("nav-item", isActive && "active");
+  const navItemClass = ({ isActive }) => cx("nav-item", isActive && "active");
 
   return (
     <div className="app-shell">
-      {/* Sidebar */}
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-logo">CF</div>
@@ -101,7 +98,6 @@ export default function App() {
         </nav>
       </aside>
 
-      {/* Content */}
       <main className="content">
         <Routes>
           {/* Public */}
@@ -117,20 +113,11 @@ export default function App() {
           />
           <Route
             path="/register"
-            element={
-              authed ? (
-                <Navigate to="/dashboard" replace />
-              ) : (
-                <Register />
-              )
-            }
+            element={authed ? <Navigate to="/dashboard" replace /> : <Register />}
           />
 
           {/* OAuth callback */}
-          <Route
-            path="/oauth/callback"
-            element={<OAuthCallback onDone={handleLoginSuccess} />}
-          />
+          <Route path="/oauth/callback" element={<OAuthCallback onDone={handleLoginSuccess} />} />
 
           {/* Protected */}
           <Route
@@ -183,14 +170,8 @@ export default function App() {
           />
 
           {/* Default */}
-          <Route
-            path="/"
-            element={<Navigate to={authed ? "/dashboard" : "/login"} replace />}
-          />
-          <Route
-            path="*"
-            element={<Navigate to={authed ? "/dashboard" : "/login"} replace />}
-          />
+          <Route path="/" element={<Navigate to={authed ? "/dashboard" : "/login"} replace />} />
+          <Route path="*" element={<Navigate to={authed ? "/dashboard" : "/login"} replace />} />
         </Routes>
       </main>
     </div>
