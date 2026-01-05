@@ -58,22 +58,9 @@ export default function Register() {
       // ✅ Succès (message visible)
       setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
 
-      // ✅ Auto-login si le backend renvoie un token
-      const token =
-        data?.access_token || data?.token || data?.accessToken || null;
-
-      if (token) {
-        setToken(token);
-        setEmail(data?.user_email || data?.email || cleanEmail);
-
-        // ✅ laisse 3 secondes pour voir le message
-        setTimeout(() => navigate("/dashboard"), 3000);
-        return;
-      }
-
-      // Sinon fallback : login manuel
+           // Sinon fallback : login manuel
       setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");
-      setTimeout(() => navigate("/login"), 3000);
+      setTimeout(() => navigate("/login"), 5000);
     } catch (err) {
       setError("Erreur réseau. Réessaie.");
     } finally {
