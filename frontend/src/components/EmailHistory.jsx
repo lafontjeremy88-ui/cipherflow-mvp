@@ -1,257 +1,214 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { authFetch } from "../services/api";
+import { useAuth } from "../App";
+
+function safePickArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.emails)) return data.emails;
+  if (Array.isArray(data?.history)) return data.history;
+  return [];
+}
 
 function useQuery() {
   const { search } = useLocation();
   return useMemo(() => new URLSearchParams(search), [search]);
 }
 
-function normalizeCategory(cat) {
-  if (!cat) return "Autre";
-  const c = String(cat).trim();
-  return c ? c : "Autre";
-}
-
-function extractEmailsArray(payload) {
-  // Backend peut renvoyer plusieurs formats selon versions
-  if (Array.isArray(payload)) return payload;
-
-  if (payload && typeof payload === "object") {
-    if (Array.isArray(payload.items)) return payload.items;
-    if (Array.isArray(payload.emails)) return payload.emails;
-    if (Array.isArray(payload.data)) return payload.data;
-    if (Array.isArray(payload.results)) return payload.results;
-  }
-  return [];
+function formatDateFR(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 export default function EmailHistory() {
+  const { authFetch } = useAuth();
   const navigate = useNavigate();
   const query = useQuery();
 
-  const emailIdFromUrl = query.get("emailId");
-  const categoryFromUrl = query.get("category");
-  const urgencyFromUrl = query.get("urgency");
-  const qFromUrl = query.get("q");
+  const deepEmailId = query.get("emailId") || "";
+  const filter = query.get("filter") || "all";
 
-  const [emails, setEmails] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [items, setItems] = useState([]);
+  const [selectedId, setSelectedId] = useState(deepEmailId);
+  const [searchText, setSearchText] = useState("");
 
-  const listRef = useRef(null);
-  const itemRefs = useRef({});
+  // charge l'historique
+  useEffect(() => {
+    let alive = true;
 
-  async function loadHistory() {
-    setLoading(true);
-    setErrorMsg("");
-    try {
-      const res = await authFetch("/email/history");
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status} ${t}`);
+    async function load() {
+      setLoading(true);
+      try {
+        const res = await authFetch("/email/history");
+        const data = res.ok ? await res.json() : null;
+        const arr = safePickArray(data);
+
+        if (!alive) return;
+
+        setItems(arr);
+
+        // deep-link prioritaire
+        if (deepEmailId) {
+          const found = arr.find((x) => String(x?.id || x?._id || x?.email_id || x?.emailId) === String(deepEmailId));
+          if (found) setSelectedId(String(deepEmailId));
+        } else if (arr.length && !selectedId) {
+          const firstId = arr[0]?.id || arr[0]?._id || arr[0]?.email_id || arr[0]?.emailId;
+          if (firstId) setSelectedId(String(firstId));
+        }
+      } catch (e) {
+        if (!alive) return;
+        setItems([]);
+      } finally {
+        if (alive) setLoading(false);
       }
-      const data = await res.json();
-      const arr = extractEmailsArray(data);
-
-      // sécurité: on force un tableau d'objets
-      setEmails(Array.isArray(arr) ? arr : []);
-    } catch (e) {
-      console.error("Erreur historique:", e);
-      setEmails([]);
-      setErrorMsg("Impossible de charger l'historique (API /email/history).");
-    } finally {
-      setLoading(false);
     }
-  }
 
-  useEffect(() => {
-    loadHistory();
+    load();
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authFetch]);
 
-  // Tri récent -> ancien (sur base de created_at si dispo)
-  const sortedEmails = useMemo(() => {
-    const arr = [...emails];
-    arr.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-    return arr;
-  }, [emails]);
-
-  /**
-   * IMPORTANT :
-   * Si on arrive avec emailId=..., on désactive les filtres (category/urgency/q)
-   * pour éviter d’avoir une liste vide alors que l’email existe.
-   */
-  const filteredEmails = useMemo(() => {
-    // deep-link prioritaire
-    if (emailIdFromUrl) return sortedEmails;
-
-    let arr = [...sortedEmails];
-
-    if (categoryFromUrl) {
-      arr = arr.filter((e) => normalizeCategory(e.category) === categoryFromUrl);
-    }
-
-    if (urgencyFromUrl) {
-      const target = urgencyFromUrl.toLowerCase();
-      arr = arr.filter((e) =>
-        String(e.urgency || "").toLowerCase().includes(target)
-      );
-    }
-
-    if (qFromUrl) {
-      const q = qFromUrl.toLowerCase();
-      arr = arr.filter((e) => {
-        const s = `${e.subject || ""} ${e.sender_email || ""}`.toLowerCase();
-        return s.includes(q);
-      });
-    }
-
-    return arr;
-  }, [sortedEmails, emailIdFromUrl, categoryFromUrl, urgencyFromUrl, qFromUrl]);
-
-  // Sélection auto depuis URL emailId
+  // si on arrive via dashboard /history?emailId=...
   useEffect(() => {
-    if (!emailIdFromUrl) return;
+    if (!deepEmailId) return;
+    setSelectedId(deepEmailId);
+  }, [deepEmailId]);
 
-    const exists = sortedEmails.find((e) => String(e.id) === String(emailIdFromUrl));
-    if (exists) {
-      setSelectedId(exists.id);
-      setTimeout(() => {
-        const node = itemRefs.current[exists.id];
-        if (node?.scrollIntoView) node.scrollIntoView({ block: "center" });
-      }, 80);
-    } else {
-      // si l’emailId n’existe pas (ou pas encore chargé), on ne force pas
-      // (ça se rejouera quand sortedEmails changera)
-    }
-  }, [emailIdFromUrl, sortedEmails]);
+  const filtered = useMemo(() => {
+    const s = searchText.trim().toLowerCase();
 
-  // Auto-select du premier email quand rien n’est sélectionné
-  useEffect(() => {
-    if (loading) return;
-    if (selectedId != null) return;
-    if (emailIdFromUrl) return; // si deep-link, on attend l'effet au-dessus
-    if (filteredEmails.length > 0) {
-      setSelectedId(filteredEmails[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, filteredEmails]);
+    return items.filter((e) => {
+      const cat = (e?.category || e?.type || "autre").toString().toLowerCase();
 
-  const selectedEmail = useMemo(() => {
-    return sortedEmails.find((e) => String(e.id) === String(selectedId)) || null;
-  }, [sortedEmails, selectedId]);
+      if (filter === "urgent") {
+        const urgent = Boolean(e?.urgent || e?.is_urgent || e?.priority === "high" || e?.urgency === "high");
+        if (!urgent) return false;
+      }
 
-  function buildSearchWithEmailId(id) {
-    // conserve les filtres existants, mais met/replace emailId
-    const params = new URLSearchParams();
-    if (categoryFromUrl) params.set("category", categoryFromUrl);
-    if (urgencyFromUrl) params.set("urgency", urgencyFromUrl);
-    if (qFromUrl) params.set("q", qFromUrl);
-    params.set("emailId", String(id));
-    return params.toString();
-  }
+      if (filter === "invoices") {
+        // à adapter si tu as un champ spécial quittance
+        const isInvoice = cat.includes("quittance") || cat.includes("loyer") || Boolean(e?.invoice_generated);
+        if (!isInvoice) return false;
+      }
 
-  function onSelect(email) {
-    setSelectedId(email.id);
-    navigate(`/history?${buildSearchWithEmailId(email.id)}`);
+      if (!s) return true;
+
+      const subject = (e?.subject || e?.title || "").toString().toLowerCase();
+      const from = (e?.from || e?.sender || e?.expediteur || "").toString().toLowerCase();
+      const body = (e?.body || e?.content || e?.snippet || "").toString().toLowerCase();
+
+      return subject.includes(s) || from.includes(s) || body.includes(s) || cat.includes(s);
+    });
+  }, [items, searchText, filter]);
+
+  const selected = useMemo(() => {
+    if (!selectedId) return null;
+    return (
+      items.find((x) => String(x?.id || x?._id || x?.email_id || x?.emailId) === String(selectedId)) || null
+    );
+  }, [items, selectedId]);
+
+  function openEmail(id) {
+    if (!id) return;
+    const strId = String(id);
+    setSelectedId(strId);
+    navigate(`/history?emailId=${encodeURIComponent(strId)}`, { replace: true });
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>Historique</h1>
-        <p className="muted">Retrouve et ouvre rapidement tes emails analysés.</p>
+    <div style={{ paddingBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <h1 style={{ margin: 0, fontSize: 36 }}>Historique</h1>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 10, width: 520, maxWidth: "50vw" }}>
+          <input
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Rechercher..."
+            style={{ width: "100%" }}
+          />
+        </div>
       </div>
 
-      <div className="history-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 18 }}>
         {/* LISTE */}
-        <div className="card history-left" ref={listRef}>
-          <div className="history-toolbar">
-            <button className="btn" onClick={loadHistory} type="button">
-              Rafraîchir
-            </button>
-
-            <div className="muted" style={{ marginLeft: "auto" }}>
-              {loading ? "Chargement..." : `${filteredEmails.length} email(s)`}
-            </div>
+        <div className="card" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 800, marginBottom: 10, opacity: 0.9 }}>
+            {loading ? "Chargement…" : `${filtered.length} email(s)`}
           </div>
 
-          {errorMsg ? (
-            <div className="muted" style={{ padding: 12 }}>
-              {errorMsg}
-            </div>
-          ) : loading ? (
-            <div className="muted" style={{ padding: 12 }}>
-              Chargement...
-            </div>
-          ) : filteredEmails.length === 0 ? (
-            <div className="muted" style={{ padding: 12 }}>
-              Aucun email ne correspond à vos critères.
-            </div>
-          ) : (
-            <div className="history-list">
-              {filteredEmails.map((email) => (
+          <div style={{ display: "grid", gap: 10, maxHeight: "70vh", overflow: "auto", paddingRight: 6 }}>
+            {filtered.map((e) => {
+              const id = e?.id || e?._id || e?.email_id || e?.emailId;
+              const subject = e?.subject || e?.title || "(Sans sujet)";
+              const from = e?.from || e?.sender || e?.expediteur || "";
+              const cat = e?.category || e?.type || "Autre";
+              const dt = formatDateFR(e?.created_at || e?.date || e?.received_at);
+
+              const active = String(id) === String(selectedId);
+
+              return (
                 <button
-                  key={email.id}
-                  ref={(el) => (itemRefs.current[email.id] = el)}
-                  className={`history-item ${
-                    String(selectedId) === String(email.id) ? "active" : ""
-                  }`}
-                  onClick={() => onSelect(email)}
-                  type="button"
+                  key={String(id)}
+                  onClick={() => openEmail(id)}
+                  className="card"
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "left",
+                    padding: 12,
+                    border: active ? "1px solid rgba(255,255,255,0.28)" : "1px solid rgba(255,255,255,0.10)",
+                    background: active ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                  }}
                 >
-                  <div className="history-subject">
-                    {email.subject || "(Sans sujet)"}
+                  <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {subject}
                   </div>
-                  <div className="history-meta">
-                    {normalizeCategory(email.category)} • {email.sender_email || ""}
+                  <div style={{ opacity: 0.75, fontSize: 13, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {from}
+                  </div>
+                  <div style={{ opacity: 0.65, fontSize: 12, marginTop: 2 }}>
+                    {cat} • {dt}
                   </div>
                 </button>
-              ))}
-            </div>
-          )}
+              );
+            })}
+
+            {!loading && filtered.length === 0 ? (
+              <div style={{ opacity: 0.75 }}>Aucun email ne correspond à vos critères.</div>
+            ) : null}
+          </div>
         </div>
 
-        {/* DETAIL */}
-        <div className="card history-right">
-          {!selectedEmail ? (
-            <div className="muted" style={{ padding: 12 }}>
-              Sélectionne un email dans la liste.
-            </div>
+        {/* DÉTAIL */}
+        <div className="card" style={{ padding: 16, minHeight: 520 }}>
+          {!selected ? (
+            <div style={{ opacity: 0.75 }}>Sélectionne un email à gauche.</div>
           ) : (
-            <div className="email-detail">
-              <div className="email-detail-head">
-                <div className="email-detail-title">
-                  {selectedEmail.subject || "(Sans sujet)"}
-                </div>
-                <div className="email-detail-meta">
-                  {selectedEmail.sender_email || ""} •{" "}
-                  {normalizeCategory(selectedEmail.category)} •{" "}
-                  {selectedEmail.urgency || ""}
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 18, fontWeight: 900, flex: 1 }}>
+                  {selected.subject || selected.title || "(Sans sujet)"}
                 </div>
               </div>
 
-              <div className="email-detail-body">
-                <h4>Réponse suggérée</h4>
-                <div className="email-detail-box">
-                  {selectedEmail.suggested_response_text ||
-                    "Aucune réponse suggérée."}
-                </div>
-
-                {/* (Optionnel) Bouton pratique : si tu as une page /emails pour traiter un email */}
-                {/* <div style={{ marginTop: 12 }}>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => navigate(`/emails?emailId=${encodeURIComponent(selectedEmail.id)}`)}
-                  >
-                    Ouvrir dans Traitement Email
-                  </button>
-                </div> */}
+              <div style={{ opacity: 0.75, marginTop: 8, fontSize: 13 }}>
+                <div><b>De :</b> {selected.from || selected.sender || selected.expediteur || "-"}</div>
+                <div><b>Catégorie :</b> {selected.category || selected.type || "Autre"}</div>
+                <div><b>Date :</b> {formatDateFR(selected.created_at || selected.date || selected.received_at)}</div>
+                <div><b>ID :</b> {String(selected.id || selected._id || selected.email_id || selected.emailId)}</div>
               </div>
-            </div>
+
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>Contenu</div>
+                <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5, opacity: 0.92 }}>
+                  {selected.body || selected.content || selected.text || selected.snippet || "—"}
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>
