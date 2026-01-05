@@ -16,26 +16,27 @@ const Register = ({ onLogin }) => {
     try {
       clearAuth();
 
-      const res = await apiPublicFetch("/auth/register", {
+      // ✅ apiPublicFetch renvoie DIRECTEMENT le JSON
+      const data = await apiPublicFetch("/auth/register", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      // backend peut renvoyer un token ou juste un message
+      const token = data?.access_token || data?.token || data?.accessToken || null;
 
-      if (!res.ok) {
-        setError(data?.detail || "Erreur lors de l'inscription");
-        setLoading(false);
-        return;
-      }
+      if (token) setToken(token);
 
-      setToken(data.access_token);
-      const userEmail = data.user_email || email;
+      const userEmail = data?.user_email || data?.email || email;
       setEmail(userEmail);
 
-      onLogin(data.access_token, userEmail);
+      // si onLogin existe, on l'appelle sans forcer 2 args
+      if (typeof onLogin === "function") {
+        if (onLogin.length >= 2) onLogin(token, userEmail);
+        else onLogin();
+      }
     } catch (err) {
-      setError("Erreur réseau");
+      setError(err?.message || "Erreur lors de l'inscription");
     } finally {
       setLoading(false);
     }
@@ -67,6 +68,7 @@ const Register = ({ onLogin }) => {
                 type="email"
                 required
                 placeholder="admin@cipherflow.com"
+                autoComplete="email"
               />
             </div>
           </div>
@@ -82,6 +84,7 @@ const Register = ({ onLogin }) => {
                 type="password"
                 required
                 placeholder="••••••••"
+                autoComplete="new-password"
               />
             </div>
           </div>
