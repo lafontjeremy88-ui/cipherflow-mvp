@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
@@ -306,9 +305,5 @@ function AppInner() {
 }
 
 export default function App() {
-  return (
-    <Router>
-      <AppInner />
-    </Router>
-  );
+  return <AppInner />;
 }
