@@ -1,194 +1,141 @@
-/* Conteneur principal */
-.app {
-  min-height: 100vh;              /* prend toute la hauteur */
-  background: #020617;            /* fond très sombre */
-  color: #e5e7eb;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  padding: 2rem 1.5rem 3rem;      /* un peu de marge en bas pour éviter les coupures */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+:root{
+  --bg: #0b1220;
+  --panel: #0f172a;
+  --panel-2: #111c33;
+  --border: #22304a;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --accent: #6366f1;
+  --danger: #f87171;
 }
 
-/* Header */
-.app-header {
-  max-width: 900px;
-  width: 100%;
-  margin: 0 auto 2rem auto;
-  text-align: center;
+*{ box-sizing:border-box; }
+html, body { height:100%; }
+body{
+  margin:0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
 }
 
-.app-header h1 {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
+/* Layout */
+.app-shell{
+  min-height:100vh;
+  display:flex;
+  width:100%;
 }
 
-.subtitle {
-  color: #9ca3af;
-  margin-bottom: 1.5rem;
+/* Sidebar */
+.sidebar{
+  width:260px;
+  background: #0b1226;
+  border-right: 1px solid var(--border);
+  padding: 18px 14px;
+  display:flex;
+  flex-direction:column;
+  gap: 14px;
 }
 
-/* Boutons */
-.primary-btn {
-  background: #0ea5e9;
-  border: none;
-  padding: 0.7rem 1.6rem;
-  border-radius: 999px;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-  font-size: 0.95rem;
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 10px 10px;
+  border-radius: 12px;
 }
 
-.primary-btn:hover {
-  background: #0284c7;
+.brand-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:34px;
+  height:34px;
+  border-radius: 10px;
+  background: rgba(99,102,241,0.18);
+  color: var(--accent);
+  font-size: 18px;
 }
 
-.primary-btn.small {
-  padding: 0.4rem 0.9rem;
-  font-size: 0.85rem;
+.brand-title{
+  font-weight: 800;
+  letter-spacing: 0.2px;
 }
 
-.secondary-btn {
-  background: transparent;
-  border-radius: 999px;
-  border: 1px solid #4b5563;
-  padding: 0.4rem 0.9rem;
-  color: #e5e7eb;
-  font-size: 0.85rem;
-  cursor: pointer;
+.nav{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding: 6px 6px;
 }
 
-.secondary-btn:hover {
-  background: #111827;
+/* NavLink (pas Link) : on stylise aussi les <a> par sécurité */
+.nav-item{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--muted);
+  transition: background .15s ease, color .15s ease;
+  user-select:none;
 }
 
-/* Contenu principal */
-.content {
-  width: 100%;
-  max-width: 1100px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+.nav-item:hover{
+  background: rgba(148,163,184,0.08);
+  color: var(--text);
 }
 
-/* Panneaux / cartes */
-.panel {
-  background: #020617;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.8);
-  border: 1px solid #1e293b;
+.nav-item.active{
+  background: rgba(99,102,241,0.16);
+  color: #c7d2fe;
+  border: 1px solid rgba(99,102,241,0.25);
 }
 
-.panel h2 {
-  margin-bottom: 1rem;
+/* Logout bouton */
+.nav-logout{
+  margin-top:auto;
+  border: 1px solid rgba(248,113,113,0.35);
+  background: rgba(248,113,113,0.08);
+  color: #fecaca;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor:pointer;
 }
 
-/* Stats */
-.stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
+.nav-logout:hover{
+  background: rgba(248,113,113,0.14);
 }
 
-.stat-card {
-  flex: 1;
-  min-width: 150px;
-  background: #020617;
-  border-radius: 0.8rem;
-  padding: 1rem;
-  border: 1px solid #1e293b;
+/* Main content */
+.main-content{
+  flex:1;
+  padding: 22px 22px 40px;
+  max-width: 1400px;
 }
 
-.stat-label {
-  color: #9ca3af;
-  font-size: 0.9rem;
+/* Cards / panels génériques (utiles pour pages) */
+.card, .panel{
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
 }
 
-.stat-value {
-  display: block;
-  margin-top: 0.3rem;
-  font-size: 1.6rem;
-  font-weight: 700;
+/* Mobile */
+@media (max-width: 900px){
+  .sidebar{ width: 220px; }
 }
-
-/* Liste des emails */
-.email-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.email-item {
-  background: #020617;
-  border-radius: 0.8rem;
-  padding: 1rem;
-  border: 1px solid #1e293b;
-}
-
-.email-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.3rem;
-  font-size: 0.9rem;
-}
-
-.email-from {
-  color: #e5e7eb;
-  font-weight: 500;
-}
-
-.email-category {
-  color: #a855f7;
-  font-size: 0.8rem;
-}
-
-.email-subject {
-  font-weight: 600;
-  margin-bottom: 0.3rem;
-}
-
-.email-summary {
-  color: #9ca3af;
-  font-size: 0.9rem;
-  margin-bottom: 0.7rem;
-}
-
-.email-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-/* Responsive mobile */
-@media (max-width: 640px) {
-  .app {
-    padding: 1.5rem 1rem 2rem;
+@media (max-width: 720px){
+  .app-shell{ flex-direction:column; }
+  .sidebar{
+    width:100%;
+    flex-direction:row;
+    align-items:center;
+    overflow:auto;
   }
-
-  .app-header h1 {
-    font-size: 2rem;
-  }
-
-  .stats {
-    flex-direction: column;
-  }
-}
-.app {
-  min-height: 100vh;
-  width: 100%;                 /* <-- AJOUT IMPORTANT */
-  background: #020617;
-  color: #e5e7eb;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  padding: 2rem 1.5rem 3rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  .nav{ flex-direction:row; }
+  .nav-logout{ margin-top:0; margin-left:auto; }
+  .main-content{ padding: 14px; }
 }

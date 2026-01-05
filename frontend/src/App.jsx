@@ -1,12 +1,6 @@
 // frontend/src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Routes,
-  Route,
-  Navigate,
-  Link,
-  useNavigate,
-} from "react-router-dom";
+import { Routes, Route, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -27,7 +21,7 @@ import { getToken, clearAuth, logout as apiLogout } from "./services/api";
 /* =========================
    Layout privé
 ========================= */
-function PrivateLayout({ onLogout, children }) {
+function PrivateLayout({ onLogout }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -37,12 +31,24 @@ function PrivateLayout({ onLogout, children }) {
         </div>
 
         <nav className="nav">
-          <Link className="nav-item" to="/dashboard">Vue d&apos;ensemble</Link>
-          <Link className="nav-item" to="/emails">Traitement Email</Link>
-          <Link className="nav-item" to="/invoices">Quittances &amp; Loyers</Link>
-          <Link className="nav-item" to="/tenants">Dossiers Locataires</Link>
-          <Link className="nav-item" to="/docs">Analyse Docs</Link>
-          <Link className="nav-item" to="/settings">Paramètres</Link>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/dashboard">
+            Vue d&apos;ensemble
+          </NavLink>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/emails">
+            Traitement Email
+          </NavLink>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/invoices">
+            Quittances &amp; Loyers
+          </NavLink>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/tenants">
+            Dossiers Locataires
+          </NavLink>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/docs">
+            Analyse Docs
+          </NavLink>
+          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/settings">
+            Paramètres
+          </NavLink>
         </nav>
 
         <button className="nav-logout" onClick={onLogout}>
@@ -50,23 +56,25 @@ function PrivateLayout({ onLogout, children }) {
         </button>
       </aside>
 
-      <main className="main-content">{children}</main>
+      <main className="main-content">
+        <Outlet />
+      </main>
     </div>
   );
 }
 
 /* =========================
-   Protection de route
+   Protection
 ========================= */
-function Protected({ isAuthed, children }) {
+function Protected({ isAuthed }) {
   if (!isAuthed) return <Navigate to="/login" replace />;
-  return children;
+  return <Outlet />;
 }
 
 /* =========================
-   Routes principales
+   App
 ========================= */
-function AppRoutes() {
+export default function App() {
   const navigate = useNavigate();
   const [isAuthed, setIsAuthed] = useState(Boolean(getToken()));
 
@@ -115,9 +123,7 @@ function AppRoutes() {
           authMemo.isAuthed ? (
             <Navigate to="/dashboard" replace />
           ) : (
-            <Register
-              onRegisterSuccess={() => navigate("/login", { replace: true })}
-            />
+            <Register onRegisterSuccess={() => navigate("/login", { replace: true })} />
           )
         }
       />
@@ -135,31 +141,20 @@ function AppRoutes() {
       />
 
       {/* ===== PRIVÉ ===== */}
-      <Route
-        path="/*"
-        element={
-          <Protected isAuthed={authMemo.isAuthed}>
-            <PrivateLayout onLogout={handleLogout}>
-              <Routes>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/emails" element={<EmailHistory />} />
-                <Route path="/invoices" element={<InvoiceGenerator />} />
-                <Route path="/tenants" element={<TenantFilesPanel />} />
-                <Route path="/docs" element={<FileAnalyzer />} />
-                <Route path="/settings" element={<SettingsPanel />} />
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </Routes>
-            </PrivateLayout>
-          </Protected>
-        }
-      />
+      <Route element={<Protected isAuthed={authMemo.isAuthed} />}>
+        <Route element={<PrivateLayout onLogout={handleLogout} />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/emails" element={<EmailHistory />} />
+          <Route path="/invoices" element={<InvoiceGenerator />} />
+          <Route path="/tenants" element={<TenantFilesPanel />} />
+          <Route path="/docs" element={<FileAnalyzer />} />
+          <Route path="/settings" element={<SettingsPanel />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
-}
-
-/* =========================
-   Export App (SANS Router)
-========================= */
-export default function App() {
-  return <AppRoutes />;
 }
