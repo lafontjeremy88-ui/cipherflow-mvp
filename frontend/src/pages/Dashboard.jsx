@@ -33,13 +33,12 @@ function fmtDateTime(isoString) {
 function normalizeCategory(cat) {
   if (!cat) return "Autre";
   const c = String(cat).trim();
-  if (!c) return "Autre";
-  return c;
+  return c ? c : "Autre";
 }
 
 const DONUT_COLORS = ["#5B5FEF", "#49C17A", "#F4A340", "#9B59B6", "#2DB4D6"];
 
-export default function Dashboard() {
+export default function Dashboard({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [kpis, setKpis] = useState({
     emails_processed: 0,
@@ -49,16 +48,13 @@ export default function Dashboard() {
   const [history, setHistory] = useState([]); // emails history
 
   const donutData = useMemo(() => {
-    // On calcule la répartition par catégorie depuis l'historique
     const counts = new Map();
     for (const e of history) {
       const cat = normalizeCategory(e?.category);
       counts.set(cat, (counts.get(cat) || 0) + 1);
     }
-
     const total = Array.from(counts.values()).reduce((a, b) => a + b, 0) || 1;
 
-    // Format Recharts
     return Array.from(counts.entries())
       .map(([name, value]) => ({
         name,
@@ -69,20 +65,14 @@ export default function Dashboard() {
   }, [history]);
 
   const recentActivity = useMemo(() => {
-    // On prend les plus récents
     const arr = [...history];
-
-    // Si le backend renvoie created_at / analyzed_at / received_at : on trie dessus
     arr.sort((a, b) => {
       const ta =
-        new Date(a?.analyzed_at || a?.created_at || a?.received_at || 0).getTime() ||
-        0;
+        new Date(a?.analyzed_at || a?.created_at || a?.received_at || 0).getTime() || 0;
       const tb =
-        new Date(b?.analyzed_at || b?.created_at || b?.received_at || 0).getTime() ||
-        0;
+        new Date(b?.analyzed_at || b?.created_at || b?.received_at || 0).getTime() || 0;
       return tb - ta;
     });
-
     return arr.slice(0, 6);
   }, [history]);
 
@@ -91,15 +81,17 @@ export default function Dashboard() {
 
     async function load() {
       setLoading(true);
-
       try {
-        // 1) KPIs (si ton backend les expose)
+        // KPIs
         try {
           const stats = await getDashboardStats();
           if (!cancelled && stats && typeof stats === "object") {
             setKpis({
               emails_processed: safeNumber(
-                stats.emails_processed ?? stats.emails_processed_count ?? stats.emails ?? stats.count_emails,
+                stats.emails_processed ??
+                  stats.emails_processed_count ??
+                  stats.emails ??
+                  stats.count_emails,
                 0
               ),
               high_urgency: safeNumber(
@@ -107,32 +99,28 @@ export default function Dashboard() {
                 0
               ),
               invoices_generated: safeNumber(
-                stats.invoices_generated ?? stats.quittances_generated ?? stats.invoices ?? stats.quittances,
+                stats.invoices_generated ??
+                  stats.quittances_generated ??
+                  stats.invoices ??
+                  stats.quittances,
                 0
               ),
             });
           }
         } catch {
-          // On ignore : on fera fallback via history
+          // ignore
         }
 
-        // 2) Historique emails -> donut + activité récente + fallback données
-        //    (Chez toi ce endpoint existe déjà, vu EmailHistory.jsx)
+        // History
         const res = await authFetch("/email/history");
         const data = await res.json();
-
         if (!cancelled) {
           const arr = Array.isArray(data) ? data : [];
-
           setHistory(arr);
 
-          // Fallback KPIs si /dashboard/stats n'a rien renvoyé
-          // - emails = arr.length
-          // - high_urgency = emails dont urgency == "high" ou 3 ou "haute"
-          // - invoices_generated : on laisse tel quel (ou 0) car ce n'est pas dans l’historique emails
+          // fallback KPI
           setKpis((prev) => {
             const emailsCount = arr.length;
-
             const urgentCount = arr.reduce((acc, e) => {
               const u = String(e?.urgency || "").toLowerCase();
               if (u === "high" || u === "haute" || u === "urgent" || u === "3") return acc + 1;
@@ -140,10 +128,8 @@ export default function Dashboard() {
             }, 0);
 
             return {
-              emails_processed:
-                prev.emails_processed > 0 ? prev.emails_processed : emailsCount,
-              high_urgency:
-                prev.high_urgency > 0 ? prev.high_urgency : urgentCount,
+              emails_processed: prev.emails_processed > 0 ? prev.emails_processed : emailsCount,
+              high_urgency: prev.high_urgency > 0 ? prev.high_urgency : urgentCount,
               invoices_generated: safeNumber(prev.invoices_generated, 0),
             };
           });
@@ -161,26 +147,51 @@ export default function Dashboard() {
     };
   }, []);
 
-  // --- Styles inline (pour retrouver EXACTEMENT l’équilibre du dashboard “avant”)
-  const wrapStyle = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 18,
+  // --- Click actions
+  const goHistory = () => {
+    if (typeof onNavigate === "function") onNavigate("history");
+  };
+  const goHistoryWithEmail = (emailId) => {
+    if (typeof onNavigate === "function") onNavigate("history", emailId);
+    else window.location.href = "/history";
   };
 
+  // Donut label (%)
+  const renderPctLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, payload }) => {
+    const p = payload?.pct ?? Math.round((percent || 0) * 100);
+    if (!p || p < 6) return null; // évite d’encombrer pour les petites parts
+
+    const RADIAN = Math.PI / 180;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.6;
+    const x = cx + r * Math.cos(-midAngle * RADIAN);
+    const y = cy + r * Math.sin(-midAngle * RADIAN);
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="#fff"
+        textAnchor="middle"
+        dominantBaseline="central"
+        style={{ fontWeight: 800, fontSize: 12, opacity: 0.95 }}
+      >
+        {p}%
+      </text>
+    );
+  };
+
+  const wrapStyle = { display: "flex", flexDirection: "column", gap: 18 };
   const statsRowStyle = {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
     gap: 18,
   };
-
   const bottomGridStyle = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 18,
     alignItems: "stretch",
   };
-
   const cardTitleStyle = {
     display: "flex",
     alignItems: "center",
@@ -189,11 +200,7 @@ export default function Dashboard() {
     fontSize: 16,
     marginBottom: 10,
   };
-
-  const emptyStyle = {
-    opacity: 0.75,
-    padding: "18px 0",
-  };
+  const emptyStyle = { opacity: 0.75, padding: "18px 0" };
 
   return (
     <div className="page">
@@ -204,32 +211,38 @@ export default function Dashboard() {
             <h2 className="page-subtitle" style={{ marginTop: 6 }}>
               Tableau de Bord
             </h2>
-            <p className="page-description">
-              Vue d&apos;ensemble de l&apos;activité de ton agence.
-            </p>
+            <p className="page-description">Vue d&apos;ensemble de l&apos;activité de ton agence.</p>
           </div>
         </div>
 
-        {/* KPIs */}
+        {/* KPIs (cliquables -> Historique) */}
         <div style={statsRowStyle}>
-          <StatCard
-            title="Emails Traités"
-            value={loading ? "…" : kpis.emails_processed}
-            icon="mail"
-            accent="purple"
-          />
-          <StatCard
-            title="Urgence Haute"
-            value={loading ? "…" : kpis.high_urgency}
-            icon="alert"
-            accent="orange"
-          />
-          <StatCard
-            title="Quittances Générées"
-            value={loading ? "…" : kpis.invoices_generated}
-            icon="invoice"
-            accent="green"
-          />
+          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
+            <StatCard
+              title="Emails Traités"
+              value={loading ? "…" : kpis.emails_processed}
+              icon="mail"
+              accent="purple"
+            />
+          </div>
+
+          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
+            <StatCard
+              title="Urgence Haute"
+              value={loading ? "…" : kpis.high_urgency}
+              icon="alert"
+              accent="orange"
+            />
+          </div>
+
+          <div style={{ cursor: "pointer" }} onClick={goHistory} title="Voir l'historique">
+            <StatCard
+              title="Quittances Générées"
+              value={loading ? "…" : kpis.invoices_generated}
+              icon="invoice"
+              accent="green"
+            />
+          </div>
         </div>
 
         {/* Donut + Activité */}
@@ -253,20 +266,21 @@ export default function Dashboard() {
                       outerRadius={105}
                       paddingAngle={3}
                       stroke="rgba(255,255,255,0.10)"
+                      label={renderPctLabel}
+                      labelLine={false}
                     >
                       {donutData.map((entry, index) => (
-                        <Cell
-                          key={`cell-${entry.name}`}
-                          fill={DONUT_COLORS[index % DONUT_COLORS.length]}
-                        />
+                        <Cell key={`cell-${entry.name}`} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
                       ))}
                     </Pie>
+
                     <Tooltip
                       formatter={(val, name, props) => {
                         const pct = props?.payload?.pct ?? "";
                         return [`${val} (${pct}%)`, name];
                       }}
                     />
+
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -282,13 +296,16 @@ export default function Dashboard() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {recentActivity.map((e) => {
-                  const when = fmtDateTime(
-                    e?.analyzed_at || e?.created_at || e?.received_at
-                  );
+                  const when = fmtDateTime(e?.analyzed_at || e?.created_at || e?.received_at);
+                  const emailId = e?.id ?? e?.email_id ?? null;
+
                   return (
                     <div
-                      key={e?.id ?? `${e?.subject}-${when}`}
+                      key={emailId ?? `${e?.subject}-${when}`}
+                      onClick={() => emailId && goHistoryWithEmail(emailId)}
+                      title={emailId ? "Ouvrir cet email dans l'historique" : ""}
                       style={{
+                        cursor: emailId ? "pointer" : "default",
                         padding: "10px 12px",
                         borderRadius: 12,
                         border: "1px solid rgba(255,255,255,0.08)",
@@ -298,9 +315,7 @@ export default function Dashboard() {
                         gap: 4,
                       }}
                     >
-                      <div style={{ fontWeight: 700 }}>
-                        {e?.subject || "(Sans sujet)"}
-                      </div>
+                      <div style={{ fontWeight: 700 }}>{e?.subject || "(Sans sujet)"}</div>
                       <div style={{ opacity: 0.85, fontSize: 12 }}>
                         {normalizeCategory(e?.category)}
                         {when ? ` • ${when}` : ""}
