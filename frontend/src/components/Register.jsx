@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Mail, Lock, UserPlus, AlertCircle } from "lucide-react";
 
-import { apiPublicFetch, setStoredToken, setStoredEmail } from "../services/api";
+import { apiPublicFetch, setStoredToken, setStoredEmail, clearAuth } from "../services/api";
 
 function passwordIssues(pw) {
   const issues = [];
@@ -14,7 +14,7 @@ function passwordIssues(pw) {
   return issues;
 }
 
-export default function Register() {
+export default function Register({ onLogin }) {
   const nav = useNavigate();
 
   const [email, setEmail] = useState("");
@@ -42,36 +42,37 @@ export default function Register() {
 
     try {
       setBusy(true);
+      clearAuth(); // repart propre
 
-      const res = await apiPublicFetch("/auth/register", {
+      // ✅ apiPublicFetch renvoie DIRECTEMENT le JSON ou throw une erreur
+      const data = await apiPublicFetch("/auth/register", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: cleanEmail, password }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      // ✅ feedback immédiat (ton besoin)
+      setSuccess("✅ Inscription enregistrée !");
 
-      if (!res.ok) {
-        // backend renvoie souvent {detail: "..."}
-        const msg = data?.detail || "Inscription impossible.";
-        setError(msg);
+      // Si le backend renvoie un token → auto-login
+      const token = data?.access_token || data?.token || data?.accessToken || null;
+      if (token) {
+        setStoredToken(token);
+        setStoredEmail(data?.user_email || data?.email || cleanEmail);
+        setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
+
+        // soit on laisse App gérer onLogin, soit on va direct au dashboard
+        if (typeof onLogin === "function") onLogin();
+        else nav("/dashboard");
+
         return;
       }
 
-      // Si ton backend renvoie directement un token après register :
-      if (data?.access_token) {
-        setStoredToken(data.access_token);
-        setStoredEmail(data.user_email || cleanEmail);
-        setSuccess("Compte créé. Connexion en cours…");
-        nav("/dashboard");
-        return;
-      }
-
-      // Sinon, on redirige vers login
-      setSuccess("Compte créé. Tu peux te connecter.");
-      nav("/login");
+      // Sinon → on redirige vers login (après petit délai pour voir le message)
+      setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");
+      setTimeout(() => nav("/login"), 800);
     } catch (err) {
-      setError("Erreur réseau. Réessaie.");
+      // apiPublicFetch throw déjà un message propre (err.message)
+      setError(err?.message || "Inscription impossible.");
     } finally {
       setBusy(false);
     }
