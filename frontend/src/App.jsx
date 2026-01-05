@@ -1,6 +1,13 @@
 // frontend/src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Routes, Route, Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  Navigate,
+  NavLink,
+  Outlet,
+  useNavigate,
+} from "react-router-dom";
 import "./App.css";
 
 // Pages
@@ -20,7 +27,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import { getToken, clearAuth, logout as apiLogout } from "./services/api";
 
 /* =========================
-   Layout privé
+   Layout privé (Sidebar + main)
 ========================= */
 function PrivateLayout({ onLogout }) {
   return (
@@ -32,22 +39,45 @@ function PrivateLayout({ onLogout }) {
         </div>
 
         <nav className="nav">
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/dashboard">
+          <NavLink
+            to="/dashboard"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Vue d&apos;ensemble
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/emails">
+
+          <NavLink
+            to="/emails"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Traitement Email
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/invoices">
+
+          <NavLink
+            to="/invoices"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Quittances &amp; Loyers
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/tenants">
+
+          <NavLink
+            to="/tenants"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Dossiers Locataires
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/docs">
+
+          <NavLink
+            to="/docs"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Analyse Docs
           </NavLink>
-          <NavLink className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} to="/settings">
+
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+          >
             Paramètres
           </NavLink>
         </nav>
@@ -65,7 +95,7 @@ function PrivateLayout({ onLogout }) {
 }
 
 /* =========================
-   Protection
+   Protection (si pas authed -> login)
 ========================= */
 function Protected({ isAuthed }) {
   if (!isAuthed) return <Navigate to="/login" replace />;
@@ -73,7 +103,7 @@ function Protected({ isAuthed }) {
 }
 
 /* =========================
-   App
+   App (routes)
 ========================= */
 export default function App() {
   const navigate = useNavigate();
@@ -150,11 +180,14 @@ export default function App() {
           <Route path="/tenants" element={<TenantFilesPanel />} />
           <Route path="/docs" element={<FileAnalyzer />} />
           <Route path="/settings" element={<SettingsPanel />} />
+
+          {/* Redirect root -> dashboard */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>
 
+      {/* fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
