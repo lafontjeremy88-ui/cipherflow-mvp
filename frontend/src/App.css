@@ -268,3 +268,124 @@ textarea:focus {
   border-color: rgba(248, 113, 113, 0.40);
   background: rgba(248, 113, 113, 0.14);
 }
+/* ===== Auth pages (login/register) ===== */
+.auth-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 460px;
+  background: rgba(18, 26, 47, 0.85);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 18px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  backdrop-filter: blur(10px);
+}
+
+.auth-title {
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0;
+}
+
+.auth-subtitle {
+  margin-top: 6px;
+  color: rgba(255,255,255,0.65);
+  font-size: 14px;
+}
+
+.auth-field {
+  margin-top: 16px;
+}
+
+.auth-label {
+  display: block;
+  font-size: 13px;
+  color: rgba(255,255,255,0.75);
+  margin-bottom: 6px;
+}
+
+.auth-input {
+  width: 100%;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: 12px 12px;
+  color: #fff;
+  outline: none;
+}
+
+.auth-input:focus {
+  border-color: rgba(168, 85, 247, 0.55);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.20);
+}
+
+.auth-actions {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-btn-primary {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  background: rgba(168, 85, 247, 0.90);
+  color: #fff;
+}
+
+.auth-btn-primary:hover {
+  background: rgba(168, 85, 247, 1);
+}
+
+.auth-btn-secondary {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+}
+
+.auth-btn-secondary:hover {
+  background: rgba(255,255,255,0.10);
+}
+
+.auth-links {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.65);
+}
+
+.auth-links a {
+  color: rgba(255,255,255,0.80);
+  text-decoration: none;
+}
+
+.auth-links a:hover {
+  text-decoration: underline;
+}
+
+.auth-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.10);
+  color: rgba(254, 202, 202, 1);
+  font-size: 14px;
+}

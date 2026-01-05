@@ -1,40 +1,40 @@
 import React, { useState } from "react";
-import { UserPlus, Mail, Lock, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { apiPublicFetch, setToken, setEmail, clearAuth } from "../services/api";
 
-const Register = ({ onLogin }) => {
+export default function Register({ onLogin }) {
   const [email, setEmailState] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
 
+    if (password !== confirm) {
+      setError("Les mots de passe ne correspondent pas.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Le mot de passe doit faire au moins 8 caractères.");
+      return;
+    }
+
+    setLoading(true);
     try {
       clearAuth();
-
-      // ✅ apiPublicFetch renvoie DIRECTEMENT le JSON
       const data = await apiPublicFetch("/auth/register", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
 
-      // backend peut renvoyer un token ou juste un message
       const token = data?.access_token || data?.token || data?.accessToken || null;
-
       if (token) setToken(token);
+      setEmail(data?.user_email || data?.email || email);
 
-      const userEmail = data?.user_email || data?.email || email;
-      setEmail(userEmail);
-
-      // si onLogin existe, on l'appelle sans forcer 2 args
-      if (typeof onLogin === "function") {
-        if (onLogin.length >= 2) onLogin(token, userEmail);
-        else onLogin();
-      }
+      if (typeof onLogin === "function") onLogin();
     } catch (err) {
       setError(err?.message || "Erreur lors de l'inscription");
     } finally {
@@ -43,64 +43,66 @@ const Register = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-[#0B1020] text-white">
-      <div className="w-full max-w-md bg-[#121A2F] rounded-2xl p-8 shadow-lg border border-white/10">
-        <div className="flex items-center gap-2 mb-6">
-          <UserPlus className="text-purple-400" />
-          <h1 className="text-2xl font-bold">Créer un compte</h1>
-        </div>
+    <div className="auth-wrap">
+      <div className="auth-card">
+        <h1 className="auth-title">Créer un compte</h1>
+        <p className="auth-subtitle">Accède à ton espace CipherFlow.</p>
 
-        {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200">
-            {error}
-          </div>
-        )}
+        {error && <div className="auth-error">{error}</div>}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-sm text-white/70">Email</label>
-            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
-              <Mail className="w-4 h-4 text-white/60" />
-              <input
-                className="bg-transparent w-full outline-none"
-                value={email}
-                onChange={(e) => setEmailState(e.target.value)}
-                type="email"
-                required
-                placeholder="admin@cipherflow.com"
-                autoComplete="email"
-              />
-            </div>
+        <form onSubmit={handleSubmit}>
+          <div className="auth-field">
+            <label className="auth-label">Email</label>
+            <input
+              className="auth-input"
+              value={email}
+              onChange={(e) => setEmailState(e.target.value)}
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="nom@entreprise.com"
+            />
           </div>
 
-          <div>
-            <label className="text-sm text-white/70">Mot de passe</label>
-            <div className="flex items-center gap-2 mt-1 bg-black/20 rounded-xl px-3 py-2 border border-white/10">
-              <Lock className="w-4 h-4 text-white/60" />
-              <input
-                className="bg-transparent w-full outline-none"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                type="password"
-                required
-                placeholder="••••••••"
-                autoComplete="new-password"
-              />
-            </div>
+          <div className="auth-field">
+            <label className="auth-label">Mot de passe</label>
+            <input
+              className="auth-input"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              required
+              autoComplete="new-password"
+              placeholder="••••••••"
+            />
           </div>
 
-          <button
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition rounded-xl py-3 font-semibold disabled:opacity-50"
-            type="submit"
-          >
-            {loading ? "Création..." : "S'inscrire"}
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="auth-field">
+            <label className="auth-label">Confirmer le mot de passe</label>
+            <input
+              className="auth-input"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              type="password"
+              required
+              autoComplete="new-password"
+              placeholder="••••••••"
+            />
+          </div>
+
+          <div className="auth-actions">
+            <button className="auth-btn-primary" disabled={loading} type="submit">
+              {loading ? "Création..." : "S'inscrire"}
+            </button>
+          </div>
+
+          <div className="auth-links" style={{ justifyContent: "center" }}>
+            <span>
+              Déjà un compte ? <Link to="/login">Se connecter</Link>
+            </span>
+          </div>
         </form>
       </div>
     </div>
   );
-};
-
-export default Register;
+}
