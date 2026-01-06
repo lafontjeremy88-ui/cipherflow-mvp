@@ -1,22 +1,31 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum
-from sqlalchemy.orm import relationship
-from .database import Base
 from datetime import datetime
 import enum
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    Enum,
+)
+from sqlalchemy.orm import relationship
+
+from .database import Base
 
 
 # ============================================================
 # 🔹 ENUMS
 # ============================================================
 
-# --- ÉNUMÉRATION DES RÔLES ---
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "super_admin"
     AGENCY_ADMIN = "agency_admin"
     AGENT = "agent"
 
 
-# --- ÉNUMÉRATION STATUT DOSSIER LOCATAIRE ---
 class TenantFileStatus(str, enum.Enum):
     NEW = "new"
     INCOMPLETE = "incomplete"
@@ -25,17 +34,15 @@ class TenantFileStatus(str, enum.Enum):
     REJECTED = "rejected"
 
 
-# --- ÉNUMÉRATION TYPE DOCUMENT ---
 class TenantDocType(str, enum.Enum):
-    ID = "id"                 # CNI / Passeport
-    PAYSLIP = "payslip"       # Fiche de paie
-    TAX = "tax"               # Avis d'imposition
+    ID = "id"  # CNI / Passeport
+    PAYSLIP = "payslip"  # Fiche de paie
+    TAX = "tax"  # Avis d'imposition
     WORK_CONTRACT = "work_contract"
-    BANK = "bank"             # RIB / relevé
+    BANK = "bank"  # RIB / relevé
     OTHER = "other"
 
 
-# --- ÉNUMÉRATION QUALITÉ / VALIDITÉ DOCUMENT ---
 class DocQuality(str, enum.Enum):
     OK = "ok"
     UNCLEAR = "unclear"
@@ -43,15 +50,17 @@ class DocQuality(str, enum.Enum):
 
 
 # ============================================================
-# 🔹 CORE SAAS MODELS (EXISTANTS)
+# 🔹 CORE SAAS MODELS
 # ============================================================
 
-# --- TABLE AGENCE (Modifiée pour le routage) ---
 class Agency(Base):
     __tablename__ = "agencies"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
+
+    # ✅ Petite amélioration : nullable=False (une agence doit avoir un nom)
+    name = Column(String, unique=True, index=True, nullable=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # ✅ Identifiant pour le routage email
@@ -61,28 +70,44 @@ class Agency(Base):
     users = relationship("User", back_populates="agency")
     settings = relationship("AppSettings", back_populates="agency", uselist=False)
 
-    # ✅ NOUVEAU (gestion locative)
-    tenant_files = relationship("TenantFile", back_populates="agency", cascade="all, delete-orphan")
+    # ✅ Gestion locative
+    tenant_files = relationship(
+        "TenantFile",
+        back_populates="agency",
+        cascade="all, delete-orphan",
+    )
 
 
-# --- UTILISATEUR ---
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
+
+    # ✅ Petite amélioration : nullable=False (un user doit avoir un email)
+    email = Column(String, unique=True, index=True, nullable=False)
+
+    # ⚠️ On laisse tel quel (si tu as des users Google sans password, il faudra gérer ça à part)
     hashed_password = Column(String)
 
+    # ✅ Email verification (UNIQUE, pas en double)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    email_verification_token_hash = Column(String, nullable=True, index=True)
+    email_verification_expires_at = Column(DateTime, nullable=True)
+
     agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=True)
+
+    # ✅ On garde String pour éviter migration / changement de type DB
     role = Column(String, default=UserRole.AGENT)
 
     agency = relationship("Agency", back_populates="users")
 
-    # ✅ NEW: refresh tokens (logout/révocation)
-    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship(
+        "RefreshToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
-# ✅ NEW: TABLE DES REFRESH TOKENS
 class RefreshToken(Base):
     """
     - On ne stocke JAMAIS le refresh token en clair.
@@ -105,7 +130,6 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 
-# --- SETTINGS ---
 class AppSettings(Base):
     __tablename__ = "app_settings"
 
@@ -121,7 +145,6 @@ class AppSettings(Base):
     agency = relationship("Agency", back_populates="settings")
 
 
-# --- DONNÉES MÉTIER : EMAILS ANALYSÉS ---
 class EmailAnalysis(Base):
     __tablename__ = "email_analyses"
 
@@ -145,7 +168,6 @@ class EmailAnalysis(Base):
     raw_ai_output = Column(Text)
 
 
-# --- DONNÉES MÉTIER : QUITTANCES / FACTURES ---
 class Invoice(Base):
     __tablename__ = "invoices"
 
@@ -161,7 +183,6 @@ class Invoice(Base):
     items_json = Column(Text)
 
 
-# --- DONNÉES MÉTIER : FICHIERS ANALYSÉS ---
 class FileAnalysis(Base):
     __tablename__ = "file_analyses"
 
@@ -180,7 +201,7 @@ class FileAnalysis(Base):
 
 
 # ============================================================
-# 🔹 GESTION LOCATIVE (NOUVEAU) — DOSSIER LOCATAIRE
+# 🔹 GESTION LOCATIVE — DOSSIER LOCATAIRE
 # ============================================================
 
 class TenantFile(Base):
@@ -196,15 +217,23 @@ class TenantFile(Base):
 
     # Checklist & risque (JSON string pour rester simple)
     checklist_json = Column(Text, nullable=True)  # ex: {"missing":["tax"],"received":["id"]}
-    risk_level = Column(String, nullable=True)    # "low" / "medium" / "high"
+    risk_level = Column(String, nullable=True)  # "low" / "medium" / "high"
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relations
     agency = relationship("Agency", back_populates="tenant_files")
-    email_links = relationship("TenantEmailLink", back_populates="tenant_file", cascade="all, delete-orphan")
-    document_links = relationship("TenantDocumentLink", back_populates="tenant_file", cascade="all, delete-orphan")
+    email_links = relationship(
+        "TenantEmailLink",
+        back_populates="tenant_file",
+        cascade="all, delete-orphan",
+    )
+    document_links = relationship(
+        "TenantDocumentLink",
+        back_populates="tenant_file",
+        cascade="all, delete-orphan",
+    )
 
 
 class TenantEmailLink(Base):

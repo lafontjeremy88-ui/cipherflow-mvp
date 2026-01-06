@@ -85,6 +85,11 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rstrip("/")
+RESEND_FROM = os.getenv("RESEND_FROM", "CipherFlow <onboarding@resend.dev>")
+EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
+
+
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
@@ -116,6 +121,30 @@ def check_password_policy(password: str) -> None:
         raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 chiffre requis).")
     if not re.search(r"[^A-Za-z0-9]", password):
         raise HTTPException(status_code=400, detail="Mot de passe trop faible (1 caractère spécial requis).")
+    
+def create_email_verify_token() -> str:
+    return secrets.token_urlsafe(32)
+
+def send_verification_email(to_email: str, token: str):
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=500, detail="RESEND_API_KEY manquant côté serveur")
+
+    verify_link = f"{FRONTEND_URL}/verify-email?token={token}"
+
+    resend.Emails.send({
+        "from": RESEND_FROM,
+        "to": [to_email],
+        "subject": "Confirme ton email - CipherFlow",
+        "html": f"""
+            <div style="font-family:Arial,sans-serif;line-height:1.5">
+              <h2>Bienvenue sur CipherFlow 👋</h2>
+              <p>Confirme ton email pour activer ton compte :</p>
+              <p><a href="{verify_link}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#7c3aed;color:#fff;text-decoration:none">Confirmer mon email</a></p>
+              <p style="color:#666;font-size:12px">Ce lien expire dans {EMAIL_VERIFY_EXPIRE_HOURS} heures.</p>
+            </div>
+        """
+    })
+    
 
 
 def set_refresh_cookie(response: Response, refresh_token: str):
@@ -352,6 +381,8 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
     user_email: str
+class RegisterResponse(BaseModel):
+    message: str
 
 class EmailAnalyseRequest(BaseModel):
     from_email: EmailStr
@@ -499,7 +530,7 @@ def on_startup():
 # ✅ ROUTES AUTH PRO
 # ============================================================
 
-@app.post("/auth/register", response_model=TokenResponse)
+@app.post("/auth/register", response_model=RegisterResponse)
 async def register(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
 
     # 1️⃣ Email unique
@@ -547,26 +578,40 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
     db.commit()
 
     # ✅ Access token (court)
-    access = create_access_token(
-        {"sub": new_user.email},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_MINUTES),
-    )
+    # ✅ Email verification (standard) - PAS de login tant que non vérifié
+    raw_token = create_email_verify_token()
 
-    # ✅ Refresh token (long) stocké hashé en DB + cookie HttpOnly
-    refresh = create_refresh_token()
-    db.add(
-        RefreshToken(
-            user_id=new_user.id,
-            token_hash=hash_token(refresh),
-            created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_DAYS),
-        )
-    )
+    new_user.email_verified = False
+    new_user.email_verification_token_hash = hash_token(raw_token)
+    new_user.email_verification_expires_at = datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_EXPIRE_HOURS)
     db.commit()
 
-    set_refresh_cookie(response, refresh)
+    # ✅ Envoi email Resend
+    send_verification_email(new_user.email, raw_token)
+    return {"message": "Inscription enregistrée. Vérifie ton email pour activer ton compte."}
+   
 
-    return {"access_token": access, "token_type": "bearer", "user_email": new_user.email}
+@app.get("/auth/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    token_hash = hash_token(token)
+
+    user = db.query(User).filter(User.email_verification_token_hash == token_hash).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Lien invalide.")
+
+    if user.email_verified:
+        return {"message": "Email déjà confirmé."}
+
+    if not user.email_verification_expires_at or user.email_verification_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Lien expiré. Demande un nouvel email de confirmation.")
+
+    user.email_verified = True
+    user.email_verification_token_hash = None
+    user.email_verification_expires_at = None
+    db.commit()
+
+    return {"message": "✅ Email confirmé. Tu peux maintenant te connecter."}
+
 
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
@@ -576,6 +621,10 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
     
     if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
+
+    if not user.email_verified:
+        raise HTTPException(status_code=403, detail="Email non confirmé. Vérifie ta boîte mail.")
+
 
     access = create_access_token(
         {"sub": user.email},
@@ -600,14 +649,15 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
 @app.post("/auth/token", response_model=TokenResponse)
 async def token(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    response: Response = None,
     db: Session = Depends(get_db),
 ):
-    # FastAPI peut injecter Response si on le met sans Depends
-    # MAIS comme tu es en prod, le plus simple: on renvoie nous-même une Response JSON
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
+
+    # ✅ Bloquer login tant que l’email n’est pas confirmé
+    if not getattr(user, "email_verified", False):
+        raise HTTPException(status_code=403, detail="Email non confirmé. Vérifie ta boîte mail.")
 
     access = create_access_token(
         {"sub": user.email},
@@ -625,13 +675,14 @@ async def token(
     )
     db.commit()
 
-    # ✅ on fabrique une réponse HTTP propre (cookie + JSON)
+    # ✅ Cookie refresh + JSON
     r = Response(
         content=json.dumps({"access_token": access, "token_type": "bearer", "user_email": user.email}),
         media_type="application/json",
     )
     set_refresh_cookie(r, refresh)
     return r
+
 
 
 @app.post("/auth/refresh", response_model=TokenResponse)

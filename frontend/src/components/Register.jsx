@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { API_URL, setToken, setEmail, clearAuth } from "../services/api";
+import { API_URL, clearAuth } from "../services/api";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -54,9 +54,6 @@ export default function Register() {
         setError(data?.detail || "Inscription impossible.");
         return;
       }
-
-      // ✅ Succès (message visible)
-      setSuccess("✅ Inscription enregistrée ! Connexion en cours…");
 
            // Sinon fallback : login manuel
       setSuccess("✅ Inscription enregistrée ! Redirection vers la connexion…");

@@ -20,6 +20,7 @@ import FileAnalyzer from "./components/FileAnalyzer";
 import InvoiceGenerator from "./components/InvoiceGenerator";
 import SettingsPanel from "./components/SettingsPanel";
 import TenantFilesPanel from "./components/TenantFilesPanel";
+import VerifyEmail from "./pages/VerifyEmail";
 
 // ✅ NOUVEL ONGLET : Analyse Email
 import EmailProcessor from "./pages/EmailProcessor";
@@ -160,6 +161,7 @@ function AppShell({ authFetch, onLogout }) {
             element={<SettingsPanel authFetch={authFetch} />}
           />
 
+
           {/* fallback interne */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
@@ -259,7 +261,7 @@ function AppInner() {
 
   // Si on tente d’accéder à une route protégée sans auth, on renvoie au login
   useEffect(() => {
-    const publicPaths = ["/login", "/register", "/oauth/callback"];
+   const publicPaths = ["/login", "/register", "/oauth/callback", "/verify-email"];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
@@ -290,6 +292,11 @@ function AppInner() {
         path="/oauth/callback"
         element={<OAuthCallback onDone={handleLoginSuccess} />}
       />
+      <Route
+            path="/verify-email"       
+            element={<VerifyEmail />}
+            />
+
 
       {/* Protected shell */}
       <Route

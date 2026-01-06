@@ -24,6 +24,8 @@ export default function Login({ onLogin }) {
         setError(data?.detail || "Token manquant dans la réponse /auth/login");
         return;
       }
+      localStorage.setItem("cipherflow_token", token);
+      localStorage.setItem("cipherflow_email", email.trim().toLowerCase());
 
       if (typeof onLogin === "function") onLogin();
     } catch (err) {
