@@ -189,7 +189,7 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
     try:
         resend.Emails.send(
             {
-                "from": "contact@cipherflow.company",
+                "from": RESEND_FROM,
                 "to": [to_email],
                 "subject": subject,
                 "html": body.replace("\n", "<br>"),
