@@ -587,7 +587,10 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
     db.commit()
 
     # ✅ Envoi email Resend
-    send_verification_email(new_user.email, raw_token)
+    try:
+        send_verification_email(new_user.email, raw_token)
+    except Exception as e:
+        print("EMAIL VERIFICATION FAILED:", e)
     return {"message": "Inscription enregistrée. Vérifie ton email pour activer ton compte."}
    
 

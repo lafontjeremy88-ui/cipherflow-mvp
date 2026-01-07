@@ -199,3 +199,12 @@ export async function getDashboardStats() {
   // On renvoie DIRECTEMENT les stats (pas {res,data})
   return data;
 }
+// ==============================
+// Email verification
+// ==============================
+export async function resendVerificationEmail(email) {
+  return apiPublicFetch("/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
