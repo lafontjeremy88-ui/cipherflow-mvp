@@ -583,7 +583,7 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
 
     new_user.email_verified = False
     new_user.email_verification_token_hash = hash_token(raw_token)
-    new_user.email_verification_expires_at = datetime.utcnow() + timedelta(minutes=1)
+    new_user.email_verification_expires_at = datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_EXPIRE_HOURS)
     db.commit()
 
     # ✅ Envoi email Resend
