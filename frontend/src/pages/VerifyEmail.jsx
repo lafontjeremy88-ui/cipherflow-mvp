@@ -32,7 +32,7 @@ export default function VerifyEmail() {
         const res = await fetch(
           `${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`,
           {
-            method: "POST",
+            method: "GET",
             headers: { "Content-Type": "application/json" },
           }
         );

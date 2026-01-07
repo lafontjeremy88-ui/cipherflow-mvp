@@ -384,6 +384,9 @@ class TokenResponse(BaseModel):
 class RegisterResponse(BaseModel):
     message: str
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
 class EmailAnalyseRequest(BaseModel):
     from_email: EmailStr
     subject: str
@@ -614,6 +617,50 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "✅ Email confirmé. Tu peux maintenant te connecter."}
+
+@app.post("/auth/verify-email")
+def verify_email_post(
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    # on réutilise exactement la logique du GET
+    return verify_email(token=token, db=db)
+
+
+@app.post("/auth/resend-verification")
+def resend_verification(
+    payload: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+
+    # Réponse neutre (évite de révéler si un email existe)
+    ok_msg = {"message": "Si un compte existe et n’est pas vérifié, un email de confirmation a été renvoyé."}
+
+    if not user:
+        return ok_msg
+
+    if getattr(user, "email_verified", False):
+        return ok_msg
+
+    raw_token = secrets.token_urlsafe(32)
+    user.email_verification_token_hash = hash_token(raw_token)
+    user.email_verification_expires_at = datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_EXPIRE_HOURS)
+
+    db.add(user)
+    db.commit()
+
+    # IMPORTANT : ne jamais faire crasher l'inscription / resend si Resend a un souci
+    try:
+        send_verification_email(user.email, raw_token)
+    except Exception as e:
+        # tu peux logger e si tu veux, mais on renvoie OK quand même
+        return {"message": "Compte créé/MAJ. Email temporairement indisponible, réessaie dans quelques minutes."}
+
+    return ok_msg
+
 
 
 @app.post("/auth/login", response_model=TokenResponse)
