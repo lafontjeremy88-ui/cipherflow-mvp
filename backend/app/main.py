@@ -131,18 +131,18 @@ def send_verification_email(to_email: str, token: str):
 
     verify_link = f"{FRONTEND_URL}/verify-email?token={token}"
 
+    html_content = f"""
+    <h2>Bienvenue sur CipherFlow 👋</h2>
+    <p>Pour vérifier ton email, clique ici :</p>
+    <p><a href="{verify_link}">{verify_link}</a></p>
+    <p>Si tu n'es pas à l'origine de cette demande, ignore ce message.</p>
+    """
+
     resend.Emails.send({
-        "from": RESEND_FROM,
+        "from": "CipherFlow <no-reply@cipherflow.company>",
         "to": [to_email],
-        "subject": "Confirme ton email - CipherFlow",
-        "html": f"""
-            <div style="font-family:Arial,sans-serif;line-height:1.5">
-              <h2>Bienvenue sur CipherFlow 👋</h2>
-              <p>Confirme ton email pour activer ton compte :</p>
-              <p><a href="{verify_link}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#7c3aed;color:#fff;text-decoration:none">Confirmer mon email</a></p>
-              <p style="color:#666;font-size:12px">Ce lien expire dans {EMAIL_VERIFY_EXPIRE_HOURS} heures.</p>
-            </div>
-        """
+        "subject": "Vérifie ton email",
+        "html": html_content,
     })
     
 
