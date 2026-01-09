@@ -89,6 +89,7 @@ if RESEND_API_KEY:
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rstrip("/")
 RESEND_FROM = os.getenv("RESEND_FROM", "CipherFlow <onboarding@resend.dev>")
 EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
+RESET_PASSWORD_EXPIRE_MINUTES = int(os.getenv("RESET_PASSWORD_EXPIRE_MINUTES", "30"))
 
 
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
@@ -147,7 +148,28 @@ def send_verification_email(to_email: str, token: str):
         "subject": "Vérifie ton email",
         "html": html_content,
     })
-    
+
+def send_reset_password_email(to_email: str, token: str):
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=500, detail="RESEND_API_KEY manquant côté serveur")
+
+    reset_link = f"{FRONTEND_URL}/reset-password?token={token}"
+
+    html_content = f"""
+    <h2>Réinitialisation de mot de passe</h2>
+    <p>Tu as demandé à réinitialiser ton mot de passe CipherFlow.</p>
+    <p>Clique ici (valable {RESET_PASSWORD_EXPIRE_MINUTES} minutes) :</p>
+    <p><a href="{reset_link}">{reset_link}</a></p>
+    <p>Si tu n'es pas à l'origine de cette demande, ignore ce message.</p>
+    """
+
+    resend.Emails.send({
+        "from": RESEND_FROM,
+        "to": [to_email],
+        "subject": "Réinitialise ton mot de passe",
+        "html": html_content,
+    })
+
 
 
 def set_refresh_cookie(response: Response, refresh_token: str):
@@ -478,6 +500,14 @@ class InvoiceRequest(BaseModel):
     date: str
     items: List[InvoiceItem]
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 # ============================================================
 # 🟦 DOSSIERS LOCATAIRES (GESTION LOCATIVE) — Pydantic
 # ============================================================
@@ -606,7 +636,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.email_verification_token_hash == token_hash).first()
     if not user:
-        raise HTTPException(status_code=400, detail="Lien invalide.")
+        raise HTTPException(status_code=400, detail="Lien invalide ou expiré.")
 
     if user.email_verified:
         return {"message": "Email déjà confirmé."}
@@ -663,6 +693,69 @@ def resend_verification(
         return {"message": "Compte créé/MAJ. Email temporairement indisponible, réessaie dans quelques minutes."}
 
     return ok_msg
+
+@app.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+
+    # ✅ réponse neutre (anti user-enum)
+    ok_msg = {"message": "Si un compte existe, tu recevras un email de réinitialisation."}
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return ok_msg
+
+    # (optionnel) tu peux exiger email_verified=True, mais en général on autorise
+    raw_token = secrets.token_urlsafe(32)
+    user.reset_password_token_hash = hash_token(raw_token)
+    user.reset_password_expires_at = datetime.utcnow() + timedelta(minutes=RESET_PASSWORD_EXPIRE_MINUTES)
+    user.reset_password_used_at = None
+    db.commit()
+
+    try:
+        send_reset_password_email(user.email, raw_token)
+    except Exception as e:
+        # ne jamais leak / ne jamais planter
+        logging.exception("RESET PASSWORD EMAIL FAILED")
+        return ok_msg
+
+    return ok_msg
+
+
+@app.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest, response: Response, db: Session = Depends(get_db)):
+    bad_msg = "Lien invalide ou expiré."
+
+    token = (payload.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail=bad_msg)
+
+    token_hash = hash_token(token)
+
+    user = db.query(User).filter(User.reset_password_token_hash == token_hash).first()
+    if (not user) or (user.reset_password_used_at is not None):
+        raise HTTPException(status_code=400, detail=bad_msg)
+
+    if (not user.reset_password_expires_at) or (user.reset_password_expires_at < datetime.utcnow()):
+        raise HTTPException(status_code=400, detail=bad_msg)
+
+    check_password_policy(payload.new_password)
+
+    user.hashed_password = get_password_hash(payload.new_password)
+    user.reset_password_used_at = datetime.utcnow()
+    user.reset_password_token_hash = None
+    user.reset_password_expires_at = None
+
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id,
+        RefreshToken.revoked_at.is_(None),
+    ).update({"revoked_at": datetime.utcnow()})
+
+    db.commit()
+
+    clear_refresh_cookie(response)
+
+    return {"message": "Mot de passe réinitialisé. Tu peux maintenant te connecter."}
 
 
 

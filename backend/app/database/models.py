@@ -94,6 +94,11 @@ class User(Base):
     email_verification_token_hash = Column(String, nullable=True, index=True)
     email_verification_expires_at = Column(DateTime, nullable=True)
 
+    # ✅ Password reset (forgot/reset password)
+    reset_password_token_hash = Column(String, nullable=True, index=True)
+    reset_password_expires_at = Column(DateTime, nullable=True)
+    reset_password_used_at = Column(DateTime, nullable=True)    
+
     agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=True)
 
     # ✅ On garde String pour éviter migration / changement de type DB

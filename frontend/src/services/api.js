@@ -208,3 +208,16 @@ export async function resendVerificationEmail(email) {
     body: JSON.stringify({ email }),
   });
 }
+export async function forgotPassword(email) {
+  return apiPublicFetch("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(token, new_password) {
+  return apiPublicFetch("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password }),
+  });
+}

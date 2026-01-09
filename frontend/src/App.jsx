@@ -21,6 +21,8 @@ import InvoiceGenerator from "./components/InvoiceGenerator";
 import SettingsPanel from "./components/SettingsPanel";
 import TenantFilesPanel from "./components/TenantFilesPanel";
 import VerifyEmail from "./pages/VerifyEmail";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 
 // ✅ NOUVEL ONGLET : Analyse Email
 import EmailProcessor from "./pages/EmailProcessor";
@@ -129,7 +131,7 @@ function AppShell({ authFetch, onLogout }) {
             path="/dashboard"
             element={<Dashboard authFetch={authFetch} />}
           />
-
+         
           <Route
             path="/emails/history"
             element={<EmailHistory authFetch={authFetch} />}
@@ -261,7 +263,7 @@ function AppInner() {
 
   // Si on tente d’accéder à une route protégée sans auth, on renvoie au login
   useEffect(() => {
-   const publicPaths = ["/login", "/register", "/oauth/callback", "/verify-email"];
+   const publicPaths = ["/login", "/register", "/oauth/callback", "/verify-email", "/forgot-password", "/reset-password",];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
@@ -285,6 +287,17 @@ function AppInner() {
         path="/register"
         element={
           isAuthed ? <Navigate to="/dashboard" replace /> : <Register />
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={isAuthed ? <Navigate to="/dashboard" replace /> : <ForgotPassword />
+        }
+      />
+
+      <Route
+        path="/reset-password"
+        element={isAuthed ? <Navigate to="/dashboard" replace /> : <ResetPassword />
         }
       />
 
