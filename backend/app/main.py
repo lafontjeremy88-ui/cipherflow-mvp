@@ -674,9 +674,16 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
     
     if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
+    
+    print("LOGIN DEBUG",
+      "db_email=", repr(user.email),
+      "db_email_norm=", repr(user.email.strip().lower()),
+      "verified=", user.email_verified,
+      "ADMIN_BYPASS_EMAIL=", repr(ADMIN_BYPASS_EMAIL),
+      "ADMIN_BYPASS_EMAIL_norm=", repr((ADMIN_BYPASS_EMAIL or "").strip().lower()))
 
     if not user.email_verified:
-      if ADMIN_BYPASS_EMAIL and user.email.lower() == ADMIN_BYPASS_EMAIL:
+      if ADMIN_BYPASS_EMAIL and user.email.strip().lower() == ADMIN_BYPASS_EMAIL.strip().lower():
         # ✅ Bypass dev uniquement pour le super admin
         pass
       else:
