@@ -30,6 +30,7 @@ from fastapi import (
     File,
     Form,
     Cookie,
+    Query,
 )
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
