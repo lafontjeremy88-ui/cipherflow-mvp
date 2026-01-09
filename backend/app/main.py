@@ -95,6 +95,7 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 ADMIN_BYPASS_EMAIL = os.getenv("ADMIN_BYPASS_EMAIL", "").strip().lower()
+print("[ADMIN_BYPASS_EMAIL]", repr(ADMIN_BYPASS_EMAIL))
 
 # ============================================================
 # ✅ AUTH PRO (ACCESS + REFRESH)
@@ -675,7 +676,12 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
 
     if not user.email_verified:
+      if ADMIN_BYPASS_EMAIL and user.email.lower() == ADMIN_BYPASS_EMAIL:
+        # ✅ Bypass dev uniquement pour le super admin
+        pass
+      else:
         raise HTTPException(status_code=403, detail="Email non confirmé. Vérifie ta boîte mail.")
+
 
 
     access = create_access_token(
