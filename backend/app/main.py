@@ -742,9 +742,9 @@ def reset_password(payload: ResetPasswordRequest, response: Response, db: Sessio
     check_password_policy(payload.new_password)
 
     if verify_password(payload.new_password, user.hashed_password):
-    raise HTTPException(
-        status_code=400,
-        detail="Le nouveau mot de passe doit être différent de l'ancien."
+        raise HTTPException(
+            status_code=400,
+            detail="Le nouveau mot de passe doit être différent de l'ancien."
     )
 
     user.hashed_password = get_password_hash(payload.new_password)
