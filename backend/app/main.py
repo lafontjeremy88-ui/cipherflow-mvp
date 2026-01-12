@@ -1477,19 +1477,14 @@ async def delete_my_account(
         Invoice.agency_id == agency_id
     ).delete(synchronize_session=False)
 
-    # ✅ Tenant links n'ont PAS agency_id => on filtre via tenant_file_id
-    tenant_file_ids_subq = (
-    db.query(TenantFile.id)
-    .filter(TenantFile.agency_id == agency_id)
-    .subquery()
-    )
+    # ✅ Tenant links n'ont PAS agency_id => on filtre via une requête "IN (SELECT ...)"
+    tenant_file_ids_q = db.query(TenantFile.id).filter(TenantFile.agency_id == agency_id)
 
     db.query(TenantEmailLink).filter(
-    TenantEmailLink.tenant_file_id.in_(tenant_file_ids_subq)
-).delete(synchronize_session=False)
-
+        TenantEmailLink.tenant_file_id.in_(tenant_file_ids_q)
+    ).delete(synchronize_session=False)
     db.query(TenantDocumentLink).filter(
-    TenantDocumentLink.tenant_file_id.in_(tenant_file_ids_subq)
+    TenantDocumentLink.tenant_file_id.in_(tenant_file_ids_q)
     ).delete(synchronize_session=False)
 
 
