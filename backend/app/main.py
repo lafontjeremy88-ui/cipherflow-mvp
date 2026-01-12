@@ -507,6 +507,30 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+class AccountMeResponse(BaseModel):
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+    agency_name: Optional[str] = None
+    role: Optional[str] = None
+
+    created_at: Optional[datetime] = None
+    account_status: Optional[str] = None
+
+    preferred_language: str = "fr"
+    ui_prefs: Optional[dict] = None
+
+class AccountUpdateRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    preferred_language: Optional[str] = None
+    ui_prefs: Optional[dict] = None
+
+    # ✅ Nom d'agence modifiable uniquement si admin
+    agency_name: Optional[str] = None
+
+
 
 # ============================================================
 # 🟦 DOSSIERS LOCATAIRES (GESTION LOCATIVE) — Pydantic
@@ -1327,6 +1351,74 @@ async def upload_logo(req: LogoUploadRequest, db: Session = Depends(get_db), cur
         return {"status": "logo_updated"}
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur image: {str(e)}")
+    
+@app.get("/account/me", response_model=AccountMeResponse)
+async def get_my_account(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    agency_name = None
+    if current_user.agency_id:
+        ag = db.query(Agency).filter(Agency.id == current_user.agency_id).first()
+        agency_name = ag.name if ag else None
+
+    ui_prefs = None
+    try:
+        if getattr(current_user, "ui_prefs_json", None):
+            ui_prefs = json.loads(current_user.ui_prefs_json)
+    except Exception:
+        ui_prefs = None
+
+    return AccountMeResponse(
+        email=current_user.email,
+        first_name=getattr(current_user, "first_name", None),
+        last_name=getattr(current_user, "last_name", None),
+        agency_name=agency_name,
+        role=str(current_user.role) if current_user.role is not None else None,
+        created_at=getattr(current_user, "created_at", None),
+        account_status=getattr(current_user, "account_status", None),
+        preferred_language=getattr(current_user, "preferred_language", "fr") or "fr",
+        ui_prefs=ui_prefs,
+    )
+
+
+@app.patch("/account/me", response_model=AccountMeResponse)
+async def update_my_account(
+    payload: AccountUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    # ✅ champs user
+    if payload.first_name is not None:
+        current_user.first_name = payload.first_name.strip() or None
+
+    if payload.last_name is not None:
+        current_user.last_name = payload.last_name.strip() or None
+
+    if payload.preferred_language is not None:
+        lang = payload.preferred_language.lower().strip()
+        if lang in ("fr", "en"):
+            current_user.preferred_language = lang
+
+    if payload.ui_prefs is not None:
+        current_user.ui_prefs_json = json.dumps(payload.ui_prefs)
+
+    # ✅ agence modifiable seulement si admin agence / super admin
+    if payload.agency_name is not None:
+        role = (str(current_user.role) or "").lower()
+        is_admin = ("agency_admin" in role) or ("super_admin" in role)
+        if is_admin and current_user.agency_id:
+            new_name = payload.agency_name.strip()
+            if new_name:
+                ag = db.query(Agency).filter(Agency.id == current_user.agency_id).first()
+                if ag:
+                    ag.name = new_name
+
+    db.commit()
+
+    # On renvoie la vue à jour
+    return await get_my_account(db=db, current_user=current_user)
+
 
 # --- PROCESS MANUEL / UPLOAD ---
 @app.post("/email/process", response_model=EmailProcessResponse)

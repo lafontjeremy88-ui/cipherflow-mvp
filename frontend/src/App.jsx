@@ -11,6 +11,7 @@ import {
 // Pages
 import Dashboard from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
+import AccountPage from "./pages/AccountPage";
 
 // Components / Modules
 import Login from "./components/Login";
@@ -107,6 +108,11 @@ function AppShell({ authFetch, onLogout }) {
             Dossiers locataires
           </NavLink>
 
+          <NavLink to="/account" className={navItemClass}>
+            Mon compte
+          </NavLink>
+
+
           <NavLink to="/settings" className={navItemClass}>
             Paramètres
           </NavLink>
@@ -161,6 +167,10 @@ function AppShell({ authFetch, onLogout }) {
           <Route
             path="/settings"
             element={<SettingsPanel authFetch={authFetch} />}
+          />
+          <Route
+            path="/account"
+            element={<AccountPage authFetch={authFetch} />}
           />
 
 

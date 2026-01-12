@@ -86,6 +86,16 @@ class User(Base):
     # ✅ Petite amélioration : nullable=False (un user doit avoir un email)
     email = Column(String, unique=True, index=True, nullable=False)
 
+     # ✅ Profil
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+
+    preferred_language = Column(String, default="fr", nullable=False)
+    ui_prefs_json = Column(Text, nullable=True)
+
+    account_status = Column(String, default="active", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
     # ⚠️ On laisse tel quel (si tu as des users Google sans password, il faudra gérer ça à part)
     hashed_password = Column(String)
 
