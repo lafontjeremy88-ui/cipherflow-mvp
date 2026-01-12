@@ -9,6 +9,9 @@ export default function AccountPage({ authFetch }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // ✅ NEW: message succès
+  const [successMsg, setSuccessMsg] = useState("");
+
   const [data, setData] = useState(null);
 
   // form
@@ -24,6 +27,7 @@ export default function AccountPage({ authFetch }) {
 
   const load = async () => {
     setErr("");
+    setSuccessMsg(""); // ✅ NEW: reset message
     setLoading(true);
     try {
       const res = await authFetch("/account/me");
@@ -49,6 +53,7 @@ export default function AccountPage({ authFetch }) {
 
   const onSave = async () => {
     setErr("");
+    setSuccessMsg(""); // ✅ NEW: reset message
     setSaving(true);
     try {
       const payload = {
@@ -68,10 +73,38 @@ export default function AccountPage({ authFetch }) {
       if (!res.ok) throw new Error(json?.detail || "Erreur sauvegarde");
 
       setData(json);
+
+      // ✅ NEW: success toast/message
+      setSuccessMsg("Modifications enregistrées avec succès.");
+      window.setTimeout(() => setSuccessMsg(""), 3000);
     } catch (e) {
       setErr(e.message || "Erreur");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ✅ NEW: delete account (soft delete côté backend)
+  const onDeleteAccount = async () => {
+    setErr("");
+    setSuccessMsg("");
+
+    const ok = window.confirm(
+      "Êtes-vous sûr de vouloir supprimer votre compte ? Cette action est irréversible."
+    );
+    if (!ok) return;
+
+    try {
+      const res = await authFetch("/account/me?mode=purge", { method: "DELETE" });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) throw new Error(json?.detail || "Erreur suppression du compte");
+
+      // Déconnexion + retour login
+      localStorage.clear();
+      window.location.href = "/login";
+    } catch (e) {
+      setErr(e.message || "Erreur");
     }
   };
 
@@ -88,6 +121,10 @@ export default function AccountPage({ authFetch }) {
     <div style={{ display: "grid", gap: 16, maxWidth: 900 }}>
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Mon compte</h2>
+
+        {/* ✅ NEW: success message */}
+        {successMsg ? <div className="alert alert-success">{successMsg}</div> : null}
+
         {err ? <div className="alert alert-error">{err}</div> : null}
       </div>
 
@@ -181,6 +218,18 @@ export default function AccountPage({ authFetch }) {
         </button>
         <button className="btn btn-ghost" onClick={load} disabled={saving}>
           Recharger
+        </button>
+      </div>
+
+      {/* ✅ NEW: Danger zone */}
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Zone dangereuse</h3>
+        <div className="muted" style={{ marginBottom: 10 }}>
+          Supprimer ton compte te déconnecte immédiatement. Cette action est irréversible.
+        </div>
+
+        <button className="btn" onClick={onDeleteAccount} disabled={saving}>
+          Supprimer mon compte
         </button>
       </div>
     </div>

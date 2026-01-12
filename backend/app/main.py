@@ -1419,6 +1419,93 @@ async def update_my_account(
     # On renvoie la vue à jour
     return await get_my_account(db=db, current_user=current_user)
 
+@app.delete("/account/me")
+async def delete_my_account(
+    mode: str = Query(default="purge", pattern="^(account|purge)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    agency_id = current_user.agency_id
+
+    # --- suppression simple : utilisateur uniquement ---
+    if mode == "account" or not agency_id:
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == current_user.id
+        ).delete(synchronize_session=False)
+
+        db.delete(current_user)
+        db.commit()
+        return {"success": True, "deleted": "user"}
+
+    # --- vérifier s'il reste d'autres users dans l'agence ---
+    users_count = (
+        db.query(func.count(User.id))
+        .filter(User.agency_id == agency_id)
+        .scalar()
+        or 0
+    )
+
+    if users_count > 1:
+        # on supprime uniquement l'utilisateur courant
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == current_user.id
+        ).delete(synchronize_session=False)
+
+        db.delete(current_user)
+        db.commit()
+
+        return {
+            "success": True,
+            "deleted": "user",
+            "note": "agency_not_purged_other_users_exist",
+        }
+
+    # --- purge totale : dernier user de l'agence ---
+    db.query(AppSettings).filter(
+        AppSettings.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(EmailAnalysis).filter(
+        EmailAnalysis.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(FileAnalysis).filter(
+        FileAnalysis.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(Invoice).filter(
+        Invoice.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(TenantDocumentLink).filter(
+        TenantDocumentLink.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(TenantEmailLink).filter(
+        TenantEmailLink.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    db.query(TenantFile).filter(
+        TenantFile.agency_id == agency_id
+    ).delete(synchronize_session=False)
+
+    # refresh tokens du user
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == current_user.id
+    ).delete(synchronize_session=False)
+
+    # user
+    db.delete(current_user)
+
+    # agency
+    ag = db.query(Agency).filter(Agency.id == agency_id).first()
+    if ag:
+        db.delete(ag)
+
+    db.commit()
+    return {"success": True, "deleted": "user+agency"}
+
+
 
 # --- PROCESS MANUEL / UPLOAD ---
 @app.post("/email/process", response_model=EmailProcessResponse)
