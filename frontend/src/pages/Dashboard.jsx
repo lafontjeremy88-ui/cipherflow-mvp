@@ -8,13 +8,14 @@ import { authFetch as authFetchFromApi } from "../services/api";
 const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
 
 /**
- * Récupère une "distribution par catégorie" depuis différents formats possibles.
- * But: éviter de casser le donut si le backend renvoie une autre clé.
+ * Extrait une distribution "catégories" depuis plusieurs formats possibles.
+ * ✅ Supporte 2 formats :
+ *  - Objet : { "Autre": 18, "Incident": 2 }
+ *  - Tableau : [ { name:"Autre", value:18 }, ... ]  <-- ton backend actuel
  */
 function extractDistribution(payload) {
-  // formats possibles (au cas où)
   const candidates = [
-    payload?.charts?.distribution,
+    payload?.charts?.distribution, // <-- ton format actuel
     payload?.charts?.categories,
     payload?.distribution,
     payload?.category_distribution,
@@ -22,16 +23,22 @@ function extractDistribution(payload) {
   ];
 
   for (const c of candidates) {
-    if (c && typeof c === "object" && !Array.isArray(c)) return c;
+    if (!c) continue;
+
+    // Format tableau [{name,value}]
+    if (Array.isArray(c)) return c;
+
+    // Format objet {"Autre": 18}
+    if (typeof c === "object") return c;
   }
-  return {};
+
+  return []; // par défaut on renvoie un tableau vide
 }
 
 /**
- * Normalise le payload /dashboard/stats pour que l'UI soit stable.
+ * Normalise la réponse /dashboard/stats
  */
 function normalizeStats(payload) {
-  // Tes anciens formats
   const kpis = payload?.kpis || payload || {};
   const distribution = extractDistribution(payload);
 
@@ -42,7 +49,6 @@ function normalizeStats(payload) {
 
     distribution,
 
-    // recents peut venir sous plusieurs noms
     recents: Array.isArray(payload?.recents)
       ? payload.recents
       : Array.isArray(payload?.recent_activity)
@@ -53,20 +59,8 @@ function normalizeStats(payload) {
   };
 }
 
-/**
- * Dashboard
- * - Appelle /dashboard/stats
- * - Affiche 3 KPI
- * - Affiche un donut (répartition catégories) si on a des données
- * - Affiche une liste "activité récente"
- *
- * Note: App.jsx passe parfois authFetch en prop, mais ton fichier importait authFetch directement.
- * Ici on supporte les deux: prop > fallback import.
- */
 export default function Dashboard({ authFetch }) {
   const navigate = useNavigate();
-
-  // On prend authFetch passé par AppShell si disponible, sinon celui du service
   const doFetch = authFetch || authFetchFromApi;
 
   const [loading, setLoading] = useState(true);
@@ -75,16 +69,36 @@ export default function Dashboard({ authFetch }) {
     total_emails: 0,
     high_urgency: 0,
     invoices: 0,
-    distribution: {},
+    distribution: [],
     recents: [],
   });
 
-  // Transforme { "Autre": 3, "Urgent": 1 } -> [{name, value}]
+  /**
+   * donutData :
+   * - Si distribution est déjà un tableau [{name,value}], on le nettoie
+   * - Si distribution est un objet {"Autre": 18}, on le convertit en tableau
+   */
   const donutData = useMemo(() => {
-    const entries = Object.entries(stats.distribution || {});
-    return entries
-      .map(([name, value]) => ({ name, value: Number(value) || 0 }))
-      .filter((x) => x.value > 0);
+    const dist = stats.distribution;
+
+    // ✅ ton format actuel : tableau
+    if (Array.isArray(dist)) {
+      return dist
+        .map((d) => ({
+          name: String(d?.name || ""),
+          value: Number(d?.value) || 0,
+        }))
+        .filter((d) => d.name && d.value > 0);
+    }
+
+    // ✅ format objet
+    if (dist && typeof dist === "object") {
+      return Object.entries(dist)
+        .map(([name, value]) => ({ name, value: Number(value) || 0 }))
+        .filter((d) => d.name && d.value > 0);
+    }
+
+    return [];
   }, [stats.distribution]);
 
   useEffect(() => {
@@ -103,7 +117,7 @@ export default function Dashboard({ authFetch }) {
 
         const payload = await res.json().catch(() => ({}));
 
-        // Debug utile si le donut reste vide (tu peux supprimer après)
+        // Debug si besoin (tu peux supprimer ensuite)
         // console.debug("[dashboard payload]", payload);
 
         const normalized = normalizeStats(payload);
@@ -132,7 +146,7 @@ export default function Dashboard({ authFetch }) {
         </div>
       )}
 
-      {/* KPI (avec click restauré) */}
+      {/* KPI */}
       <div
         style={{
           display: "grid",
@@ -145,14 +159,18 @@ export default function Dashboard({ authFetch }) {
           title="EMAILS TRAITÉS"
           value={loading ? "…" : stats.total_emails}
           color="#6D5EF8"
+          // Liste globale
           onClick={() => navigate("/emails/history")}
         />
+
         <StatCard
           title="URGENCE HAUTE"
           value={loading ? "…" : stats.high_urgency}
           color="#E46C6C"
-          onClick={() => navigate("/emails/history")}
+          // ✅ UX pro : même page mais filtrée
+          onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
+
         <StatCard
           title="QUITTANCES GÉNÉRÉES"
           value={loading ? "…" : stats.invoices}
@@ -168,13 +186,7 @@ export default function Dashboard({ authFetch }) {
           <div style={{ fontWeight: 900, marginBottom: 10 }}>📊 Répartition par Catégorie</div>
 
           {donutData.length === 0 ? (
-            <div className="muted">
-              Aucune donnée de catégorie pour l’instant.
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                (Si tu sais qu’il y a des données, c’est juste une différence de format côté backend :
-                on peut l’ajuster en 30 secondes.)
-              </div>
-            </div>
+            <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
           ) : (
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -198,7 +210,7 @@ export default function Dashboard({ authFetch }) {
           )}
         </div>
 
-        {/* Activité */}
+        {/* Activité récente */}
         <div className="card">
           <div style={{ fontWeight: 900, marginBottom: 10 }}>⚡ Activité Récente</div>
 
