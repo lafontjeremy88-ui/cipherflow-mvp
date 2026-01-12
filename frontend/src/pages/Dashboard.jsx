@@ -3,25 +3,71 @@ import { useNavigate } from "react-router-dom";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 
 import StatCard from "../components/StatCard";
-import { authFetch } from "../services/api";
+import { authFetch as authFetchFromApi } from "../services/api";
 
 const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
 
+/**
+ * Récupère une "distribution par catégorie" depuis différents formats possibles.
+ * But: éviter de casser le donut si le backend renvoie une autre clé.
+ */
+function extractDistribution(payload) {
+  // formats possibles (au cas où)
+  const candidates = [
+    payload?.charts?.distribution,
+    payload?.charts?.categories,
+    payload?.distribution,
+    payload?.category_distribution,
+    payload?.categories,
+  ];
+
+  for (const c of candidates) {
+    if (c && typeof c === "object" && !Array.isArray(c)) return c;
+  }
+  return {};
+}
+
+/**
+ * Normalise le payload /dashboard/stats pour que l'UI soit stable.
+ */
 function normalizeStats(payload) {
-  const kpis = payload?.kpis || {};
-  const charts = payload?.charts || {};
+  // Tes anciens formats
+  const kpis = payload?.kpis || payload || {};
+  const distribution = extractDistribution(payload);
 
   return {
-    total_emails: Number(kpis?.total_emails || 0),
-    high_urgency: Number(kpis?.high_urgency || 0),
-    invoices: Number(kpis?.invoices || 0),
-    distribution: charts?.distribution && typeof charts.distribution === "object" ? charts.distribution : {},
-    recents: Array.isArray(payload?.recents) ? payload.recents : [],
+    total_emails: Number(kpis?.total_emails || kpis?.emails || 0),
+    high_urgency: Number(kpis?.high_urgency || kpis?.urgent || 0),
+    invoices: Number(kpis?.invoices || kpis?.quittances || 0),
+
+    distribution,
+
+    // recents peut venir sous plusieurs noms
+    recents: Array.isArray(payload?.recents)
+      ? payload.recents
+      : Array.isArray(payload?.recent_activity)
+      ? payload.recent_activity
+      : Array.isArray(payload?.activity)
+      ? payload.activity
+      : [],
   };
 }
 
-export default function Dashboard() {
+/**
+ * Dashboard
+ * - Appelle /dashboard/stats
+ * - Affiche 3 KPI
+ * - Affiche un donut (répartition catégories) si on a des données
+ * - Affiche une liste "activité récente"
+ *
+ * Note: App.jsx passe parfois authFetch en prop, mais ton fichier importait authFetch directement.
+ * Ici on supporte les deux: prop > fallback import.
+ */
+export default function Dashboard({ authFetch }) {
   const navigate = useNavigate();
+
+  // On prend authFetch passé par AppShell si disponible, sinon celui du service
+  const doFetch = authFetch || authFetchFromApi;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -33,6 +79,7 @@ export default function Dashboard() {
     recents: [],
   });
 
+  // Transforme { "Autre": 3, "Urgent": 1 } -> [{name, value}]
   const donutData = useMemo(() => {
     const entries = Object.entries(stats.distribution || {});
     return entries
@@ -48,15 +95,18 @@ export default function Dashboard() {
       setError("");
 
       try {
-        const res = await authFetch("/dashboard/stats");
+        const res = await doFetch("/dashboard/stats");
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
           throw new Error(`Stats HTTP ${res.status} ${txt}`);
         }
 
         const payload = await res.json().catch(() => ({}));
-        const normalized = normalizeStats(payload);
 
+        // Debug utile si le donut reste vide (tu peux supprimer après)
+        // console.debug("[dashboard payload]", payload);
+
+        const normalized = normalizeStats(payload);
         if (!cancelled) setStats(normalized);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Erreur inconnue");
@@ -69,7 +119,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [doFetch]);
 
   return (
     <div>
@@ -82,11 +132,33 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPI */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18, marginTop: 14 }}>
-        <StatCard title="EMAILS TRAITÉS" value={loading ? "…" : stats.total_emails} color="#6D5EF8" />
-        <StatCard title="URGENCE HAUTE" value={loading ? "…" : stats.high_urgency} color="#E46C6C" />
-        <StatCard title="QUITTANCES GÉNÉRÉES" value={loading ? "…" : stats.invoices} color="#44C2A8" />
+      {/* KPI (avec click restauré) */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 18,
+          marginTop: 14,
+        }}
+      >
+        <StatCard
+          title="EMAILS TRAITÉS"
+          value={loading ? "…" : stats.total_emails}
+          color="#6D5EF8"
+          onClick={() => navigate("/emails/history")}
+        />
+        <StatCard
+          title="URGENCE HAUTE"
+          value={loading ? "…" : stats.high_urgency}
+          color="#E46C6C"
+          onClick={() => navigate("/emails/history")}
+        />
+        <StatCard
+          title="QUITTANCES GÉNÉRÉES"
+          value={loading ? "…" : stats.invoices}
+          color="#44C2A8"
+          onClick={() => navigate("/invoices")}
+        />
       </div>
 
       {/* 2 colonnes */}
@@ -96,7 +168,13 @@ export default function Dashboard() {
           <div style={{ fontWeight: 900, marginBottom: 10 }}>📊 Répartition par Catégorie</div>
 
           {donutData.length === 0 ? (
-            <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
+            <div className="muted">
+              Aucune donnée de catégorie pour l’instant.
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+                (Si tu sais qu’il y a des données, c’est juste une différence de format côté backend :
+                on peut l’ajuster en 30 secondes.)
+              </div>
+            </div>
           ) : (
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
