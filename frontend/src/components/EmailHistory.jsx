@@ -44,7 +44,7 @@ export default function EmailHistory({ authFetch }) {
   // Deep-link modal
   const deepLinkEmailId = searchParams.get("emailId") || "";
 
-  // ✅ Nouveau : filtre via URL (ex: ?filter=high_urgency)
+  // ✅ Filtre via URL (ex: ?filter=high_urgency)
   const urlFilter = (searchParams.get("filter") || "").toLowerCase();
   const urlHighUrgencyEnabled = urlFilter === "high_urgency";
 
@@ -78,7 +78,7 @@ export default function EmailHistory({ authFetch }) {
       const arr = pickArray(payload).map(normalizeEmail);
       setItems(arr);
 
-      // Deep-link open
+      // Deep-link open (au chargement initial)
       if (deepLinkEmailId) {
         const found = arr.find((x) => String(x.id) === String(deepLinkEmailId));
         if (found) {
@@ -168,7 +168,7 @@ export default function EmailHistory({ authFetch }) {
     });
   };
 
-  // ✅ Retirer uniquement le filtre URL, sans toucher au reste (emailId, etc.)
+  // ✅ Retirer uniquement le filtre URL, sans toucher au reste
   const clearUrlFilter = () => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
@@ -191,10 +191,23 @@ export default function EmailHistory({ authFetch }) {
 
       {/* ✅ Badge filtre URL */}
       {urlHighUrgencyEnabled && (
-        <div className="card" style={{ marginBottom: 12, padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+          className="card"
+          style={{
+            marginBottom: 12,
+            padding: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           <span className="badge badge-high">FILTRÉ</span>
           <strong>Filtre :</strong> Urgence haute
-          <button className="btn" onClick={clearUrlFilter} style={{ marginLeft: "auto" }}>
+          <button
+            className="btn"
+            onClick={clearUrlFilter}
+            style={{ marginLeft: "auto" }}
+          >
             Retirer le filtre
           </button>
         </div>
@@ -208,7 +221,11 @@ export default function EmailHistory({ authFetch }) {
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <select
+          className="select"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        >
           {categories.map((c) => (
             <option key={c} value={c}>
               Filtre: {c}
@@ -216,7 +233,11 @@ export default function EmailHistory({ authFetch }) {
           ))}
         </select>
 
-        <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+        <select
+          className="select"
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+        >
           <option value="recent">Plus récents (Défaut)</option>
           <option value="old">Plus anciens</option>
         </select>
@@ -233,20 +254,45 @@ export default function EmailHistory({ authFetch }) {
           <div className="muted">Aucun email trouvé.</div>
         ) : (
           filtered.map((m) => (
-            <div key={m.id} className="list-row">
-              <div className={urgencyBadge(m.urgency)}>{String(m.urgency || "FAIBLE").toUpperCase()}</div>
+            <div
+              key={m.id}
+              className="list-row"
+              role="button"
+              tabIndex={0}
+              onClick={() => openEmail(m)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") openEmail(m);
+              }}
+              style={{ cursor: "pointer" }}
+              title="Ouvrir cet email"
+            >
+              <div className={urgencyBadge(m.urgency)}>
+                {String(m.urgency || "FAIBLE").toUpperCase()}
+              </div>
 
               <div className="list-main">
                 <div className="list-subject">{m.subject}</div>
                 <div className="list-meta">
                   <span className="meta-from">{m.from}</span>
-                  {m.createdAt ? <span className="meta-date"> • {String(m.createdAt).slice(0, 16)}</span> : null}
+                  {m.createdAt ? (
+                    <span className="meta-date">
+                      {" "}
+                      • {String(m.createdAt).slice(0, 16)}
+                    </span>
+                  ) : null}
                   <span className="meta-cat"> • {m.category}</span>
                 </div>
               </div>
 
               <div className="list-actions">
-                <button className="icon-btn" onClick={() => openEmail(m)} title="Voir">
+                <button
+                  className="icon-btn"
+                  onClick={(e) => {
+                    e.stopPropagation(); // ✅ évite de déclencher aussi le clic de la ligne
+                    openEmail(m);
+                  }}
+                  title="Voir"
+                >
                   👁️
                 </button>
               </div>
@@ -263,7 +309,8 @@ export default function EmailHistory({ authFetch }) {
               <div>
                 <div className="modal-title">{selected.subject}</div>
                 <div className="modal-subtitle">
-                  {selected.from} • {selected.category} • {String(selected.createdAt).slice(0, 16)}
+                  {selected.from} • {selected.category} •{" "}
+                  {String(selected.createdAt).slice(0, 16)}
                 </div>
               </div>
               <button className="icon-btn" onClick={closeModal} title="Fermer">
