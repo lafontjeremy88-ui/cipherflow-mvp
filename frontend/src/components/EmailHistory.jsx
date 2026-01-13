@@ -302,32 +302,33 @@ export default function EmailHistory({ authFetch }) {
       </div>
 
       {/* Modal */}
-      {open && selected && (
-        <div className="modal-backdrop" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <div className="modal-title">{selected.subject}</div>
-                <div className="modal-subtitle">
-                  {selected.from} • {selected.category} •{" "}
-                  {String(selected.createdAt).slice(0, 16)}
-                </div>
-              </div>
-              <button className="icon-btn" onClick={closeModal} title="Fermer">
-                ✖
-              </button>
-            </div>
-
-            <div className="modal-body">
-              {selected.body ? (
-                <pre className="email-body">{selected.body}</pre>
-              ) : (
-                <div className="muted">Aucun contenu disponible.</div>
-              )}
-            </div>
+{open && selected && (
+  <div className="modal-overlay" onClick={closeModal}>
+    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-header">
+        <div>
+          <div className="modal-title">{selected.subject}</div>
+          <div className="modal-subtitle">
+            {selected.from} • {selected.category} • {String(selected.createdAt).slice(0, 16)}
           </div>
         </div>
-      )}
+
+        <button className="close-btn" onClick={closeModal} title="Fermer">
+          ✖
+        </button>
+      </div>
+
+      <div className="modal-body">
+        {selected.body ? (
+          <pre className="detail-box">{selected.body}</pre>
+        ) : (
+          <div className="muted">Aucun contenu disponible.</div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
     </div>
   );
 }
