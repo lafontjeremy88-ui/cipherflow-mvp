@@ -33,16 +33,27 @@ function urgencyBadge(u) {
   return "badge badge-low";
 }
 
+function isHighUrgency(u) {
+  const x = String(u || "").toUpperCase();
+  return x.includes("HAUT") || x.includes("HIGH");
+}
+
 export default function EmailHistory({ authFetch }) {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep-link modal
   const deepLinkEmailId = searchParams.get("emailId") || "";
+
+  // ✅ Nouveau : filtre via URL (ex: ?filter=high_urgency)
+  const urlFilter = (searchParams.get("filter") || "").toLowerCase();
+  const urlHighUrgencyEnabled = urlFilter === "high_urgency";
 
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Tout");
+  const [filter, setFilter] = useState("Tout"); // filtre catégorie
   const [sort, setSort] = useState("recent");
 
   const [open, setOpen] = useState(false);
@@ -100,7 +111,12 @@ export default function EmailHistory({ authFetch }) {
   const filtered = useMemo(() => {
     let arr = [...items];
 
-    // filter
+    // ✅ Filtre URL "Urgence haute"
+    if (urlHighUrgencyEnabled) {
+      arr = arr.filter((x) => isHighUrgency(x.urgency));
+    }
+
+    // filtre catégorie (select)
     if (filter !== "Tout") {
       arr = arr.filter((x) => (x.category || "Autre") === filter);
     }
@@ -124,7 +140,7 @@ export default function EmailHistory({ authFetch }) {
     }
 
     return arr;
-  }, [items, filter, search, sort]);
+  }, [items, filter, search, sort, urlHighUrgencyEnabled]);
 
   const categories = useMemo(() => {
     const set = new Set(items.map((x) => x.category || "Autre"));
@@ -152,6 +168,15 @@ export default function EmailHistory({ authFetch }) {
     });
   };
 
+  // ✅ Retirer uniquement le filtre URL, sans toucher au reste (emailId, etc.)
+  const clearUrlFilter = () => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.delete("filter");
+      return p;
+    });
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -161,6 +186,17 @@ export default function EmailHistory({ authFetch }) {
       {error && (
         <div className="alert error">
           <strong>Erreur:</strong> {error}
+        </div>
+      )}
+
+      {/* ✅ Badge filtre URL */}
+      {urlHighUrgencyEnabled && (
+        <div className="card" style={{ marginBottom: 12, padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="badge badge-high">FILTRÉ</span>
+          <strong>Filtre :</strong> Urgence haute
+          <button className="btn" onClick={clearUrlFilter} style={{ marginLeft: "auto" }}>
+            Retirer le filtre
+          </button>
         </div>
       )}
 
