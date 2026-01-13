@@ -11,11 +11,11 @@ const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
  * Extrait une distribution "catégories" depuis plusieurs formats possibles.
  * ✅ Supporte 2 formats :
  *  - Objet : { "Autre": 18, "Incident": 2 }
- *  - Tableau : [ { name:"Autre", value:18 }, ... ]  <-- ton backend actuel
+ *  - Tableau : [ { name:"Autre", value:18 }, ... ]  <-- format backend actuel
  */
 function extractDistribution(payload) {
   const candidates = [
-    payload?.charts?.distribution, // <-- ton format actuel
+    payload?.charts?.distribution,
     payload?.charts?.categories,
     payload?.distribution,
     payload?.category_distribution,
@@ -32,7 +32,7 @@ function extractDistribution(payload) {
     if (typeof c === "object") return c;
   }
 
-  return []; // par défaut on renvoie un tableau vide
+  return [];
 }
 
 /**
@@ -81,7 +81,7 @@ export default function Dashboard({ authFetch }) {
   const donutData = useMemo(() => {
     const dist = stats.distribution;
 
-    // ✅ ton format actuel : tableau
+    // ✅ format tableau
     if (Array.isArray(dist)) {
       return dist
         .map((d) => ({
@@ -116,11 +116,8 @@ export default function Dashboard({ authFetch }) {
         }
 
         const payload = await res.json().catch(() => ({}));
-
-        // Debug si besoin (tu peux supprimer ensuite)
-        // console.debug("[dashboard payload]", payload);
-
         const normalized = normalizeStats(payload);
+
         if (!cancelled) setStats(normalized);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Erreur inconnue");
@@ -141,7 +138,10 @@ export default function Dashboard({ authFetch }) {
       <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
 
       {error && (
-        <div className="card" style={{ border: "1px solid rgba(255,0,0,0.25)" }}>
+        <div
+          className="card"
+          style={{ border: "1px solid rgba(255,0,0,0.25)" }}
+        >
           <strong>Erreur :</strong> {error}
         </div>
       )}
@@ -159,16 +159,15 @@ export default function Dashboard({ authFetch }) {
           title="EMAILS TRAITÉS"
           value={loading ? "…" : stats.total_emails}
           color="#6D5EF8"
-          // Liste globale
-          onClick={() => navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")}
-
+          // ✅ simple : ouvre l’historique complet
+          onClick={() => navigate("/emails/history")}
         />
 
         <StatCard
           title="URGENCE HAUTE"
           value={loading ? "…" : stats.high_urgency}
           color="#E46C6C"
-          // ✅ UX pro : même page mais filtrée
+          // ✅ ouvre l’historique filtré
           onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
 
@@ -184,7 +183,9 @@ export default function Dashboard({ authFetch }) {
       <div className="dashboard-grid" style={{ marginTop: 18 }}>
         {/* Donut */}
         <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>📊 Répartition par Catégorie</div>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>
+            📊 Répartition par Catégorie
+          </div>
 
           {donutData.length === 0 ? (
             <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
@@ -213,7 +214,9 @@ export default function Dashboard({ authFetch }) {
 
         {/* Activité récente */}
         <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>⚡ Activité Récente</div>
+          <div style={{ fontWeight: 900, marginBottom: 10 }}>
+            ⚡ Activité Récente
+          </div>
 
           {loading ? (
             <div className="muted">Chargement…</div>
@@ -231,11 +234,19 @@ export default function Dashboard({ authFetch }) {
                     background: "rgba(0,0,0,0.18)",
                     cursor: "pointer",
                   }}
-                  onClick={() => navigate("/emails/history")}
-                  title="Voir dans l’historique"
+                  // ✅ FIX : ouvre l’historique ET ouvre le mail directement via emailId
+                  onClick={() =>
+                    navigate(
+                      r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history"
+                    )
+                  }
+                  title="Ouvrir cet email"
                 >
                   <div style={{ fontWeight: 800 }}>{r.subject || "Email"}</div>
-                  <div className="muted" style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <div
+                    className="muted"
+                    style={{ display: "flex", gap: 10, marginTop: 4 }}
+                  >
                     <span>{r.category || "Autre"}</span>
                     <span>•</span>
                     <span>{r.date || ""}</span>
