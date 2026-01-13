@@ -486,6 +486,22 @@ class EmailHistoryItem(BaseModel):
     raw_email_text: str
     suggested_response_text: str
 
+class EmailDetailResponse(BaseModel):
+    id: int
+    created_at: Optional[datetime] = None
+    sender_email: str
+    subject: str
+    raw_email_text: str
+    summary: str
+    category: str
+    urgency: str
+    is_devis: bool
+    suggested_response_text: str
+
+    class Config:
+        from_attributes = True
+
+
     class Config:
         from_attributes = True
 
@@ -1156,6 +1172,26 @@ async def get_history(db: Session = Depends(get_db), current_user: User = Depend
         .order_by(EmailAnalysis.id.desc())
         .all()
     )
+@app.get("/email/{email_id}", response_model=EmailDetailResponse)
+async def get_email_detail(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    email = (
+        db.query(EmailAnalysis)
+        .filter(
+            EmailAnalysis.id == email_id,
+            EmailAnalysis.agency_id == current_user.agency_id
+        )
+        .first()
+    )
+
+    if not email:
+        raise HTTPException(status_code=404, detail="Email introuvable")
+
+    return email
+
 
 # --- (le reste de tes routes: tenant-files, settings, upload, files, invoices, etc.) ---
 # ⚠️ IMPORTANT : garde la suite de ton fichier identique à ton original.
