@@ -14,14 +14,24 @@ function pickArray(payload) {
 }
 
 function normalizeEmail(e) {
+  // ✅ IMPORTANT : le backend renvoie le contenu dans raw_email_text
+  const body =
+    e.raw_email_text ||
+    e.body ||
+    e.text ||
+    e.content ||
+    e.raw ||
+    "";
+
   return {
     id: e.id || e.email_id || e.emailId || "",
     subject: e.subject || e.title || "(Sans sujet)",
-    from: e.from || e.sender || e.email_from || e.emailFrom || "",
+    from: e.sender_email || e.from || e.sender || e.email_from || e.emailFrom || "",
     category: e.category || "Autre",
     urgency: e.urgency || e.priority || "FAIBLE",
     createdAt: e.created_at || e.received_at || e.date || e.createdAt || "",
-    body: e.body || e.text || e.content || "",
+    summary: e.summary || "",
+    body,
     raw: e,
   };
 }
@@ -33,27 +43,17 @@ function urgencyBadge(u) {
   return "badge badge-low";
 }
 
-function isHighUrgency(u) {
-  const x = String(u || "").toUpperCase();
-  return x.includes("HAUT") || x.includes("HIGH");
-}
-
 export default function EmailHistory({ authFetch }) {
   const [searchParams, setSearchParams] = useSearchParams();
-
-  // Deep-link modal
   const deepLinkEmailId = searchParams.get("emailId") || "";
-
-  // ✅ Filtre via URL (ex: ?filter=high_urgency)
-  const urlFilter = (searchParams.get("filter") || "").toLowerCase();
-  const urlHighUrgencyEnabled = urlFilter === "high_urgency";
+  const deepLinkFilter = searchParams.get("filter") || "";
 
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Tout"); // filtre catégorie
+  const [filter, setFilter] = useState("Tout");
   const [sort, setSort] = useState("recent");
 
   const [open, setOpen] = useState(false);
@@ -69,28 +69,44 @@ export default function EmailHistory({ authFetch }) {
       const url = `/email/history?${qs.toString()}`;
 
       const res = await authFetch(url);
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status} ${txt}`);
-      }
-
       const payload = await safeJson(res);
-      const arr = pickArray(payload).map(normalizeEmail);
-      setItems(arr);
 
-      // Deep-link open (au chargement initial)
-      if (deepLinkEmailId) {
-        const found = arr.find((x) => String(x.id) === String(deepLinkEmailId));
-        if (found) {
-          setSelected(found);
-          setOpen(true);
-        }
+      if (!res.ok) {
+        setError(payload?.detail || "Impossible de charger l'historique.");
+        setItems([]);
+        setLoading(false);
+        return;
       }
+
+      const normalized = pickArray(payload).map(normalizeEmail);
+      setItems(normalized);
     } catch (e) {
-      setError(e?.message || "Erreur inconnue");
+      setError("Erreur réseau lors du chargement.");
+      setItems([]);
     } finally {
       setLoading(false);
     }
+  }
+
+  function openEmail(email) {
+    if (!email) return;
+    setSelected(email);
+    setOpen(true);
+
+    // ✅ on met l’emailId dans l’URL pour que Dashboard -> EmailHistory ouvre le bon email
+    const next = new URLSearchParams(searchParams);
+    next.set("emailId", String(email.id));
+    setSearchParams(next);
+  }
+
+  function closeModal() {
+    setOpen(false);
+    setSelected(null);
+
+    // ✅ on nettoie l’URL (sinon ça ré-ouvre à chaque refresh)
+    const next = new URLSearchParams(searchParams);
+    next.delete("emailId");
+    setSearchParams(next);
   }
 
   useEffect(() => {
@@ -98,84 +114,54 @@ export default function EmailHistory({ authFetch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Si l’URL change (emailId=...), on ouvre le mail si on le trouve déjà en liste
+  // ✅ applique un filtre venant du Dashboard (ex: ?filter=high_urgency)
+  useEffect(() => {
+    if (!deepLinkFilter) return;
+    if (deepLinkFilter === "high_urgency") setFilter("Urgence haute");
+  }, [deepLinkFilter]);
+
+  // ✅ deep-link : si on arrive avec ?emailId=xx, on ouvre le mail automatiquement
   useEffect(() => {
     if (!deepLinkEmailId) return;
     const found = items.find((x) => String(x.id) === String(deepLinkEmailId));
-    if (found) {
-      setSelected(found);
-      setOpen(true);
-    }
+    if (found) openEmail(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkEmailId, items]);
 
   const filtered = useMemo(() => {
-    let arr = [...items];
+    let list = [...items];
 
-    // ✅ Filtre URL "Urgence haute"
-    if (urlHighUrgencyEnabled) {
-      arr = arr.filter((x) => isHighUrgency(x.urgency));
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((e) => {
+        return (
+          String(e.subject || "").toLowerCase().includes(q) ||
+          String(e.from || "").toLowerCase().includes(q) ||
+          String(e.category || "").toLowerCase().includes(q) ||
+          String(e.urgency || "").toLowerCase().includes(q)
+        );
+      });
     }
 
-    // filtre catégorie (select)
-    if (filter !== "Tout") {
-      arr = arr.filter((x) => (x.category || "Autre") === filter);
+    if (filter === "Urgence haute") {
+      list = list.filter((e) => String(e.urgency || "").toUpperCase().includes("HAUT"));
+    } else if (filter !== "Tout") {
+      list = list.filter((e) => String(e.category || "") === filter);
     }
 
-    // search
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      arr = arr.filter(
-        (x) =>
-          String(x.subject).toLowerCase().includes(q) ||
-          String(x.from).toLowerCase().includes(q) ||
-          String(x.category).toLowerCase().includes(q)
-      );
-    }
-
-    // sort
     if (sort === "recent") {
-      arr.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     } else if (sort === "old") {
-      arr.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      list.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
     }
 
-    return arr;
-  }, [items, filter, search, sort, urlHighUrgencyEnabled]);
+    return list;
+  }, [items, search, filter, sort]);
 
   const categories = useMemo(() => {
-    const set = new Set(items.map((x) => x.category || "Autre"));
+    const set = new Set(items.map((x) => x.category).filter(Boolean));
     return ["Tout", ...Array.from(set)];
   }, [items]);
-
-  const openEmail = (email) => {
-    setSelected(email);
-    setOpen(true);
-    // On push le deep-link dans l’URL
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.set("emailId", email.id);
-      return p;
-    });
-  };
-
-  const closeModal = () => {
-    setOpen(false);
-    setSelected(null);
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.delete("emailId");
-      return p;
-    });
-  };
-
-  // ✅ Retirer uniquement le filtre URL, sans toucher au reste
-  const clearUrlFilter = () => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev);
-      p.delete("filter");
-      return p;
-    });
-  };
 
   return (
     <div className="page">
@@ -183,37 +169,7 @@ export default function EmailHistory({ authFetch }) {
         <h1>Historique des Activités</h1>
       </div>
 
-      {error && (
-        <div className="alert error">
-          <strong>Erreur:</strong> {error}
-        </div>
-      )}
-
-      {/* ✅ Badge filtre URL */}
-      {urlHighUrgencyEnabled && (
-        <div
-          className="card"
-          style={{
-            marginBottom: 12,
-            padding: 12,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <span className="badge badge-high">FILTRÉ</span>
-          <strong>Filtre :</strong> Urgence haute
-          <button
-            className="btn"
-            onClick={clearUrlFilter}
-            style={{ marginLeft: "auto" }}
-          >
-            Retirer le filtre
-          </button>
-        </div>
-      )}
-
-      <div className="toolbar">
+      <div className="controls">
         <input
           className="input"
           placeholder="Rechercher..."
@@ -221,114 +177,97 @@ export default function EmailHistory({ authFetch }) {
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        <select
-          className="select"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              Filtre: {c}
-            </option>
-          ))}
-        </select>
+        <div className="row">
+          <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="Tout">Tout</option>
+            <option value="Urgence haute">Urgence haute</option>
+            {categories
+              .filter((c) => c !== "Tout")
+              .map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+          </select>
 
-        <select
-          className="select"
-          value={sort}
-          onChange={(e) => setSort(e.target.value)}
-        >
-          <option value="recent">Plus récents (Défaut)</option>
-          <option value="old">Plus anciens</option>
-        </select>
+          <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="recent">Plus récents (Défaut)</option>
+            <option value="old">Plus anciens</option>
+          </select>
 
-        <button className="btn" onClick={loadHistory} disabled={loading}>
-          Rafraîchir
-        </button>
+          <button className="btn" onClick={loadHistory}>
+            Rafraîchir
+          </button>
+
+          {filter === "Urgence haute" && (
+            <button className="btn btn-light" onClick={() => setFilter("Tout")}>
+              Retirer le filtre
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="list">
-        {loading ? (
-          <div className="muted">Chargement...</div>
-        ) : filtered.length === 0 ? (
-          <div className="muted">Aucun email trouvé.</div>
-        ) : (
-          filtered.map((m) => (
-            <div
-              key={m.id}
-              className="list-row"
-              role="button"
-              tabIndex={0}
-              onClick={() => openEmail(m)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") openEmail(m);
-              }}
-              style={{ cursor: "pointer" }}
-              title="Ouvrir cet email"
-            >
-              <div className={urgencyBadge(m.urgency)}>
-                {String(m.urgency || "FAIBLE").toUpperCase()}
-              </div>
+      {loading && <div className="muted">Chargement…</div>}
+      {error && <div className="error">{error}</div>}
 
-              <div className="list-main">
-                <div className="list-subject">{m.subject}</div>
-                <div className="list-meta">
-                  <span className="meta-from">{m.from}</span>
-                  {m.createdAt ? (
-                    <span className="meta-date">
-                      {" "}
-                      • {String(m.createdAt).slice(0, 16)}
-                    </span>
-                  ) : null}
-                  <span className="meta-cat"> • {m.category}</span>
+      {!loading && !error && (
+        <div className="list">
+          {filtered.map((e) => (
+            // ✅ Toute la ligne est cliquable
+            <button
+              key={e.id}
+              type="button"
+              className="email-row"
+              onClick={() => openEmail(e)}
+              title="Ouvrir l'email"
+            >
+              <div className={urgencyBadge(e.urgency)}>{String(e.urgency || "FAIBLE").toUpperCase()}</div>
+
+              <div className="email-main">
+                <div className="email-subject">{e.subject}</div>
+                <div className="email-meta">
+                  <span>{e.from || "-"}</span>
+                  <span className="dot">•</span>
+                  <span>{e.createdAt || "-"}</span>
+                  <span className="dot">•</span>
+                  <span>{e.category || "Autre"}</span>
+                </div>
+
+                {e.summary ? <div className="email-summary">{e.summary}</div> : null}
+              </div>
+            </button>
+          ))}
+
+          {filtered.length === 0 && <div className="muted">Aucun email.</div>}
+        </div>
+      )}
+
+      {/* ✅ Modal email */}
+      {open && selected && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{selected.subject}</div>
+                <div className="modal-sub">
+                  • {selected.category || "Autre"} • {selected.createdAt || "-"}
                 </div>
               </div>
-
-              <div className="list-actions">
-                <button
-                  className="icon-btn"
-                  onClick={(e) => {
-                    e.stopPropagation(); // ✅ évite de déclencher aussi le clic de la ligne
-                    openEmail(m);
-                  }}
-                  title="Voir"
-                >
-                  👁️
-                </button>
-              </div>
+              <button className="modal-close" onClick={closeModal} aria-label="Fermer">
+                ×
+              </button>
             </div>
-          ))
-        )}
-      </div>
 
-      {/* Modal */}
-{open && selected && (
-  <div className="modal-overlay" onClick={closeModal}>
-    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-      <div className="modal-header">
-        <div>
-          <div className="modal-title">{selected.subject}</div>
-          <div className="modal-subtitle">
-            {selected.from} • {selected.category} • {String(selected.createdAt).slice(0, 16)}
+            <div className="modal-body">
+              {selected.body ? (
+                <pre className="email-body">{selected.body}</pre>
+              ) : (
+                <div className="muted">Aucun contenu disponible.</div>
+              )}
+            </div>
           </div>
         </div>
-
-        <button className="close-btn" onClick={closeModal} title="Fermer">
-          ✖
-        </button>
-      </div>
-
-      <div className="modal-body">
-        {selected.body ? (
-          <pre className="detail-box">{selected.body}</pre>
-        ) : (
-          <div className="muted">Aucun contenu disponible.</div>
-        )}
-      </div>
-    </div>
-  </div>
-)}
-
+      )}
     </div>
   );
 }
