@@ -160,7 +160,8 @@ export default function Dashboard({ authFetch }) {
           value={loading ? "…" : stats.total_emails}
           color="#6D5EF8"
           // Liste globale
-          onClick={() => navigate("/emails/history")}
+          onClick={() => navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")}
+
         />
 
         <StatCard
