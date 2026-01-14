@@ -7,12 +7,6 @@ import { authFetch as authFetchFromApi } from "../services/api";
 
 const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
 
-/**
- * Extrait une distribution "catégories" depuis plusieurs formats possibles.
- * ✅ Supporte 2 formats :
- *  - Objet : { "Autre": 18, "Incident": 2 }
- *  - Tableau : [ { name:"Autre", value:18 }, ... ]  <-- format backend actuel
- */
 function extractDistribution(payload) {
   const candidates = [
     payload?.charts?.distribution,
@@ -24,20 +18,12 @@ function extractDistribution(payload) {
 
   for (const c of candidates) {
     if (!c) continue;
-
-    // Format tableau [{name,value}]
     if (Array.isArray(c)) return c;
-
-    // Format objet {"Autre": 18}
     if (typeof c === "object") return c;
   }
-
   return [];
 }
 
-/**
- * Normalise la réponse /dashboard/stats
- */
 function normalizeStats(payload) {
   const kpis = payload?.kpis || payload || {};
   const distribution = extractDistribution(payload);
@@ -46,9 +32,7 @@ function normalizeStats(payload) {
     total_emails: Number(kpis?.total_emails || kpis?.emails || 0),
     high_urgency: Number(kpis?.high_urgency || kpis?.urgent || 0),
     invoices: Number(kpis?.invoices || kpis?.quittances || 0),
-
     distribution,
-
     recents: Array.isArray(payload?.recents)
       ? payload.recents
       : Array.isArray(payload?.recent_activity)
@@ -73,15 +57,9 @@ export default function Dashboard({ authFetch }) {
     recents: [],
   });
 
-  /**
-   * donutData :
-   * - Si distribution est déjà un tableau [{name,value}], on le nettoie
-   * - Si distribution est un objet {"Autre": 18}, on le convertit en tableau
-   */
   const donutData = useMemo(() => {
     const dist = stats.distribution;
 
-    // ✅ format tableau
     if (Array.isArray(dist)) {
       return dist
         .map((d) => ({
@@ -91,7 +69,6 @@ export default function Dashboard({ authFetch }) {
         .filter((d) => d.name && d.value > 0);
     }
 
-    // ✅ format objet
     if (dist && typeof dist === "object") {
       return Object.entries(dist)
         .map(([name, value]) => ({ name, value: Number(value) || 0 }))
@@ -133,33 +110,24 @@ export default function Dashboard({ authFetch }) {
   }, [doFetch]);
 
   return (
-    <div>
-      <h1 style={{ marginTop: 0 }}>Tableau de Bord</h1>
-      <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
+    <div className="page">
+      <div className="page-header">
+        <h1>Tableau de Bord</h1>
+        <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
+      </div>
 
       {error && (
-        <div
-          className="card"
-          style={{ border: "1px solid rgba(255,0,0,0.25)" }}
-        >
+        <div className="alert alert-error">
           <strong>Erreur :</strong> {error}
         </div>
       )}
 
       {/* KPI */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 18,
-          marginTop: 14,
-        }}
-      >
+      <div className="kpi-grid">
         <StatCard
           title="EMAILS TRAITÉS"
           value={loading ? "…" : stats.total_emails}
           color="#6D5EF8"
-          // ✅ simple : ouvre l’historique complet
           onClick={() => navigate("/emails/history")}
         />
 
@@ -167,7 +135,6 @@ export default function Dashboard({ authFetch }) {
           title="URGENCE HAUTE"
           value={loading ? "…" : stats.high_urgency}
           color="#E46C6C"
-          // ✅ ouvre l’historique filtré
           onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
 
@@ -180,17 +147,17 @@ export default function Dashboard({ authFetch }) {
       </div>
 
       {/* 2 colonnes */}
-      <div className="dashboard-grid" style={{ marginTop: 18 }}>
+      <div className="dashboard-grid">
         {/* Donut */}
         <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>
-            📊 Répartition par Catégorie
+          <div className="card-header">
+            <h2 className="card-title">📊 Répartition par Catégorie</h2>
           </div>
 
           {donutData.length === 0 ? (
             <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
           ) : (
-            <div style={{ width: "100%", height: 320 }}>
+            <div className="chart-box">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -214,8 +181,11 @@ export default function Dashboard({ authFetch }) {
 
         {/* Activité récente */}
         <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 10 }}>
-            ⚡ Activité Récente
+          <div className="card-header">
+            <h2 className="card-title">⚡ Activité Récente</h2>
+            <button className="btn btn-ghost" onClick={() => navigate("/emails/history")}>
+              Voir tout
+            </button>
           </div>
 
           {loading ? (
@@ -223,40 +193,29 @@ export default function Dashboard({ authFetch }) {
           ) : stats.recents.length === 0 ? (
             <div className="muted">Aucune activité pour l’instant.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="list">
               {stats.recents.slice(0, 5).map((r) => (
-                <div
+                <button
                   key={r.id}
-                  style={{
-                    padding: 12,
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background: "rgba(0,0,0,0.18)",
-                    cursor: "pointer",
-                  }}
-                  // ✅ FIX : ouvre l’historique ET ouvre le mail directement via emailId
+                  type="button"
+                  className="list-item"
                   onClick={() =>
-                    navigate(
-                      r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history"
-                    )
+                    navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")
                   }
                   title="Ouvrir cet email"
                 >
-                  <div style={{ fontWeight: 800 }}>{r.subject || "Email"}</div>
-                  <div
-                    className="muted"
-                    style={{ display: "flex", gap: 10, marginTop: 4 }}
-                  >
+                  <div className="list-item-title">{r.subject || "Email"}</div>
+                  <div className="list-item-sub muted">
                     <span>{r.category || "Autre"}</span>
-                    <span>•</span>
+                    <span className="dot">•</span>
                     <span>{r.date || ""}</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
 
-          <div style={{ marginTop: 14 }}>
+          <div className="row" style={{ marginTop: 14 }}>
             <button className="btn" onClick={() => navigate("/emails/history")}>
               Voir tout l’historique
             </button>
