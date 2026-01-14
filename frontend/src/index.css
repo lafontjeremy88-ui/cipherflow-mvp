@@ -638,101 +638,59 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 }
 
 /* ==========================================================
-   DASHBOARD — PREMIUM POLISH PACK
+   DASHBOARD — VISUAL CONTRAST BOOST (IMPORTANT)
    ========================================================== */
 
-/* ---- KPI cards ---- */
-.stat-card {
-  padding: 22px 24px;
-  min-height: 110px;
+/* Fond global (un peu plus lisible) */
+body {
+  background: radial-gradient(circle at 20% 10%, rgba(109,94,248,0.18), transparent 45%),
+              radial-gradient(circle at 80% 40%, rgba(68,194,168,0.12), transparent 50%),
+              linear-gradient(180deg, #0b1220, #070b14);
 }
 
-.stat-card-value {
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-/* ---- Global cards ---- */
+/* Cartes : PLUS CLAIRES que le fond */
 .card {
-  border-radius: 14px;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.075),
+    rgba(0,0,0,0.18)
+  );
+  border: 1px solid rgba(148,163,184,0.22);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
 }
 
+/* Hover bien visible */
 .card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.11),
+    rgba(0,0,0,0.22)
+  );
+  border-color: rgba(148,163,184,0.35);
 }
 
-/* ---- Dashboard grid spacing ---- */
-.dashboard-grid {
-  gap: 28px;
+/* KPI encore un peu plus lumineux */
+.stat-card {
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.10),
+    rgba(0,0,0,0.20)
+  );
 }
 
-/* ---- Donut area ---- */
-.donut-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 28px;
-}
-
-.donut-center {
-  position: absolute;
-  text-align: center;
-  font-size: 28px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.donut-center span {
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-  opacity: 0.7;
-}
-
-/* ---- Donut legend ---- */
-.donut-legend-row {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.045);
-  border: 1px solid rgba(148,163,184,0.18);
-}
-
-.donut-legend-row:hover {
-  background: rgba(255,255,255,0.08);
-}
-
-/* ---- Activity list ---- */
+/* Activité récente : lisibilité ++ */
 .activity-item {
-  position: relative;
-  padding-left: 14px;
-  border-left: 3px solid transparent;
+  background: rgba(255,255,255,0.065);
+  border: 1px solid rgba(148,163,184,0.22);
 }
 
-.activity-item[data-priority="FAIBLE"] {
-  border-left-color: #64748b;
+.activity-item:hover {
+  background: rgba(255,255,255,0.11);
 }
 
-.activity-item[data-priority="MOYENNE"] {
-  border-left-color: #f59e0b;
-}
-
-.activity-item[data-priority="ELEVEE"] {
-  border-left-color: #ef4444;
-}
-
-.activity-item-title {
-  font-weight: 600;
-}
-
-/* ---- Buttons secondary ---- */
-.btn-secondary {
-  background: transparent;
-  border: 1px solid rgba(148,163,184,0.3);
-  color: #e5e7eb;
-}
-
-.btn-secondary:hover {
-  background: rgba(255,255,255,0.06);
+/* Donut : fond dédié pour le faire ressortir */
+.donut-wrapper {
+  background: rgba(255,255,255,0.05);
+  border-radius: 14px;
+  padding: 20px;
 }
