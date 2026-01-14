@@ -101,10 +101,8 @@
 /* Content (✅ one single wrapper name) */
 .main-content {
   flex: 1;
-  padding: 26px 28px;
-  max-width: 1600px;
   width: 100%;
-  margin: 0 auto;
+  padding: 26px 28px;
 }
 
 /* Dashboard layout helper */

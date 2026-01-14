@@ -130,15 +130,6 @@ tr:last-child td {
   border-bottom: none;
 }
 
-/* --- LAYOUT PAGES --- */
-.page {
-  padding: 2rem;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.page-header {
-  margin-bottom: 2rem;
-}
 
 /* --- AUTH (Login/Register) --- */
 .auth-wrap {
@@ -596,5 +587,53 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   display:flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* ===== PRO CONTRAST PACK ===== */
+:root{
+  --card-bg: rgba(255,255,255,0.045);
+  --card-bg-2: rgba(255,255,255,0.06);
+  --card-border: rgba(148,163,184,0.18);
+  --card-border-strong: rgba(148,163,184,0.28);
+}
+
+.card{
+  background: linear-gradient(180deg, var(--card-bg), rgba(0,0,0,0.18));
+  border: 1px solid var(--card-border);
+}
+
+.card:hover{
+  border-color: var(--card-border-strong);
+}
+
+.muted{
+  color: rgba(226,232,240,0.72); /* plus lisible */
+}
+
+/* KPI cards (StatCard) un peu plus lumineux */
+.stat-card{
+  background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(0,0,0,0.20));
+  border-color: rgba(148,163,184,0.18);
+}
+
+/* Activité récente : enlève l'effet “fond noir” */
+.list-item, .list-item-strong{
+  background: rgba(255,255,255,0.045);
+  border-color: rgba(148,163,184,0.18);
+}
+
+.list-item:hover, .list-item-strong:hover{
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(148,163,184,0.28);
+}
+
+.list-item-title{
+  color: rgba(255,255,255,0.92);
+}
+
+/* Donut legend rows plus clean */
+.donut-legend-row{
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(148,163,184,0.18);
 }
 
