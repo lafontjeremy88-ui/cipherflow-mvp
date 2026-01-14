@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
+import { Mail, AlertTriangle, FileText } from "lucide-react";
 
 import StatCard from "../components/StatCard";
 import { authFetch as authFetchFromApi } from "../services/api";
@@ -15,7 +16,6 @@ function extractDistribution(payload) {
     payload?.category_distribution,
     payload?.categories,
   ];
-
   for (const c of candidates) {
     if (!c) continue;
     if (Array.isArray(c)) return c;
@@ -41,6 +41,11 @@ function normalizeStats(payload) {
       ? payload.activity
       : [],
   };
+}
+
+function truncate(s, n = 70) {
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
 export default function Dashboard({ authFetch }) {
@@ -91,7 +96,6 @@ export default function Dashboard({ authFetch }) {
           const txt = await res.text().catch(() => "");
           throw new Error(`Stats HTTP ${res.status} ${txt}`);
         }
-
         const payload = await res.json().catch(() => ({}));
         const normalized = normalizeStats(payload);
 
@@ -127,6 +131,7 @@ export default function Dashboard({ authFetch }) {
         <StatCard
           title="EMAILS TRAITÉS"
           value={loading ? "…" : stats.total_emails}
+          icon={Mail}
           color="#6D5EF8"
           onClick={() => navigate("/emails/history")}
         />
@@ -134,6 +139,7 @@ export default function Dashboard({ authFetch }) {
         <StatCard
           title="URGENCE HAUTE"
           value={loading ? "…" : stats.high_urgency}
+          icon={AlertTriangle}
           color="#E46C6C"
           onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
@@ -141,12 +147,12 @@ export default function Dashboard({ authFetch }) {
         <StatCard
           title="QUITTANCES GÉNÉRÉES"
           value={loading ? "…" : stats.invoices}
+          icon={FileText}
           color="#44C2A8"
           onClick={() => navigate("/invoices")}
         />
       </div>
 
-      {/* 2 colonnes */}
       <div className="dashboard-grid">
         {/* Donut */}
         <div className="card">
@@ -194,24 +200,41 @@ export default function Dashboard({ authFetch }) {
             <div className="muted">Aucune activité pour l’instant.</div>
           ) : (
             <div className="list">
-              {stats.recents.slice(0, 5).map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className="list-item"
-                  onClick={() =>
-                    navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")
-                  }
-                  title="Ouvrir cet email"
-                >
-                  <div className="list-item-title">{r.subject || "Email"}</div>
-                  <div className="list-item-sub muted">
-                    <span>{r.category || "Autre"}</span>
-                    <span className="dot">•</span>
-                    <span>{r.date || ""}</span>
-                  </div>
-                </button>
-              ))}
+              {stats.recents.slice(0, 6).map((r) => {
+                const subject = truncate(r.subject || "Email", 75);
+                const category = r.category || "Autre";
+                const priority = (r.priority || r.urgency || "").toString().toLowerCase();
+
+                const badge =
+                  priority.includes("high") || priority.includes("haute") ? "badge badge-danger"
+                  : priority.includes("medium") || priority.includes("moy") ? "badge badge-warn"
+                  : "badge";
+
+                return (
+                  <button
+                    key={r.id || `${subject}-${r.date}`}
+                    type="button"
+                    className="list-item"
+                    onClick={() =>
+                      navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")
+                    }
+                    title="Ouvrir cet email"
+                  >
+                    <div className="list-item-top">
+                      <div className="list-item-title">{subject}</div>
+                      <span className={badge}>
+                        {priority ? priority.toUpperCase() : "NORMAL"}
+                      </span>
+                    </div>
+
+                    <div className="list-item-sub muted">
+                      <span>{category}</span>
+                      <span className="dot">•</span>
+                      <span>{r.date || ""}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
 

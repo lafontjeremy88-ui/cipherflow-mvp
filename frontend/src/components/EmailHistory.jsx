@@ -5,15 +5,72 @@ import { authFetch } from "../services/api";
 /**
  * EmailHistory.jsx
  * ----------------
- * Page "Historique des Activités" :
- * - Charge la liste des emails (GET /email/history?limit=50)
- * - Permet filtre / recherche
- * - Permet d'ouvrir un email via URL : /emails/history?emailId=25
- * - Va chercher le détail email côté backend : GET /email/{email_id}
- * - Transforme raw_email_text (MIME) en contenu lisible (text/plain ou text/html)
+ * - GET /email/history?limit=50
+ * - filtres / recherche / tri
+ * - preview via /emails/history?emailId=25
+ * - GET /email/{email_id}
+ * - parsing MIME -> text/plain ou text/html
  */
 
-function stripHtmlToText(html) {
+/* ==========================
+   Helpers MIME (inchangés)
+   ========================== */
+
+function decodeQuotedPrintable(input) {
+  if (!input) return "";
+  let s = input.replace(/=\r?\n/g, "");
+  s = s.replace(/=([A-Fa-f0-9]{2})/g, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+  return s;
+}
+
+function base64ToUtf8(b64) {
+  if (!b64) return "";
+  let clean = b64.replace(/\s/g, "");
+  try {
+    const binary = atob(clean);
+    try {
+      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    } catch {
+      return binary;
+    }
+  } catch {
+    try {
+      return atob(clean);
+    } catch {
+      return "";
+    }
+  }
+}
+
+function extractMimePart(raw, wantedType) {
+  if (!raw) return null;
+
+  const ctRegex = new RegExp(
+    `Content-Type:\\s*${wantedType.replace("/", "\\/")}[^\\n]*\\n([\\s\\S]*?)(\\n--|\\nContent-Type:|$)`,
+    "i"
+  );
+
+  const m = raw.match(ctRegex);
+  if (!m) return null;
+
+  let chunk = m[1] || "";
+
+  const encodingMatch = chunk.match(/Content-Transfer-Encoding:\s*([^\n\r]+)/i);
+  const encoding = encodingMatch ? encodingMatch[1].trim().toLowerCase() : "";
+
+  chunk = chunk.replace(/^[\s\S]*?\r?\n\r?\n/, "");
+
+  if (encoding.includes("quoted-printable")) return decodeQuotedPrintable(chunk).trim();
+  if (encoding.includes("base64")) return base64ToUtf8(chunk).trim();
+
+  return chunk.trim();
+}
+
+function htmlToText(html) {
+  if (!html) return "";
   try {
     const div = document.createElement("div");
     div.innerHTML = html;
@@ -26,106 +83,20 @@ function stripHtmlToText(html) {
   }
 }
 
-function decodeQuotedPrintable(input) {
-  if (!input) return "";
-  // supprime les "soft line breaks" =\r\n
-  let s = input.replace(/=\r?\n/g, "");
-  // remplace =XX
-  s = s.replace(/=([A-Fa-f0-9]{2})/g, (_, hex) =>
-    String.fromCharCode(parseInt(hex, 16))
-  );
-  return s;
-}
-
-function base64ToUtf8(b64) {
-  if (!b64) return "";
-  // nettoie les espaces / retours ligne
-  const clean = b64.replace(/\s+/g, "");
+function formatDateShort(e) {
+  const d = e?.received_at || e?.date || e?.created_at;
+  if (!d) return "—";
   try {
-    // atob donne une string binaire latin1 ; on reconvertit vers utf-8
-    const binary = atob(clean);
-    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
+    const dt = new Date(d);
+    return dt.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   } catch {
-    // fallback
-    try {
-      return atob(clean);
-    } catch {
-      return "";
-    }
+    return String(d);
   }
 }
 
-function extractMimePart(raw, wantedType /* "text/plain" | "text/html" */) {
-  if (!raw) return null;
-
-  // Cherche une section Content-Type: wantedType ... puis récupère le payload jusqu'à la prochaine boundary
-  // (Parsing simple mais très efficace pour 80% des emails)
-  const re = new RegExp(
-    `Content-Type:\\s*${wantedType}[^\\n]*\\n([\\s\\S]*?)\\n\\n([\\s\\S]*?)(\\n--|\\n\\r?--|\\Z)`,
-    "i"
-  );
-  const m = raw.match(re);
-  if (!m) return null;
-
-  const headersBlock = m[1] || "";
-  let payload = (m[2] || "").trim();
-
-  const isBase64 = /Content-Transfer-Encoding:\s*base64/i.test(headersBlock);
-  const isQP = /Content-Transfer-Encoding:\s*quoted-printable/i.test(headersBlock);
-
-  if (isBase64) payload = base64ToUtf8(payload);
-  else if (isQP) payload = decodeQuotedPrintable(payload);
-
-  return payload.trim();
-}
-
-function buildReadableBodyFromRaw(raw) {
-  if (!raw) return "";
-
-  // 1) text/plain
-  const plain = extractMimePart(raw, "text/plain");
-  if (plain) return plain;
-
-  // 2) text/html -> text
-  const html = extractMimePart(raw, "text/html");
-  if (html) return stripHtmlToText(html);
-
-  // 3) fallback : si raw est déjà "lisible"
-  // (mais on évite d'afficher des blocs base64 énormes)
-  const maybe = String(raw);
-  if (maybe.length < 5000 && /[a-zA-Z]{3,}/.test(maybe)) return maybe;
-
-  return "";
-}
-
-function normalizeUrgency(u) {
-  const s = String(u || "").toLowerCase().trim();
-  if (!s) return "";
-  if (s.includes("haute") || s === "high" || s === "urgent") return "haute";
-  if (s.includes("moy") || s === "medium") return "moyenne";
-  if (s.includes("faible") || s === "low") return "faible";
-  return s;
-}
-
-function parseDateValue(x) {
-  // essaie de parser e.date / e.received_at / e.created_at
-  const raw = x?.date || x?.received_at || x?.created_at || "";
-  if (!raw) return null;
-  const d = new Date(raw);
-  if (!Number.isNaN(d.getTime())) return d;
-  return null;
-}
-
-function formatDateShort(x) {
-  const d = parseDateValue(x);
-  if (!d) return "";
-  try {
-    return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-  } catch {
-    return d.toISOString();
-  }
-}
+/* ==========================
+   Component
+   ========================== */
 
 export default function EmailHistory() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -137,19 +108,26 @@ export default function EmailHistory() {
   const [sort, setSort] = useState("recent"); // recent | oldest
   const [query, setQuery] = useState("");
 
-  // Detail state (panneau à droite)
   const [selectedId, setSelectedId] = useState(null);
-  const [selected, setSelected] = useState(null); // { id, subject, ... , bodyText }
   const [detailLoading, setDetailLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
 
-  // --------- Load list (history) ----------
+  const urlEmailId = searchParams.get("emailId");
+  const urlFilter = searchParams.get("filter");
+
+  function setEmailIdInUrl(id) {
+    const next = new URLSearchParams(searchParams);
+    if (!id) next.delete("emailId");
+    else next.set("emailId", String(id));
+    setSearchParams(next, { replace: true });
+  }
+
   async function loadHistory() {
     setLoading(true);
     try {
       const res = await authFetch("/email/history?limit=50");
-      if (!res.ok) throw new Error("Erreur chargement historique");
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : []);
+      setItems(Array.isArray(data) ? data : data?.items || []);
     } catch (e) {
       console.error(e);
       setItems([]);
@@ -158,132 +136,117 @@ export default function EmailHistory() {
     }
   }
 
-  useEffect(() => {
-    loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // --------- Open detail by URL (?emailId=xx) ----------
-  const emailIdFromUrl = searchParams.get("emailId");
-
-  async function loadEmailDetail(emailId) {
+  async function loadDetail(emailId) {
     if (!emailId) return;
     setDetailLoading(true);
+    setSelected(null);
 
     try {
       const res = await authFetch(`/email/${emailId}`);
-      if (!res.ok) throw new Error("Erreur chargement détail email");
-      const detail = await res.json();
+      const data = await res.json();
 
-      const raw = detail?.raw_email_text || detail?.raw || "";
-      const readable = buildReadableBodyFromRaw(raw);
+      const raw = data?.raw_email_text || data?.raw || "";
+      const plain = extractMimePart(raw, "text/plain");
+      const html = extractMimePart(raw, "text/html");
 
-      // On garde aussi un fallback sur ce qu'on a déjà
-      const fallbackBody = readable || detail?.summary || detail?.suggested_response || "";
+      const bodyText =
+        plain?.trim()
+          ? plain.trim()
+          : html?.trim()
+          ? htmlToText(html.trim())
+          : (data?.body || data?.snippet || "").toString();
 
       setSelected({
-        id: detail?.id ?? Number(emailId),
-        subject: detail?.subject || "(Sans sujet)",
-        from: detail?.from_email || detail?.from || "",
-        category: detail?.category || "",
-        urgency: detail?.urgency || "",
-        received_at: detail?.received_at || detail?.created_at || "",
-        bodyText: fallbackBody,
-        // pour debug au besoin :
-        raw_email_text: raw,
+        ...data,
+        bodyText,
       });
     } catch (e) {
       console.error(e);
-      setSelected(null);
+      setSelected({ bodyText: "" });
     } finally {
       setDetailLoading(false);
     }
   }
 
-  useEffect(() => {
-    if (emailIdFromUrl) {
-      setSelectedId(String(emailIdFromUrl));
-      loadEmailDetail(String(emailIdFromUrl));
-    } else {
-      setSelectedId(null);
-      setSelected(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emailIdFromUrl]);
-
-  function setEmailIdInUrl(id) {
-    const next = new URLSearchParams(searchParams);
-    if (!id) next.delete("emailId");
-    else next.set("emailId", String(id));
-    setSearchParams(next, { replace: false });
-  }
-
   function onClickItem(id) {
+    setSelectedId(id);
     setEmailIdInUrl(id);
   }
 
-  // --------- Filtering / sorting ----------
+  useEffect(() => {
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // URL → filtre
+  useEffect(() => {
+    if (urlFilter) setFilter(urlFilter);
+  }, [urlFilter]);
+
+  // URL → emailId
+  useEffect(() => {
+    if (urlEmailId) {
+      setSelectedId(urlEmailId);
+      loadDetail(urlEmailId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlEmailId]);
+
   const filtered = useMemo(() => {
-    let arr = Array.isArray(items) ? [...items] : [];
+    let arr = [...items];
 
-    // filtre URL prioritaire (ex: depuis dashboard)
-    const filterFromUrl = searchParams.get("filter");
-    const effectiveFilter = filterFromUrl || filter;
-
-    if (effectiveFilter && effectiveFilter !== "all") {
-      if (effectiveFilter === "high_urgency") {
-        arr = arr.filter((x) => normalizeUrgency(x.urgency).includes("haute"));
-      }
+    if (filter === "high_urgency") {
+      arr = arr.filter((e) => String(e.urgency || "").toLowerCase().includes("high") || String(e.urgency || "").toLowerCase().includes("haute"));
     }
 
-    // recherche
-    const q = query.trim().toLowerCase();
-    if (q) {
-      arr = arr.filter((x) => {
-        const subject = String(x.subject || "").toLowerCase();
-        const from = String(x.from || x.from_email || "").toLowerCase();
-        const category = String(x.category || "").toLowerCase();
-        return subject.includes(q) || from.includes(q) || category.includes(q);
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      arr = arr.filter((e) => {
+        const subject = (e.subject || "").toLowerCase();
+        const from = (e.from || e.from_email || "").toLowerCase();
+        const cat = (e.category || "").toLowerCase();
+        return subject.includes(q) || from.includes(q) || cat.includes(q);
       });
     }
 
-    // tri réel par date si possible (sinon on garde l’ordre backend)
     arr.sort((a, b) => {
-      const da = parseDateValue(a)?.getTime() ?? 0;
-      const db = parseDateValue(b)?.getTime() ?? 0;
-      if (sort === "oldest") return da - db;
-      return db - da;
+      const da = new Date(a.received_at || a.date || a.created_at || 0).getTime();
+      const db = new Date(b.received_at || b.date || b.created_at || 0).getTime();
+      return sort === "oldest" ? da - db : db - da;
     });
 
     return arr;
-  }, [items, query, sort, filter, searchParams]);
+  }, [items, filter, sort, query]);
 
   const selectedFromList = useMemo(() => {
     if (!selectedId) return null;
-    return items.find((x) => String(x.id) === String(selectedId)) || null;
-  }, [items, selectedId]);
+    return filtered.find((x) => String(x.id) === String(selectedId)) || null;
+  }, [filtered, selectedId]);
 
   return (
     <div className="page email-history">
       <div className="page-header">
-        <h1>Historique des Activités</h1>
+        <div>
+          <h1>Historique des emails</h1>
+          <p className="muted">Recherche, filtre et ouvre un email pour afficher le contenu.</p>
+        </div>
 
         <div className="toolbar">
           <input
-            className="search"
-            placeholder="Rechercher…"
+            className="input"
+            placeholder="Rechercher… (objet, expéditeur, catégorie)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
 
-          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="all">Filtre: Tout</option>
+          <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="all">Filtre : Tout</option>
             <option value="high_urgency">Urgence haute</option>
           </select>
 
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="recent">Plus récents (Défaut)</option>
-            <option value="oldest">Plus anciens</option>
+          <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="recent">Tri : plus récents</option>
+            <option value="oldest">Tri : plus anciens</option>
           </select>
 
           <button className="btn" onClick={loadHistory} disabled={loading}>
@@ -292,7 +255,7 @@ export default function EmailHistory() {
 
           {searchParams.get("filter") && (
             <button
-              className="btn"
+              className="btn btn-ghost"
               onClick={() => {
                 const next = new URLSearchParams(searchParams);
                 next.delete("filter");
@@ -311,47 +274,67 @@ export default function EmailHistory() {
         <div className="muted">Aucun email trouvé.</div>
       ) : (
         <div className="eh-layout">
-          {/* LISTE (gauche) */}
-          <div className="eh-list" role="list">
-            {filtered.map((e) => {
-              const urg = normalizeUrgency(e.urgency);
-              const active = String(e.id) === String(selectedId);
+          {/* LISTE */}
+          <div className="card eh-panel">
+            <div className="card-header">
+              <h2 className="card-title">Liste</h2>
+              <span className="badge">{filtered.length}</span>
+            </div>
 
-              return (
-                <button
-                  key={e.id}
-                  type="button"
-                  className={`eh-item ${active ? "is-active" : ""}`}
-                  onClick={() => onClickItem(e.id)}
-                  title="Ouvrir"
-                >
-                  <div className="eh-item-top">
-                    <span className={`eh-pill eh-pill-${urg || "none"}`}>
-                      {(e.urgency || "").toString().toUpperCase() || "—"}
-                    </span>
-                    <span className="eh-date">{formatDateShort(e)}</span>
-                  </div>
+            <div className="eh-list">
+              {filtered.map((e) => {
+                const active = String(e.id) === String(selectedId);
+                const urg = (e.urgency || "").toString().toLowerCase();
 
-                  <div className="eh-subject">{e.subject || "(Sans sujet)"}</div>
+                const pill =
+                  urg.includes("high") || urg.includes("haute")
+                    ? "eh-pill eh-pill-high"
+                    : urg.includes("medium") || urg.includes("moy")
+                    ? "eh-pill eh-pill-medium"
+                    : "eh-pill eh-pill-none";
 
-                  <div className="eh-meta">
-                    <span className="eh-from">{e.from || e.from_email || "—"}</span>
-                    <span className="eh-dot">•</span>
-                    <span className="eh-cat">{e.category || "—"}</span>
-                  </div>
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={e.id}
+                    type="button"
+                    className={`eh-item ${active ? "is-active" : ""}`}
+                    onClick={() => onClickItem(e.id)}
+                    title="Ouvrir"
+                  >
+                    <div className="eh-item-top">
+                      <span className={pill}>{(e.urgency || "").toString().toUpperCase() || "—"}</span>
+                      <span className="eh-date">{formatDateShort(e)}</span>
+                    </div>
+
+                    <div className="eh-subject">{e.subject || "(Sans sujet)"}</div>
+
+                    <div className="eh-meta">
+                      <span className="eh-from">{e.from || e.from_email || "—"}</span>
+                      <span className="eh-dot">•</span>
+                      <span className="eh-cat">{e.category || "—"}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* PREVIEW (droite) */}
-          <div className="eh-preview">
+          {/* PREVIEW */}
+          <div className="card eh-panel">
+            <div className="card-header">
+              <h2 className="card-title">Prévisualisation</h2>
+
+              {!!selectedId && (
+                <button className="btn btn-ghost" onClick={() => setEmailIdInUrl(null)}>
+                  Fermer
+                </button>
+              )}
+            </div>
+
             {!selectedId ? (
               <div className="eh-empty">
                 <div className="eh-empty-title">Sélectionne un email</div>
-                <div className="muted">
-                  Clique à gauche pour afficher le contenu ici.
-                </div>
+                <div className="muted">Clique à gauche pour afficher le contenu ici.</div>
               </div>
             ) : detailLoading ? (
               <div className="eh-empty">
@@ -364,29 +347,21 @@ export default function EmailHistory() {
                     {selected?.subject || selectedFromList?.subject || "Email"}
                   </div>
 
-                  <div className="eh-preview-sub">
-                    <span className="muted">
+                  <div className="eh-preview-sub muted">
+                    <span>
                       {selected?.from ||
                         selectedFromList?.from ||
                         selectedFromList?.from_email ||
                         ""}
                     </span>
                     <span className="eh-dot">•</span>
-                    <span className="muted">
-                      {selected?.category || selectedFromList?.category || "—"}
-                    </span>
+                    <span>{selected?.category || selectedFromList?.category || "—"}</span>
                     <span className="eh-dot">•</span>
-                    <span className="muted">
+                    <span>
                       {selected?.received_at
                         ? String(selected.received_at)
                         : formatDateShort(selectedFromList)}
                     </span>
-                  </div>
-
-                  <div className="eh-preview-actions">
-                    <button className="btn btn-ghost" onClick={() => setEmailIdInUrl(null)}>
-                      Fermer
-                    </button>
                   </div>
                 </div>
 
