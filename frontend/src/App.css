@@ -1,155 +1,77 @@
 /* ============================
-   EmailHistory - UI FIX
+   App.css — CLEAN (Core + EmailHistory)
    ============================ */
 
-.history-page {
-  width: 100%;
+:root {
+  --bg0: #070a14;
+  --border: rgba(255, 255, 255, 0.12);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.65);
+  --accent: #8b5cf6;
+  --radius: 16px;
 }
 
-.history-toolbar {
+* {
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--text);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ====== App Shell (sidebar + content) ====== */
+.app-shell {
+  min-height: 100vh;
   display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+  background: radial-gradient(
+      1200px 800px at 15% 0%,
+      rgba(110, 90, 255, 0.18),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 600px at 70% 35%,
+      rgba(0, 255, 200, 0.06),
+      transparent 55%
+    ),
+    var(--bg0);
 }
 
-.history-toolbar input[type="text"] {
-  flex: 1;
-  min-width: 240px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #fff;
-  border-radius: 10px;
+.sidebar {
+  width: 260px;
+  padding: 16px;
+  border-right: 1px solid var(--border);
+  background: rgba(10, 12, 22, 0.55);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 10px 12px;
-  outline: none;
-}
-
-.history-toolbar select,
-.history-toolbar button {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #fff;
-  border-radius: 10px;
-  padding: 8px 10px;
-}
-
-.history-list {
-  display: flex;
-  flex-direction: column;   /* IMPORTANT : stop la mise en ligne */
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.history-item {
-  width: 100%;
-  display: block;           /* IMPORTANT : le bouton prend toute la ligne */
-  text-align: left;
-  cursor: pointer;
-
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #fff;
-
+  border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 12px 14px;
-  transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.history-item:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.18);
-}
-
-.history-item .meta {
-  opacity: 0.8;
-  font-size: 12px;
-  margin-top: 6px;
-}
-
-.badge-urgency {
-  display: inline-block;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  margin-right: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(0, 0, 0, 0.25);
-}
-
-/* ============================
-   Modal - UI FIX
-   ============================ */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  z-index: 9999;
-}
-
-.modal-content {
-  width: min(920px, 96vw);
-  max-height: 85vh;
-  overflow: hidden;
-
-  background: rgba(22, 24, 34, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
-}
-
-.modal-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
-}
-
-.modal-title {
-  font-weight: 700;
-}
-
-.modal-close {
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.8);
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-  padding: 6px 8px;
-  border-radius: 10px;
-}
-
-.modal-close:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.modal-body {
-  padding: 14px 16px;
-  overflow: auto;
-  max-height: calc(85vh - 60px);
-
-  /* IMPORTANT : le contenu email doit wrap correctement */
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-/* =========================
-   FIXES AppShell (Sidebar)
-   ========================= */
-.nav-spacer {
-  flex: 1;
+.brand-icon,
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(139, 92, 246, 0.18);
+  color: var(--text);
+  font-weight: 900;
 }
 
 .brand-text {
@@ -157,12 +79,130 @@
   flex-direction: column;
   line-height: 1.1;
 }
-
+.brand-title {
+  font-weight: 900;
+}
 .brand-sub {
   font-size: 0.85rem;
   color: var(--muted);
   margin-top: 2px;
 }
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.nav-item.active {
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.35);
+  color: var(--text);
+}
+
+.nav-spacer {
+  flex: 1;
+}
+
+.nav-logout {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+}
+.nav-logout:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.main-content,
+.content {
+  flex: 1;
+  padding: 26px 28px;
+}
+
+/* ====== Common UI ====== */
+.page-header h1 {
+  margin: 0 0 6px 0;
+  font-size: 2.2rem;
+  font-weight: 900;
+}
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.85rem;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+}
+
+/* toolbar générique */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.toolbar .search,
+.toolbar input[type="text"] {
+  min-width: 240px;
+  flex: 1;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.toolbar select {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 9px 10px;
+}
+
 /* =========================
    EmailHistory — Layout 2 panneaux (PRO)
    ========================= */
@@ -175,7 +215,6 @@
   margin-top: 14px;
 }
 
-/* LISTE */
 .email-history .eh-list {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -195,6 +234,7 @@
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
   margin-bottom: 8px;
+  color: var(--text);
 }
 
 .email-history .eh-item:hover {
@@ -250,7 +290,6 @@
   opacity: 0.5;
 }
 
-/* PILLS */
 .email-history .eh-pill {
   display: inline-flex;
   align-items: center;
@@ -266,22 +305,18 @@
   border-color: rgba(239, 68, 68, 0.6);
   background: rgba(239, 68, 68, 0.14);
 }
-
 .email-history .eh-pill-moyenne {
   border-color: rgba(245, 158, 11, 0.6);
   background: rgba(245, 158, 11, 0.14);
 }
-
 .email-history .eh-pill-faible {
   border-color: rgba(34, 197, 94, 0.6);
   background: rgba(34, 197, 94, 0.12);
 }
-
 .email-history .eh-pill-none {
   opacity: 0.85;
 }
 
-/* PREVIEW */
 .email-history .eh-preview {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -327,17 +362,22 @@
   max-height: calc(100vh - 270px);
 }
 
-/* Etat vide */
+.email-history .email-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  margin: 0;
+}
+
 .email-history .eh-empty {
   padding: 18px;
 }
-
 .email-history .eh-empty-title {
   font-weight: 900;
   margin-bottom: 6px;
 }
 
-/* Responsive */
 @media (max-width: 980px) {
   .email-history .eh-layout {
     grid-template-columns: 1fr;
