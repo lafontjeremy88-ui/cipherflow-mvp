@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { authFetch } from "../services/api";
 
 /**
@@ -8,7 +8,7 @@ import { authFetch } from "../services/api";
  * Page "Historique des Activités" :
  * - Charge la liste des emails (GET /email/history?limit=50)
  * - Permet filtre / recherche
- * - Permet d'ouvrir un email en modal via URL : /emails/history?emailId=25
+ * - Permet d'ouvrir un email via URL : /emails/history?emailId=25
  * - Va chercher le détail email côté backend : GET /email/{email_id}
  * - Transforme raw_email_text (MIME) en contenu lisible (text/plain ou text/html)
  */
@@ -19,7 +19,10 @@ function stripHtmlToText(html) {
     div.innerHTML = html;
     return (div.textContent || div.innerText || "").trim();
   } catch {
-    return String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    return String(html || "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 }
 
@@ -96,19 +99,46 @@ function buildReadableBodyFromRaw(raw) {
   return "";
 }
 
+function normalizeUrgency(u) {
+  const s = String(u || "").toLowerCase().trim();
+  if (!s) return "";
+  if (s.includes("haute") || s === "high" || s === "urgent") return "haute";
+  if (s.includes("moy") || s === "medium") return "moyenne";
+  if (s.includes("faible") || s === "low") return "faible";
+  return s;
+}
+
+function parseDateValue(x) {
+  // essaie de parser e.date / e.received_at / e.created_at
+  const raw = x?.date || x?.received_at || x?.created_at || "";
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime())) return d;
+  return null;
+}
+
+function formatDateShort(x) {
+  const d = parseDateValue(x);
+  if (!d) return "";
+  try {
+    return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  } catch {
+    return d.toISOString();
+  }
+}
+
 export default function EmailHistory() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [filter, setFilter] = useState("all"); // all | high_urgency | ...
+  const [filter, setFilter] = useState("all"); // all | high_urgency
   const [sort, setSort] = useState("recent"); // recent | oldest
   const [query, setQuery] = useState("");
 
-  // Modal state
-  const [open, setOpen] = useState(false);
+  // Detail state (panneau à droite)
+  const [selectedId, setSelectedId] = useState(null);
   const [selected, setSelected] = useState(null); // { id, subject, ... , bodyText }
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -136,9 +166,8 @@ export default function EmailHistory() {
   // --------- Open detail by URL (?emailId=xx) ----------
   const emailIdFromUrl = searchParams.get("emailId");
 
-  async function openEmailById(emailId) {
+  async function loadEmailDetail(emailId) {
     if (!emailId) return;
-    setOpen(true);
     setDetailLoading(true);
 
     try {
@@ -150,11 +179,7 @@ export default function EmailHistory() {
       const readable = buildReadableBodyFromRaw(raw);
 
       // On garde aussi un fallback sur ce qu'on a déjà
-      const fallbackBody =
-        readable ||
-        detail?.summary ||
-        detail?.suggested_response ||
-        "";
+      const fallbackBody = readable || detail?.summary || detail?.suggested_response || "";
 
       setSelected({
         id: detail?.id ?? Number(emailId),
@@ -177,65 +202,69 @@ export default function EmailHistory() {
 
   useEffect(() => {
     if (emailIdFromUrl) {
-      openEmailById(emailIdFromUrl);
+      setSelectedId(String(emailIdFromUrl));
+      loadEmailDetail(String(emailIdFromUrl));
     } else {
-      setOpen(false);
+      setSelectedId(null);
       setSelected(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emailIdFromUrl]);
 
-  function closeModal() {
-    setOpen(false);
-    setSelected(null);
-    // on retire emailId de l'URL
+  function setEmailIdInUrl(id) {
     const next = new URLSearchParams(searchParams);
-    next.delete("emailId");
-    setSearchParams(next, { replace: true });
+    if (!id) next.delete("emailId");
+    else next.set("emailId", String(id));
+    setSearchParams(next, { replace: false });
   }
 
   function onClickItem(id) {
-    // on met emailId dans l'URL (ça ouvre la modal via useEffect)
-    const next = new URLSearchParams(searchParams);
-    next.set("emailId", String(id));
-    setSearchParams(next, { replace: false });
+    setEmailIdInUrl(id);
   }
 
   // --------- Filtering / sorting ----------
   const filtered = useMemo(() => {
-    let arr = [...items];
+    let arr = Array.isArray(items) ? [...items] : [];
 
-    // filtre (ex: depuis dashboard tu passes filter=high_urgency)
+    // filtre URL prioritaire (ex: depuis dashboard)
     const filterFromUrl = searchParams.get("filter");
     const effectiveFilter = filterFromUrl || filter;
 
     if (effectiveFilter && effectiveFilter !== "all") {
-      arr = arr.filter((x) => String(x.filter || x.urgency || "").toLowerCase() !== ""); // safe
-      // Si ton backend met l'urgency en texte : "Haute"/"Moyenne"/"Faible"
       if (effectiveFilter === "high_urgency") {
-        arr = arr.filter((x) => String(x.urgency || "").toLowerCase().includes("haute"));
+        arr = arr.filter((x) => normalizeUrgency(x.urgency).includes("haute"));
       }
     }
 
     // recherche
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      arr = arr.filter(
-        (x) =>
-          String(x.subject || "").toLowerCase().includes(q) ||
-          String(x.from || x.from_email || "").toLowerCase().includes(q) ||
-          String(x.category || "").toLowerCase().includes(q)
-      );
+    const q = query.trim().toLowerCase();
+    if (q) {
+      arr = arr.filter((x) => {
+        const subject = String(x.subject || "").toLowerCase();
+        const from = String(x.from || x.from_email || "").toLowerCase();
+        const category = String(x.category || "").toLowerCase();
+        return subject.includes(q) || from.includes(q) || category.includes(q);
+      });
     }
 
-    // tri
-    if (sort === "oldest") arr.reverse();
+    // tri réel par date si possible (sinon on garde l’ordre backend)
+    arr.sort((a, b) => {
+      const da = parseDateValue(a)?.getTime() ?? 0;
+      const db = parseDateValue(b)?.getTime() ?? 0;
+      if (sort === "oldest") return da - db;
+      return db - da;
+    });
 
     return arr;
   }, [items, query, sort, filter, searchParams]);
 
+  const selectedFromList = useMemo(() => {
+    if (!selectedId) return null;
+    return items.find((x) => String(x.id) === String(selectedId)) || null;
+  }, [items, selectedId]);
+
   return (
-    <div className="page">
+    <div className="page email-history">
       <div className="page-header">
         <h1>Historique des Activités</h1>
 
@@ -281,68 +310,95 @@ export default function EmailHistory() {
       ) : filtered.length === 0 ? (
         <div className="muted">Aucun email trouvé.</div>
       ) : (
-        <div className="email-list">
-          {filtered.map((e) => (
-            <button
-              key={e.id}
-              type="button"
-              className="email-row"
-              onClick={() => onClickItem(e.id)}
-              title="Ouvrir"
-            >
-              <div className="email-row-left">
-                <div className={`pill pill-${String(e.urgency || "").toLowerCase()}`}>
-                  {(e.urgency || "").toString().toUpperCase() || "—"}
-                </div>
+        <div className="eh-layout">
+          {/* LISTE (gauche) */}
+          <div className="eh-list" role="list">
+            {filtered.map((e) => {
+              const urg = normalizeUrgency(e.urgency);
+              const active = String(e.id) === String(selectedId);
 
-                <div className="email-row-main">
-                  <div className="email-subject">{e.subject || "(Sans sujet)"}</div>
-                  <div className="email-meta">
-                    <span className="muted">{e.date || e.received_at || ""}</span>
-                    {" • "}
-                    <span className="muted">{e.category || "—"}</span>
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  className={`eh-item ${active ? "is-active" : ""}`}
+                  onClick={() => onClickItem(e.id)}
+                  title="Ouvrir"
+                >
+                  <div className="eh-item-top">
+                    <span className={`eh-pill eh-pill-${urg || "none"}`}>
+                      {(e.urgency || "").toString().toUpperCase() || "—"}
+                    </span>
+                    <span className="eh-date">{formatDateShort(e)}</span>
+                  </div>
+
+                  <div className="eh-subject">{e.subject || "(Sans sujet)"}</div>
+
+                  <div className="eh-meta">
+                    <span className="eh-from">{e.from || e.from_email || "—"}</span>
+                    <span className="eh-dot">•</span>
+                    <span className="eh-cat">{e.category || "—"}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* PREVIEW (droite) */}
+          <div className="eh-preview">
+            {!selectedId ? (
+              <div className="eh-empty">
+                <div className="eh-empty-title">Sélectionne un email</div>
+                <div className="muted">
+                  Clique à gauche pour afficher le contenu ici.
+                </div>
+              </div>
+            ) : detailLoading ? (
+              <div className="eh-empty">
+                <div className="muted">Chargement de l’email…</div>
+              </div>
+            ) : (
+              <>
+                <div className="eh-preview-header">
+                  <div className="eh-preview-title">
+                    {selected?.subject || selectedFromList?.subject || "Email"}
+                  </div>
+
+                  <div className="eh-preview-sub">
+                    <span className="muted">
+                      {selected?.from ||
+                        selectedFromList?.from ||
+                        selectedFromList?.from_email ||
+                        ""}
+                    </span>
+                    <span className="eh-dot">•</span>
+                    <span className="muted">
+                      {selected?.category || selectedFromList?.category || "—"}
+                    </span>
+                    <span className="eh-dot">•</span>
+                    <span className="muted">
+                      {selected?.received_at
+                        ? String(selected.received_at)
+                        : formatDateShort(selectedFromList)}
+                    </span>
+                  </div>
+
+                  <div className="eh-preview-actions">
+                    <button className="btn btn-ghost" onClick={() => setEmailIdInUrl(null)}>
+                      Fermer
+                    </button>
                   </div>
                 </div>
-              </div>
 
-              <div className="email-row-right">
-                <span className="muted">{e.from || e.from_email || ""}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* MODAL */}
-      {open && (
-        <div className="modal-overlay" onMouseDown={closeModal}>
-          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <div className="modal-title">
-                  {selected?.subject || "Email"}
+                <div className="eh-preview-body">
+                  {selected?.bodyText ? (
+                    <pre className="email-body">{selected.bodyText}</pre>
+                  ) : (
+                    <div className="muted">Aucun contenu disponible.</div>
+                  )}
                 </div>
-                <div className="modal-subtitle">
-                  {selected?.from ? `• ${selected.from}` : ""}{" "}
-                  {selected?.category ? `• ${selected.category}` : ""}{" "}
-                  {selected?.received_at ? `• ${selected.received_at}` : ""}
-                </div>
-              </div>
-
-              <button className="modal-close" onClick={closeModal} aria-label="Fermer">
-                ✕
-              </button>
-            </div>
-
-            <div className="modal-body">
-              {detailLoading ? (
-                <div className="muted">Chargement de l’email…</div>
-              ) : selected?.bodyText ? (
-                <pre className="email-body">{selected.bodyText}</pre>
-              ) : (
-                <div className="muted">Aucun contenu disponible.</div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
       )}
