@@ -1,227 +1,233 @@
-/* =========================
-   index.css — Styles globaux
-   ========================= */
-
+/* ==========================================================
+   src/index.css — THEME "SOLID SLATE" (Style FileAnalyzer)
+   ========================================================== */
 :root {
-  --bg: #050b1a;
-  --bg2: #070f26;
+  /* --- Palette CipherFlow (Basée sur FileAnalyzer) --- */
+  
+  /* Fond de page global (Bleu nuit profond) */
+  --bg: #0f172a; 
+  
+  /* Cartes / Conteneurs (Bleu ardoise opaque - C'est la couleur que tu aimes) */
+  --card: #1e293b;
+  
+  /* Texte */
+  --text: #f8fafc;        /* Blanc quasi pur */
+  --text-secondary: #94a3b8; /* Gris clair */
+  
+  /* Bordures (Subtiles pour séparer les éléments #1e293b) */
+  --border: #334155; 
+  
+  /* Accent (Reste ton violet, ça marche super bien avec le Slate) */
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+  
+  /* Ombres plus marquées pour le style opaque */
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
 
-  --card: rgba(255, 255, 255, 0.06);
-  --card2: rgba(255, 255, 255, 0.08);
-
-  --text: #e5e7eb;
-  --text-secondary: #9ca3af;
-
-  --border: rgba(255, 255, 255, 0.10);
-
-  --accent: #8b5cf6; /* violet */
-  --accent2: #06b6d4; /* cyan */
-  --danger: #ef4444;
-
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  --font-main: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-*,
-*::before,
-*::after {
+/* Reset de base */
+*, *::before, *::after {
   box-sizing: border-box;
-}
-
-html,
-body {
-  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
-    "Segoe UI Emoji";
+  font-family: var(--font-main);
+  background-color: var(--bg);
   color: var(--text);
-  background: radial-gradient(1200px 600px at 30% 20%, #0b1642 0%, var(--bg) 55%, #020617 100%);
-  overflow-x: hidden;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
 }
 
-/* Liens */
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-/* Inputs & buttons */
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-
-input,
-select,
-textarea {
-  background: rgba(0, 0, 0, 0.25);
+/* --- CLASSE CARD (Le style que tu veux partout) --- */
+.card {
+  background-color: var(--card); /* #1e293b */
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  outline: none;
+  border-radius: 12px; /* Arrondi comme dans FileAnalyzer */
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1.5rem;
+  color: var(--text);
 }
 
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: rgba(139, 92, 246, 0.65);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.20);
+/* --- TITRES --- */
+h1, h2, h3, h4 {
+  color: var(--text);
+  font-weight: 700;
+  margin-bottom: 1rem;
 }
 
-/* Scrollbar (Chrome/Edge) */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* --- INPUTS --- */
+input, select, textarea {
+  background: #0f172a; /* Plus foncé que la carte pour le contraste */
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: inherit;
+  width: 100%;
+  display: block;
+  margin-bottom: 10px;
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.04);
+/* --- BOUTONS --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+.btn:hover {
+  background: #334155;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+/* --- TABLEAUX (Pour les listes de fichiers) --- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th {
+  text-align: left;
+  padding: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+td {
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+tr:last-child td {
+  border-bottom: none;
 }
 
-/* =========================
-   MODAL (Email details)
-   - stable
-   - z-index élevé
-   - wrap des longues chaînes
-   ========================= */
+/* --- LAYOUT PAGES --- */
+.page {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.page-header {
+  margin-bottom: 2rem;
+}
 
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
+/* --- AUTH (Login/Register) --- */
+.auth-wrap {
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
-  z-index: 9999; /* important : au-dessus de tout */
+  padding: 20px;
 }
-
-.modal {
-  width: min(920px, 94vw);
-  max-height: 86vh;
-  overflow: auto;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
+.auth-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 2.5rem;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 420px;
   box-shadow: var(--shadow);
-  animation: modalFadeIn 160ms ease-out;
 }
-
-.modal-header {
-  position: sticky;
-  top: 0;
-  background: rgba(15, 23, 42, 0.92);
-  backdrop-filter: blur(6px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
-  padding: 14px 16px;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.modal-title {
-  font-weight: 700;
-  font-size: 15px;
-  line-height: 1.25;
-  margin: 0;
-}
-
-.modal-subtitle {
-  margin-top: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.close-btn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text);
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-}
-
-.close-btn:hover {
-  background: rgba(255, 255, 255, 0.10);
-}
-
-.modal-body {
-  padding: 16px;
-}
-
-.detail-section {
-  margin-bottom: 14px;
-}
-
-.detail-section h4 {
-  margin: 0 0 8px 0;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(139, 92, 246, 0.95);
-}
-
-.detail-box {
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+.auth-title { text-align: center; font-size: 1.8rem; margin-bottom: 0.5rem; }
+.auth-subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 2rem; }
+.auth-btn-primary {
+  width: 100%;
   padding: 12px;
-  line-height: 1.6;
-  font-size: 14px;
-
-  /* ✅ clé : éviter que les tokens/liens explosent la largeur */
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* ✅ sécurité : si un <pre> est utilisé dans ta modal */
-.modal pre,
-.detail-box pre {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-@keyframes modalFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Rendre certaines lignes cliquables si tu utilises .clickable-row */
-.clickable-row {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s;
+  margin-top: 1rem;
+}
+/* --- LINKS --- */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* --- BUTTON VARIANTS --- */
+.btn-ghost { background: transparent; }
+.btn-danger {
+  background: rgba(239,68,68,0.15);
+  border-color: rgba(239,68,68,0.45);
+}
+.btn-danger:hover { background: rgba(239,68,68,0.22); }
+
+/* --- BADGES / CHIPS --- */
+.badge, .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
-.clickable-row:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+/* --- ALERTS --- */
+.alert{
+  border: 1px solid var(--border);
+  background: rgba(15,23,42,0.55);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 12px 0;
 }
+.alert-success{
+  border-color: rgba(34,197,94,.35);
+  background: rgba(34,197,94,.12);
+}
+.alert-error{
+  border-color: rgba(239,68,68,.35);
+  background: rgba(239,68,68,.12);
+}
+.alert-warn{
+  border-color: rgba(251,191,36,.35);
+  background: rgba(251,191,36,.10);
+}
+
+/* --- LAYOUT HELPERS --- */
+.stack { display: grid; gap: 12px; }
+.row { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+.grid { display:grid; gap: 16px; }
+.grid-2 { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1100px){ .grid-2 { grid-template-columns: 1fr; } }
+
+/* --- CARD HEADER --- */
+.card-header{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom: 12px; }
+.card-title{ font-size: 1.05rem; font-weight: 800; margin:0; }
+.card-subtitle{ color: var(--text-secondary); font-size: 0.9rem; margin-top: 6px; }
+
+/* --- TABLE ROW HOVER --- */
+tbody tr:hover td { background: rgba(148,163,184,0.06); }

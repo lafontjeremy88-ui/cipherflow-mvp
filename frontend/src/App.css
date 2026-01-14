@@ -1,30 +1,20 @@
 /* ==========================================================
-   App.css — SAFE
-   Objectif :
-   - Ne PAS redéfinir :root / body (ça reste dans index.css)
-   - Contenir uniquement les styles “app” (layout + pages)
-   - Éviter les régressions de thème quand tu modifies App.css
+   App.css — LAYOUT ONLY (ne touche pas au design system)
+   Design system = index.css (card/btn/input/alerts/etc.)
    ========================================================== */
 
-/* Helpers (on se base sur index.css : --bg, --card, --text, --text-secondary, --border, --accent, --shadow) */
-:where(.muted) { color: var(--text-secondary); }
-:where(.small) { font-size: 0.85rem; }
-
-/* ====== App Shell (sidebar + content) ====== */
 .app-shell {
   min-height: 100vh;
   display: flex;
-  background:
-    radial-gradient(1200px 800px at 15% 0%, rgba(110, 90, 255, 0.18), transparent 60%),
-    radial-gradient(900px 600px at 70% 35%, rgba(0, 255, 200, 0.06), transparent 55%),
-    var(--bg);
+  background: var(--bg);
 }
 
+/* Sidebar */
 .sidebar {
   width: 260px;
   padding: 16px;
   border-right: 1px solid var(--border);
-  background: rgba(10, 12, 22, 0.55);
+  background: rgba(15, 23, 42, 0.65);
   backdrop-filter: blur(6px);
   display: flex;
   flex-direction: column;
@@ -38,7 +28,7 @@
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(15, 23, 42, 0.55);
 }
 
 .brand-icon,
@@ -71,29 +61,20 @@
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(148,163,184,0.08);
+  border-color: rgba(148,163,184,0.12);
   color: var(--text);
 }
 
 .nav-item.active {
-  background: rgba(139, 92, 246, 0.14);
-  border-color: rgba(139, 92, 246, 0.35);
+  background: rgba(139,92,246,0.16);
+  border-color: rgba(139,92,246,0.35);
   color: var(--text);
 }
 
 .nav-spacer { flex: 1; }
 
-.nav-logout {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  cursor: pointer;
-}
-.nav-logout:hover { background: rgba(255, 255, 255, 0.06); }
+.nav-logout { width: 100%; }
 
 /* Content */
 .main-content,
@@ -102,226 +83,14 @@
   padding: 26px 28px;
 }
 
-/* ====== Common UI ====== */
-.page-header h1 {
-  margin: 0 0 6px 0;
-  font-size: 2.2rem;
-  font-weight: 900;
-}
-
-.btn {
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
-  border-radius: 12px;
-  padding: 9px 12px;
-  cursor: pointer;
-}
-.btn:hover { background: rgba(255, 255, 255, 0.07); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-ghost { background: transparent; }
-
-.toolbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-
-.toolbar .search,
-.toolbar input[type="text"] {
-  min-width: 240px;
-  flex: 1;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
-  border-radius: 12px;
-  padding: 10px 12px;
-  outline: none;
-}
-
-/* ====== Cards / layout helpers ====== */
-.card {
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
-  padding: 14px;
-}
-
-/* Limite la largeur pour éviter l’effet “vide” */
 .main-content { max-width: 1280px; margin: 0 auto; }
 
-/* Grille dashboard (stats + donut + activité) */
+/* Dashboard layout helper */
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
   gap: 18px;
 }
-
-/* KPI cards : même hauteur */
-.dashboard-grid .card { height: 100%; }
-
-/* Donut mieux centré (safe : basé sur style inline existant) */
-.dashboard-grid .card > div[style*="height: 320"] { margin-top: 10px; }
-
-/* Hover activité récente */
-.dashboard-grid .card div[role="button"],
-.dashboard-grid .card > div > div {
-  transition: background 0.15s ease;
-}
-.dashboard-grid .card div[role="button"]:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 @media (max-width: 1100px) {
   .dashboard-grid { grid-template-columns: 1fr; }
-}
-
-/* =========================
-   TenantFilesPanel (unified UI)
-   ========================= */
-.tf-page { padding: 18px; }
-
-.tf-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.tf-title { margin: 0; font-size: 1.35rem; }
-.tf-sub { color: var(--text-secondary); font-size: 0.92rem; margin-top: 4px; }
-
-.tf-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-
-.tf-grid {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 16px;
-  align-items: start;
-}
-
-.tf-right { display: grid; gap: 16px; }
-
-.tf-card {
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
-  padding: 14px;
-}
-
-.tf-card-title { font-weight: 900; margin-bottom: 10px; color: var(--text); }
-.tf-muted { color: var(--text-secondary); }
-
-.tf-list { display: grid; gap: 10px; }
-
-.tf-item {
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.20);
-  border-radius: 12px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.tf-item:hover { background: rgba(255, 255, 255, 0.06); }
-
-.tf-item.is-active {
-  background: rgba(139, 92, 246, 0.16);
-  border-color: rgba(139, 92, 246, 0.50);
-}
-
-.tf-item-title { font-weight: 900; }
-.tf-item-sub { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
-
-.tf-kv {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.tf-k { color: var(--text-secondary); font-size: 12px; }
-.tf-v { color: var(--text); font-weight: 800; margin-top: 2px; }
-
-.tf-attach { margin-top: 6px; }
-
-.tf-attach-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-
-.tf-select { min-width: 280px; flex: 1; }
-
-.tf-btn {
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
-  border-radius: 12px;
-  padding: 9px 11px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  text-decoration: none;
-  font-weight: 800;
-}
-.tf-btn:hover { background: rgba(255, 255, 255, 0.07); }
-.tf-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-.tf-btn-ghost { background: transparent; }
-
-.tf-btn-primary {
-  border-color: rgba(139, 92, 246, 0.55);
-  background: rgba(139, 92, 246, 0.16);
-}
-.tf-btn-primary:hover { background: rgba(139, 92, 246, 0.22); }
-
-.tf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.tf-row-left { display: flex; align-items: center; gap: 10px; }
-
-.tf-chip {
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.20);
-  border-radius: 999px;
-  padding: 4px 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.tf-files { display: grid; gap: 10px; }
-
-.tf-file {
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.20);
-  border-radius: 12px;
-  padding: 10px 12px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
-.tf-file-title { font-weight: 900; }
-.tf-file-sub { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
-.tf-file-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-
-.tf-warn {
-  border: 1px solid rgba(251, 191, 36, 0.45);
-  background: rgba(251, 191, 36, 0.10);
-  border-radius: 12px;
-  padding: 10px 12px;
-  color: rgba(255, 255, 255, 0.90);
-}
-.tf-warn code { opacity: 0.9; }
-
-@media (max-width: 1100px) {
-  .tf-grid { grid-template-columns: 1fr; }
 }
