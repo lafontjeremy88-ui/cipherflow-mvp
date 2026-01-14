@@ -48,6 +48,55 @@ function truncate(s, n = 70) {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
+function fmtPct(x) {
+  if (!Number.isFinite(x)) return "0%";
+  return `${Math.round(x)}%`;
+}
+
+function buildDonut(dist) {
+  // dist peut être array [{name,value}] ou objet {name:value}
+  let arr = [];
+
+  if (Array.isArray(dist)) {
+    arr = dist
+      .map((d) => ({ name: String(d?.name || ""), value: Number(d?.value) || 0 }))
+      .filter((d) => d.name && d.value > 0);
+  } else if (dist && typeof dist === "object") {
+    arr = Object.entries(dist)
+      .map(([name, value]) => ({ name, value: Number(value) || 0 }))
+      .filter((d) => d.name && d.value > 0);
+  }
+
+  // tri décroissant + calc %
+  const total = arr.reduce((s, x) => s + x.value, 0) || 1;
+  arr.sort((a, b) => b.value - a.value);
+
+  const withPct = arr.map((x) => ({
+    ...x,
+    pct: (x.value / total) * 100,
+  }));
+
+  return { total, data: withPct };
+}
+
+function CustomTooltip({ active, payload }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-title">{p.name}</div>
+      <div className="chart-tooltip-line">
+        <span className="muted">Emails :</span> <strong>{p.value}</strong>
+      </div>
+      <div className="chart-tooltip-line">
+        <span className="muted">Part :</span> <strong>{fmtPct(p.pct)}</strong>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard({ authFetch }) {
   const navigate = useNavigate();
   const doFetch = authFetch || authFetchFromApi;
@@ -62,26 +111,10 @@ export default function Dashboard({ authFetch }) {
     recents: [],
   });
 
-  const donutData = useMemo(() => {
-    const dist = stats.distribution;
+  const donut = useMemo(() => buildDonut(stats.distribution), [stats.distribution]);
+  const donutData = donut.data;
 
-    if (Array.isArray(dist)) {
-      return dist
-        .map((d) => ({
-          name: String(d?.name || ""),
-          value: Number(d?.value) || 0,
-        }))
-        .filter((d) => d.name && d.value > 0);
-    }
-
-    if (dist && typeof dist === "object") {
-      return Object.entries(dist)
-        .map(([name, value]) => ({ name, value: Number(value) || 0 }))
-        .filter((d) => d.name && d.value > 0);
-    }
-
-    return [];
-  }, [stats.distribution]);
+  const topCategories = useMemo(() => donutData.slice(0, 5), [donutData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +129,7 @@ export default function Dashboard({ authFetch }) {
           const txt = await res.text().catch(() => "");
           throw new Error(`Stats HTTP ${res.status} ${txt}`);
         }
+
         const payload = await res.json().catch(() => ({}));
         const normalized = normalizeStats(payload);
 
@@ -126,7 +160,6 @@ export default function Dashboard({ authFetch }) {
         </div>
       )}
 
-      {/* KPI */}
       <div className="kpi-grid">
         <StatCard
           title="EMAILS TRAITÉS"
@@ -154,33 +187,60 @@ export default function Dashboard({ authFetch }) {
       </div>
 
       <div className="dashboard-grid">
-        {/* Donut */}
+        {/* Donut + legend */}
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">📊 Répartition par Catégorie</h2>
+            <span className="badge">{loading ? "…" : `${donut.total} emails`}</span>
           </div>
 
           {donutData.length === 0 ? (
             <div className="muted">Aucune donnée de catégorie pour l’instant.</div>
           ) : (
-            <div className="chart-box">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={donutData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={70}
-                    outerRadius={110}
-                    paddingAngle={2}
-                  >
-                    {donutData.map((_, idx) => (
-                      <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="donut-wrap">
+              <div className="chart-box donut-box">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donutData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={72}
+                      outerRadius={112}
+                      paddingAngle={2}
+                    >
+                      {donutData.map((_, idx) => (
+                        <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<CustomTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="donut-legend">
+                <div className="donut-legend-title">Top catégories</div>
+
+                <div className="donut-legend-list">
+                  {topCategories.map((c, idx) => (
+                    <div key={c.name} className="donut-legend-row">
+                      <span
+                        className="donut-swatch"
+                        style={{ background: COLORS[idx % COLORS.length] }}
+                      />
+                      <span className="donut-name">{c.name}</span>
+                      <span className="donut-right">
+                        <span className="donut-pct">{fmtPct(c.pct)}</span>
+                        <span className="donut-count muted">{c.value}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="muted" style={{ marginTop: 10 }}>
+                  Astuce : passe la souris sur le donut pour voir le détail.
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -189,7 +249,12 @@ export default function Dashboard({ authFetch }) {
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">⚡ Activité Récente</h2>
-            <button className="btn btn-ghost" onClick={() => navigate("/emails/history")}>
+
+            {/* ✅ On garde UN seul bouton : Voir tout */}
+            <button
+              className="btn btn-ghost"
+              onClick={() => navigate("/emails/history")}
+            >
               Voir tout
             </button>
           </div>
@@ -201,20 +266,22 @@ export default function Dashboard({ authFetch }) {
           ) : (
             <div className="list">
               {stats.recents.slice(0, 6).map((r) => {
-                const subject = truncate(r.subject || "Email", 75);
+                const subject = truncate(r.subject || "Email", 78);
                 const category = r.category || "Autre";
                 const priority = (r.priority || r.urgency || "").toString().toLowerCase();
 
                 const badge =
-                  priority.includes("high") || priority.includes("haute") ? "badge badge-danger"
-                  : priority.includes("medium") || priority.includes("moy") ? "badge badge-warn"
-                  : "badge";
+                  priority.includes("high") || priority.includes("haute")
+                    ? "badge badge-danger"
+                    : priority.includes("medium") || priority.includes("moy")
+                    ? "badge badge-warn"
+                    : "badge";
 
                 return (
                   <button
                     key={r.id || `${subject}-${r.date}`}
                     type="button"
-                    className="list-item"
+                    className="list-item list-item-strong"
                     onClick={() =>
                       navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")
                     }
@@ -237,12 +304,6 @@ export default function Dashboard({ authFetch }) {
               })}
             </div>
           )}
-
-          <div className="row" style={{ marginTop: 14 }}>
-            <button className="btn" onClick={() => navigate("/emails/history")}>
-              Voir tout l’historique
-            </button>
-          </div>
         </div>
       </div>
     </div>

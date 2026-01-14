@@ -504,3 +504,97 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   overflow:auto;
 }
 
+/* ===== Dashboard: list visibility ===== */
+.list-item-strong{
+  background: rgba(255,255,255,0.04);      /* au lieu du noir trop dense */
+  border-color: rgba(148,163,184,0.16);
+}
+.list-item-strong:hover{
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(148,163,184,0.22);
+}
+
+/* ===== Donut pro layout ===== */
+.donut-wrap{
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 18px;
+  align-items: center;
+}
+@media (max-width: 1100px){
+  .donut-wrap{ grid-template-columns: 1fr; }
+}
+
+.donut-box{ height: 320px; }
+
+.donut-legend{
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+}
+@media (max-width: 1100px){
+  .donut-legend{ border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 14px; }
+}
+
+.donut-legend-title{
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+
+.donut-legend-list{
+  display: grid;
+  gap: 10px;
+}
+
+.donut-legend-row{
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.16);
+}
+
+.donut-swatch{
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.donut-name{
+  font-weight: 800;
+  color: var(--text);
+}
+
+.donut-right{
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.donut-pct{
+  font-weight: 900;
+}
+
+.donut-count{
+  font-size: 0.85rem;
+}
+
+/* Tooltip chart */
+.chart-tooltip{
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(10,15,25,0.92);
+}
+.chart-tooltip-title{
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+.chart-tooltip-line{
+  display:flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
