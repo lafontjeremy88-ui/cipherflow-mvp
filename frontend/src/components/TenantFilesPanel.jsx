@@ -1,81 +1,159 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText } from "lucide-react";
 
 export default function TenantFilesPanel({ authFetch }) {
   const [tenants, setTenants] = useState([]);
-  const [selectedTenantId, setSelectedTenantId] = useState(null);
+  const [tenantsLoading, setTenantsLoading] = useState(false);
 
-  const [files, setFiles] = useState([]);
-  const [loadingTenants, setLoadingTenants] = useState(false);
-  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [selectedTenantId, setSelectedTenantId] = useState(null);
+  const [tenantLoading, setTenantLoading] = useState(false);
+  const [tenantDetail, setTenantDetail] = useState(null);
+
+  const [filesHistory, setFilesHistory] = useState([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+
+  const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
+  const [attachLoading, setAttachLoading] = useState(false);
 
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
 
-  // ✅ anti-écran blanc si la prop est mal passée
   const authFetchOk = typeof authFetch === "function";
 
-  const selectedTenant = useMemo(
-    () => tenants.find((t) => t.id === selectedTenantId) || null,
-    [tenants, selectedTenantId]
-  );
-
-  async function loadTenants() {
+  const fetchTenants = async () => {
     if (!authFetchOk) return;
-
     setError("");
-    setInfo("");
-    setLoadingTenants(true);
+    setTenantsLoading(true);
     try {
-      // ⚠️ adapte si ton backend utilise un autre endpoint
-      const res = await authFetch("/tenants");
+      // ✅ BON endpoint backend
+      const res = await authFetch("/tenant-files");
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Erreur chargement locataires");
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de charger les dossiers");
       }
-      const data = await res.json();
-      setTenants(Array.isArray(data) ? data : data?.items || []);
-      // auto-select premier locataire si rien
-      const first = (Array.isArray(data) ? data : data?.items || [])[0];
-      if (first?.id && !selectedTenantId) setSelectedTenantId(first.id);
-    } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoadingTenants(false);
-    }
-  }
+      const data = await res.json().catch(() => []);
+      const list = Array.isArray(data) ? data : [];
+      setTenants(list);
 
-  async function loadFiles(tenantId) {
+      if (!selectedTenantId && list.length) setSelectedTenantId(list[0].id);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur chargement dossiers");
+    } finally {
+      setTenantsLoading(false);
+    }
+  };
+
+  const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
-
     setError("");
-    setInfo("");
-    setLoadingFiles(true);
+    setTenantLoading(true);
     try {
-      // ⚠️ adapte si ton backend utilise un autre endpoint
-      const res = await authFetch(`/tenants/${tenantId}/files`);
+      // ✅ BON endpoint backend
+      const res = await authFetch(`/tenant-files/${tenantId}`);
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Erreur chargement fichiers");
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de charger le détail du dossier");
       }
-      const data = await res.json();
-      setFiles(Array.isArray(data) ? data : data?.items || []);
+      const data = await res.json().catch(() => null);
+      setTenantDetail(data || null);
     } catch (e) {
-      setError(String(e?.message || e));
-      setFiles([]);
+      console.error(e);
+      setError(e?.message || "Erreur chargement dossier");
+      setTenantDetail(null);
     } finally {
-      setLoadingFiles(false);
+      setTenantLoading(false);
     }
-  }
+  };
 
+  const fetchFilesHistory = async () => {
+    if (!authFetchOk) return;
+    setError("");
+    setFilesLoading(true);
+    try {
+      // ✅ endpoint existant chez toi
+      const res = await authFetch("/api/files/history");
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de charger l'historique des documents");
+      }
+      const data = await res.json().catch(() => []);
+      setFilesHistory(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur chargement documents");
+      setFilesHistory([]);
+    } finally {
+      setFilesLoading(false);
+    }
+  };
+
+  const handleAttach = async () => {
+    if (!authFetchOk || !selectedTenantId || !selectedFileIdToAttach) return;
+    setError("");
+    setAttachLoading(true);
+    try {
+      // ✅ BON endpoint backend (celui que tu avais)
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
+        { method: "POST" }
+      );
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Erreur attach-document");
+      }
+
+      await fetchTenantDetail(selectedTenantId);
+      setSelectedFileIdToAttach("");
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur : impossible d'attacher le document.");
+    } finally {
+      setAttachLoading(false);
+    }
+  };
+
+  // first load
   useEffect(() => {
-    loadTenants();
+    fetchTenants();
+    fetchFilesHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetchOk]);
 
+  // tenant selection -> detail
   useEffect(() => {
-    if (selectedTenantId) loadFiles(selectedTenantId);
+    if (selectedTenantId) fetchTenantDetail(selectedTenantId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
+
+  const linkedFileIds = useMemo(() => {
+    const ids = tenantDetail?.file_ids;
+    if (!ids) return [];
+    if (Array.isArray(ids)) return ids.map(String);
+
+    if (typeof ids === "string") {
+      try {
+        const parsed = JSON.parse(ids);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {
+        return ids
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+      }
+    }
+    return [];
+  }, [tenantDetail]);
+
+  const linkedFiles = useMemo(() => {
+    const set = new Set(linkedFileIds);
+    return filesHistory.filter((f) => set.has(String(f.id)));
+  }, [filesHistory, linkedFileIds]);
+
+  const unlinkedFiles = useMemo(() => {
+    const set = new Set(linkedFileIds);
+    return filesHistory.filter((f) => !set.has(String(f.id)));
+  }, [filesHistory, linkedFileIds]);
 
   if (!authFetchOk) {
     return (
@@ -84,8 +162,6 @@ export default function TenantFilesPanel({ authFetch }) {
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur de configuration</div>
           <div>
             <code>authFetch</code> n’a pas été passé à <code>&lt;TenantFilesPanel /&gt;</code>.
-            <br />
-            Résultat : React partait en écran blanc.
           </div>
         </div>
       </div>
@@ -101,126 +177,144 @@ export default function TenantFilesPanel({ authFetch }) {
         </div>
 
         <div className="tf-actions">
-          <button className="tf-btn tf-btn-ghost" onClick={loadTenants} disabled={loadingTenants}>
-            {loadingTenants ? "Chargement..." : "Rafraîchir locataires"}
+          <button className="tf-btn tf-btn-ghost" onClick={fetchTenants} disabled={tenantsLoading}>
+            <RefreshCw size={16} /> {tenantsLoading ? "Chargement..." : "Rafraîchir locataires"}
           </button>
-
-          <button
-            className="tf-btn tf-btn-primary"
-            onClick={() => selectedTenantId && loadFiles(selectedTenantId)}
-            disabled={loadingFiles || !selectedTenantId}
-          >
-            {loadingFiles ? "Chargement..." : "Rafraîchir fichiers"}
+          <button className="tf-btn tf-btn-primary" onClick={fetchFilesHistory} disabled={filesLoading}>
+            <FolderOpen size={16} /> {filesLoading ? "Chargement..." : "Rafraîchir fichiers"}
           </button>
         </div>
       </div>
 
-      {(error || info) && (
-        <div className="tf-warn" style={{ marginBottom: 14, borderColor: error ? "rgba(239,68,68,.45)" : undefined }}>
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>{error ? "Erreur" : "Info"}</div>
-          <div style={{ opacity: 0.95 }}>{error || info}</div>
+      {!!error && (
+        <div className="tf-warn" style={{ borderColor: "rgba(239,68,68,.45)" }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur</div>
+          <div style={{ opacity: 0.95 }}>{error}</div>
         </div>
       )}
 
       <div className="tf-grid">
-        {/* Colonne gauche : locataires */}
         <div className="tf-card">
           <div className="tf-card-title">Locataires</div>
 
-          {loadingTenants && tenants.length === 0 ? (
+          {tenantsLoading ? (
             <div className="tf-muted">Chargement...</div>
           ) : tenants.length === 0 ? (
             <div className="tf-muted">Aucun locataire.</div>
           ) : (
             <div className="tf-list">
-              {tenants.map((t) => (
-                <button
-                  key={t.id}
-                  className={`tf-item ${t.id === selectedTenantId ? "is-active" : ""}`}
-                  onClick={() => setSelectedTenantId(t.id)}
-                  type="button"
-                >
-                  <div className="tf-item-title">{t.full_name || t.name || `Locataire #${t.id}`}</div>
-                  <div className="tf-item-sub">
-                    {t.email ? t.email : "—"} {t.phone ? ` • ${t.phone}` : ""}
-                  </div>
-                </button>
-              ))}
+              {tenants.map((t) => {
+                const active = String(selectedTenantId) === String(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    className={`tf-item ${active ? "is-active" : ""}`}
+                    onClick={() => setSelectedTenantId(t.id)}
+                    type="button"
+                  >
+                    <div className="tf-item-title">Dossier #{t.id} — {t.status || "?"}</div>
+                    <div className="tf-item-sub">{t.candidate_email || "-"}</div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Colonne droite : détails + fichiers */}
         <div className="tf-right">
           <div className="tf-card">
-            <div className="tf-row">
-              <div className="tf-row-left">
-                <div className="tf-card-title" style={{ marginBottom: 0 }}>
-                  Détails
-                </div>
-                {selectedTenantId && <span className="tf-chip">ID {selectedTenantId}</span>}
-              </div>
-            </div>
+            <div className="tf-card-title">Détails</div>
 
-            {!selectedTenant ? (
-              <div className="tf-muted" style={{ marginTop: 10 }}>
-                Sélectionne un locataire à gauche.
-              </div>
+            {tenantLoading ? (
+              <div className="tf-muted">Chargement...</div>
+            ) : !tenantDetail ? (
+              <div className="tf-muted">Sélectionne un locataire à gauche.</div>
             ) : (
-              <div style={{ marginTop: 10 }}>
+              <>
                 <div className="tf-kv">
                   <div>
-                    <div className="tf-k">Nom</div>
-                    <div className="tf-v">{selectedTenant.full_name || selectedTenant.name || "—"}</div>
+                    <div className="tf-k">Email candidat</div>
+                    <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
                   </div>
                   <div>
-                    <div className="tf-k">Email</div>
-                    <div className="tf-v">{selectedTenant.email || "—"}</div>
+                    <div className="tf-k">Statut</div>
+                    <div className="tf-v">{tenantDetail.status || "-"}</div>
                   </div>
                   <div>
-                    <div className="tf-k">Téléphone</div>
-                    <div className="tf-v">{selectedTenant.phone || "—"}</div>
+                    <div className="tf-k">Documents liés</div>
+                    <div className="tf-v">{linkedFileIds.length}</div>
                   </div>
                 </div>
-              </div>
+
+                <div className="tf-attach">
+                  <div className="tf-k">Attacher un document existant</div>
+                  <div className="tf-attach-row">
+                    <select
+                      className="tf-select"
+                      value={selectedFileIdToAttach}
+                      onChange={(e) => setSelectedFileIdToAttach(e.target.value)}
+                    >
+                      <option value="">— Choisir un document (non attaché) —</option>
+                      {unlinkedFiles.map((f) => (
+                        <option key={f.id} value={String(f.id)}>
+                          #{f.id} — {f.file_type || "Doc"} — {f.filename}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      className="tf-btn tf-btn-primary"
+                      onClick={handleAttach}
+                      disabled={attachLoading || !selectedFileIdToAttach}
+                      type="button"
+                    >
+                      <Link2 size={16} /> {attachLoading ? "Attache..." : "Attacher"}
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
 
           <div className="tf-card">
-            <div className="tf-card-title">Fichiers</div>
+            <div className="tf-card-title tf-row">
+              <span className="tf-row-left">
+                <FileText size={18} /> Pièces du dossier
+              </span>
+              <span className="tf-chip">{linkedFiles.length}</span>
+            </div>
 
-            {!selectedTenantId ? (
-              <div className="tf-muted">Choisis un locataire pour voir ses fichiers.</div>
-            ) : loadingFiles && files.length === 0 ? (
-              <div className="tf-muted">Chargement...</div>
-            ) : files.length === 0 ? (
-              <div className="tf-muted">Aucun fichier pour ce locataire.</div>
+            {!tenantDetail ? (
+              <div className="tf-muted">Sélectionne un locataire pour voir ses pièces.</div>
+            ) : linkedFileIds.length === 0 ? (
+              <div className="tf-muted">Aucun document attaché.</div>
+            ) : linkedFiles.length === 0 ? (
+              <div className="tf-warn">
+                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve pas leurs détails dans{" "}
+                <code>/api/files/history</code>. Clique “Rafraîchir fichiers”.
+              </div>
             ) : (
               <div className="tf-files">
-                {files.map((f) => (
-                  <div className="tf-file" key={f.id || `${f.filename}-${f.created_at}`}>
-                    <div>
-                      <div className="tf-file-title">{f.filename || f.name || "Document"}</div>
+                {linkedFiles.map((f) => (
+                  <div className="tf-file" key={f.id}>
+                    <div className="tf-file-main">
+                      <div className="tf-file-title">
+                        #{f.id} — {f.file_type || "Doc"} — {f.filename}
+                      </div>
                       <div className="tf-file-sub">
-                        {f.category ? `${f.category}` : "—"}
-                        {f.created_at ? ` • ${String(f.created_at).slice(0, 19).replace("T", " ")}` : ""}
+                        {f.created_at ? new Date(f.created_at).toLocaleString() : ""}
                       </div>
                     </div>
 
                     <div className="tf-file-actions">
-                      {f.url && (
-                        <a className="tf-btn tf-btn-ghost" href={f.url} target="_blank" rel="noreferrer">
-                          Ouvrir
+                      <a className="tf-btn tf-btn-ghost" href={`/docs/${f.id}`} title="Voir">
+                        <Eye size={16} /> Voir
+                      </a>
+                      {!!f.download_url && (
+                        <a className="tf-btn tf-btn-ghost" href={f.download_url} target="_blank" rel="noreferrer">
+                          <Download size={16} /> Download
                         </a>
                       )}
-                      <button
-                        className="tf-btn"
-                        type="button"
-                        onClick={() => navigator.clipboard?.writeText(f.url || "").catch(() => {})}
-                        disabled={!f.url}
-                      >
-                        Copier lien
-                      </button>
                     </div>
                   </div>
                 ))}
