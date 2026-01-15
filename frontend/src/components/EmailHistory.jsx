@@ -107,6 +107,7 @@ export default function EmailHistory() {
   const [filter, setFilter] = useState("all"); // all | high_urgency
   const [sort, setSort] = useState("recent"); // recent | oldest
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
 
   const [selectedId, setSelectedId] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -114,6 +115,7 @@ export default function EmailHistory() {
 
   const urlEmailId = searchParams.get("emailId");
   const urlFilter = searchParams.get("filter");
+  const urlCategory = searchParams.get("category");
 
   function setEmailIdInUrl(id) {
     const next = new URLSearchParams(searchParams);
@@ -183,6 +185,11 @@ export default function EmailHistory() {
     if (urlFilter) setFilter(urlFilter);
   }, [urlFilter]);
 
+  useEffect(() => {
+  if (urlCategory) setCategory(urlCategory);
+  else setCategory("all");
+  }, [urlCategory]);
+
   // URL → emailId
   useEffect(() => {
     if (urlEmailId) {
@@ -198,7 +205,13 @@ export default function EmailHistory() {
     if (filter === "high_urgency") {
       arr = arr.filter((e) => String(e.urgency || "").toLowerCase().includes("high") || String(e.urgency || "").toLowerCase().includes("haute"));
     }
-
+    // filtre par catégorie (depuis le donut)
+    if (category !== "all") {
+    const c = category.toLowerCase();
+      arr = arr.filter(
+        (e) => String(e.category || "").toLowerCase() === c
+      );
+    }
     if (query.trim()) {
       const q = query.trim().toLowerCase();
       arr = arr.filter((e) => {
@@ -216,7 +229,7 @@ export default function EmailHistory() {
     });
 
     return arr;
-  }, [items, filter, sort, query]);
+  }, [items, filter, category, sort, query]);
 
   const selectedFromList = useMemo(() => {
     if (!selectedId) return null;
