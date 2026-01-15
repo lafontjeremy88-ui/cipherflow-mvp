@@ -115,3 +115,35 @@
 @media (max-width: 1100px) {
   .dashboard-grid { grid-template-columns: 1fr; }
 }
+/* =========================
+   DASHBOARD — HEADER CENTER
+   ========================= */
+
+/* Centrage propre (n'affecte pas la sidebar) */
+.page-header,
+.dashboard-header,
+.header-block,
+.dashboard-top{
+  text-align: center;
+  margin: 0 auto 18px auto;
+  max-width: 980px;
+}
+
+/* Titre */
+.page-header h1,
+.dashboard-header h1,
+.dashboard-top h1{
+  margin: 0;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* Sous-titre (chez toi il est souvent en .muted dans index.css) */
+.page-header p,
+.page-header .muted,
+.dashboard-header p,
+.dashboard-top p{
+  margin: 8px auto 0 auto;
+  max-width: 760px;
+  opacity: 0.86;
+}
