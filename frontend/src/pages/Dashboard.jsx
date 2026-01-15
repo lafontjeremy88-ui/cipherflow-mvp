@@ -6,7 +6,23 @@ import { Mail, AlertTriangle, FileText } from "lucide-react";
 import StatCard from "../components/StatCard";
 import { authFetch as authFetchFromApi } from "../services/api";
 
-const COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
+// Palette de base (fallback)
+const FALLBACK_COLORS = ["#6D5EF8", "#44C2A8", "#F4B04F", "#4F8EF7", "#E46C6C"];
+
+// Couleurs standardisées par catégorie
+const CATEGORY_COLORS = {
+  Autre: "#6D5EF8",          // violet (couleur de marque)
+  Administratif: "#44C2A8",  // vert/teal
+  Candidature: "#F4B04F",    // jaune/amber
+  Incident: "#E46C6C",       // rouge
+};
+
+// Helper : choisir la bonne couleur pour une catégorie
+function getCategoryColor(name, idx) {
+  if (name && CATEGORY_COLORS[name]) return CATEGORY_COLORS[name];
+  return FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
+}
+
 
 function extractDistribution(payload) {
   const candidates = [
@@ -216,7 +232,7 @@ const goToCategory = (name) => {
                       onClick={(entry) => goToCategory(entry?.name)}
                     >
                       {donutData.map((_, idx) => (
-                        <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                        <Cell key={idx} fill={getCategoryColor(slice.name, idx)} />
                       ))}
                     </Pie>
                     <Tooltip content={<CustomTooltip />} />
@@ -232,7 +248,7 @@ const goToCategory = (name) => {
                     <div key={c.name} className="donut-legend-row">
                       <span
                         className="donut-swatch"
-                        style={{ background: COLORS[idx % COLORS.length] }}
+                        style={{ background: getCategoryColor(c.name, idx) }}
                       />
                       <span className="donut-name">{c.name}</span>
                       <span className="donut-right">
