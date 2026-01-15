@@ -231,7 +231,7 @@ const goToCategory = (name) => {
                       paddingAngle={2}
                       onClick={(entry) => goToCategory(entry?.name)}
                     >
-                      {donutData.map((_, idx) => (
+                      {donutData.map((slice, idx) => (
                         <Cell key={slice.name || idx} fill={getCategoryColor(slice.name, idx)} />
                       ))}
                     </Pie>
