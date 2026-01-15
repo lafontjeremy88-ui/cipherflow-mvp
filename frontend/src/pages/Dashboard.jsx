@@ -220,7 +220,7 @@ const goToCategory = (name) => {
           ) : (
             <div className="donut-wrap">
               <div className="chart-box donut-box">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
                     <Pie
                       data={donutData}
