@@ -266,18 +266,18 @@ export default function EmailHistory() {
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
-          {searchParams.get("filter") && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.delete("filter");
-                setSearchParams(next, { replace: true });
-              }}
-            >
-              Retirer le filtre
-            </button>
-          )}
+          {searchParams.get("category") && (
+           <button
+            className="btn btn-ghost"
+            onClick={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete("category");
+            setSearchParams(next, { replace: true });
+          }}
+        >
+          Retirer la catégorie
+          </button>
+        )}
         </div>
       </div>
 

@@ -99,6 +99,11 @@ function CustomTooltip({ active, payload }) {
 
 export default function Dashboard({ authFetch }) {
   const navigate = useNavigate();
+
+const goToCategory = (name) => {
+  if (!name) return;
+  navigate(`/emails/history?category=${encodeURIComponent(name)}`);
+};
   const doFetch = authFetch || authFetchFromApi;
 
   const [loading, setLoading] = useState(true);
@@ -208,6 +213,7 @@ export default function Dashboard({ authFetch }) {
                       innerRadius={72}
                       outerRadius={112}
                       paddingAngle={2}
+                      onClick={(entry) => goToCategory(entry?.name)}
                     >
                       {donutData.map((_, idx) => (
                         <Cell key={idx} fill={COLORS[idx % COLORS.length]} />

@@ -645,5 +645,7 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   shape-rendering: geometricPrecision;
   text-rendering: geometricPrecision;
 }
-
+.recharts-sector {
+  cursor: pointer;
+}
 
