@@ -275,9 +275,9 @@ export default function Dashboard({ authFetch }) {
                     ? "badge badge-danger"
                     : priority.includes("medium") || priority.includes("moy")
                     ? "badge badge-warn"
-                    : "badge";
-
+                    : "badge badge-success";
                 return (
+                  
                   <button
                     key={r.id || `${subject}-${r.date}`}
                     type="button"
