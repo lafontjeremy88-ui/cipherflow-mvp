@@ -245,7 +245,13 @@ const goToCategory = (name) => {
 
                 <div className="donut-legend-list">
                   {topCategories.map((c, idx) => (
-                    <div key={c.name} className="donut-legend-row">
+                    <button
+                      key={c.name}
+                      type="button"
+                      className="donut-legend-row"
+                      onClick={() => goToCategory(c.name)}
+                      title={`Voir les emails de la catégorie "${c.name}"`}
+                    >
                       <span
                         className="donut-swatch"
                         style={{ background: getCategoryColor(c.name, idx) }}
@@ -255,9 +261,10 @@ const goToCategory = (name) => {
                         <span className="donut-pct">{fmtPct(c.pct)}</span>
                         <span className="donut-count muted">{c.value}</span>
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
+
 
                 <div className="muted" style={{ marginTop: 10 }}>
                   Astuce : passe la souris sur le donut pour voir le détail.
