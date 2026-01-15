@@ -232,7 +232,7 @@ const goToCategory = (name) => {
                       onClick={(entry) => goToCategory(entry?.name)}
                     >
                       {donutData.map((_, idx) => (
-                        <Cell key={idx} fill={getCategoryColor(slice.name, idx)} />
+                        <Cell key={slice.name || idx} fill={getCategoryColor(slice.name, idx)} />
                       ))}
                     </Pie>
                     <Tooltip content={<CustomTooltip />} />
