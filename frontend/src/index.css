@@ -449,6 +449,17 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   color: var(--text-secondary);
   font-size: 0.9rem;
 }
+.eh-cat{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eh-cat-dot{
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
 
 .eh-dot{ opacity: 0.6; }
 
