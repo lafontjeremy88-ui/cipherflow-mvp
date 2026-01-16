@@ -48,10 +48,7 @@ function extractMimePart(raw, wantedType) {
   if (!raw) return null;
 
   const ctRegex = new RegExp(
-    `Content-Type:\\s*${wantedType.replace(
-      "/",
-      "\\/"
-    )}[^\\n]*\\n([\\s\\S]*?)(\\n--|\\nContent-Type:|$)`,
+    `Content-Type:\\s*${wantedType.replace("/", "\\/")}[^\\n]*\\n([\\s\\S]*?)(\\n--|\\nContent-Type:|$)`,
     "i"
   );
 
@@ -60,16 +57,13 @@ function extractMimePart(raw, wantedType) {
 
   let chunk = m[1] || "";
 
-  const encodingMatch = chunk.match(
-    /Content-Transfer-Encoding:\s*([^\n\r]+)/i
-  );
+  const encodingMatch = chunk.match(/Content-Transfer-Encoding:\s*([^\n\r]+)/i);
   const encoding = encodingMatch ? encodingMatch[1].trim().toLowerCase() : "";
 
   // enlever les headers du chunk
   chunk = chunk.replace(/^[\s\S]*?\r?\n\r?\n/, "");
 
-  if (encoding.includes("quoted-printable"))
-    return decodeQuotedPrintable(chunk).trim();
+  if (encoding.includes("quoted-printable")) return decodeQuotedPrintable(chunk).trim();
   if (encoding.includes("base64")) return base64ToUtf8(chunk).trim();
 
   return chunk.trim();
@@ -105,8 +99,12 @@ function formatDateShort(e) {
   }
 }
 
+function safeStr(v) {
+  return (v ?? "").toString();
+}
+
 /* ==========================
-   Catégories + couleurs (prêt immo)
+   Catégories + couleurs
    ========================== */
 
 const CATEGORY_COLORS = {
@@ -126,6 +124,7 @@ const CATEGORY_COLORS = {
   Publicité_Marketing: "#64748b",
   Spam: "#ef4444",
 };
+
 const CATEGORY_OPTIONS = ["all", ...Object.keys(CATEGORY_COLORS)];
 
 function getCategoryColor(name) {
@@ -133,8 +132,23 @@ function getCategoryColor(name) {
   return CATEGORY_COLORS[name] || "#64748b";
 }
 
-function safeStr(v) {
-  return (v ?? "").toString();
+/* ==========================
+   Urgence normalisée
+   ========================== */
+function getUrgencyLevel(u) {
+  const s = safeStr(u).toLowerCase();
+
+  // HIGH
+  if (s.includes("high") || s.includes("haute") || s.includes("urgent")) return "high";
+
+  // MEDIUM
+  if (s.includes("medium") || s.includes("moy")) return "medium";
+
+  // LOW (faible/basse/low/...)
+  if (s.includes("low") || s.includes("basse") || s.includes("faible")) return "low";
+
+  // par défaut : low
+  return "low";
 }
 
 /* ==========================
@@ -147,10 +161,11 @@ export default function EmailHistory() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [filter, setFilter] = useState("all"); // all | high_urgency
-  const [sort, setSort] = useState("recent"); // recent | oldest
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
+
+  // recent | oldest | prio_high | prio_medium | prio_low
+  const [sortMode, setSortMode] = useState("recent");
 
   const [selectedId, setSelectedId] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -164,7 +179,6 @@ export default function EmailHistory() {
   const [actionSuccess, setActionSuccess] = useState("");
 
   const urlEmailId = searchParams.get("emailId");
-  const urlFilter = searchParams.get("filter");
   const urlCategory = searchParams.get("category");
 
   function setEmailIdInUrl(id) {
@@ -247,12 +261,7 @@ export default function EmailHistory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // URL → filtre d'urgence
-  useEffect(() => {
-    if (urlFilter) setFilter(urlFilter);
-  }, [urlFilter]);
-
-  // URL → catégorie (depuis donut / légende)
+  // URL → catégorie
   useEffect(() => {
     if (urlCategory) setCategory(urlCategory);
     else setCategory("all");
@@ -270,69 +279,58 @@ export default function EmailHistory() {
   const filtered = useMemo(() => {
     let arr = [...items];
 
-    if (filter === "high_urgency") {
-      arr = arr.filter((e) => {
-        const u = safeStr(e.urgency).toLowerCase();
-        return u.includes("high") || u.includes("haute");
-      });
-    }
-
+    // Filtre catégorie
     if (category !== "all") {
       const c = category.toLowerCase();
       arr = arr.filter((e) => safeStr(e.category).toLowerCase() === c);
     }
 
+    // Recherche texte
     if (query.trim()) {
       const q = query.trim().toLowerCase();
       arr = arr.filter((e) => {
         const subject = safeStr(e.subject).toLowerCase();
-        const from = safeStr(
-          e.from || e.from_email || e.sender_email
-        ).toLowerCase();
+        const from = safeStr(e.from || e.from_email || e.sender_email).toLowerCase();
         const cat = safeStr(e.category).toLowerCase();
-        return (
-          subject.includes(q) ||
-          from.includes(q) ||
-          cat.includes(q)
-        );
+        return subject.includes(q) || from.includes(q) || cat.includes(q);
       });
     }
 
+    // Priorité : haute/moyenne/basse (comportement "filtre")
+    if (sortMode === "prio_high" || sortMode === "prio_medium" || sortMode === "prio_low") {
+      const wanted =
+        sortMode === "prio_high" ? "high" : sortMode === "prio_medium" ? "medium" : "low";
+      arr = arr.filter((e) => getUrgencyLevel(e.urgency) === wanted);
+
+      // tri "plus récents" dans ce mode
+      arr.sort((a, b) => {
+        const da = new Date(a.received_at || a.date || a.created_at || 0).getTime();
+        const db = new Date(b.received_at || b.date || b.created_at || 0).getTime();
+        return db - da;
+      });
+
+      return arr;
+    }
+
+    // Tri chrono global
     arr.sort((a, b) => {
-      const da = new Date(
-        a.received_at || a.date || a.created_at || 0
-      ).getTime();
-      const db = new Date(
-        b.received_at || b.date || b.created_at || 0
-      ).getTime();
-      return sort === "oldest" ? da - db : db - da;
+      const da = new Date(a.received_at || a.date || a.created_at || 0).getTime();
+      const db = new Date(b.received_at || b.date || b.created_at || 0).getTime();
+      return sortMode === "oldest" ? da - db : db - da; // recent par défaut
     });
 
     return arr;
-  }, [items, filter, category, sort, query]);
+  }, [items, category, sortMode, query]);
 
   const selectedFromList = useMemo(() => {
     if (!selectedId) return null;
-    return (
-      filtered.find(
-        (x) => String(x.id) === String(selectedId)
-      ) || null
-    );
+    return filtered.find((x) => String(x.id) === String(selectedId)) || null;
   }, [filtered, selectedId]);
 
   // Champs IA / méta
-  const summary = safeStr(
-    selected?.summary || selectedFromList?.summary
-  );
-  const suggestedResponse = safeStr(
-    selected?.suggested_response_text
-  );
-  const isDevis = !!selected?.is_devis;
-
-  // flag "déjà répondu"
-  const hasReplied = !!(
-    selected?.reply_sent || selectedFromList?.reply_sent
-  );
+  const summary = safeStr(selected?.summary || selectedFromList?.summary);
+  const suggestedResponse = safeStr(selected?.suggested_response_text);
+  const hasReplied = !!(selected?.reply_sent || selectedFromList?.reply_sent);
 
   const fromLabel = safeStr(
     selected?.from ||
@@ -342,17 +340,13 @@ export default function EmailHistory() {
       selectedFromList?.sender_email
   );
 
-  const categoryLabel = safeStr(
-    selected?.category || selectedFromList?.category || "—"
-  );
+  const categoryLabel = safeStr(selected?.category || selectedFromList?.category || "—");
 
   const receivedLabel = selected?.received_at
     ? safeStr(selected.received_at)
     : formatDateShort(selectedFromList);
 
-  const titleLabel = safeStr(
-    selected?.subject || selectedFromList?.subject || "Email"
-  );
+  const titleLabel = safeStr(selected?.subject || selectedFromList?.subject || "Email");
 
   /* ==========================
      Actions : envoyer / supprimer
@@ -364,12 +358,7 @@ export default function EmailHistory() {
     const target = selected || selectedFromList;
     if (!target) return;
 
-    const toEmail =
-      target.sender_email ||
-      target.from_email ||
-      target.from ||
-      "";
-
+    const toEmail = target.sender_email || target.from_email || target.from || "";
     const subject = `Re: ${target.subject || titleLabel}`;
 
     setSending(true);
@@ -379,9 +368,7 @@ export default function EmailHistory() {
     try {
       const res = await authFetch("/email/send", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to_email: toEmail,
           subject,
@@ -393,52 +380,34 @@ export default function EmailHistory() {
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         if (res.status === 409) {
-          setActionError(
-            "Une réponse a déjà été envoyée pour cet email."
-          );
+          setActionError("Une réponse a déjà été envoyée pour cet email.");
           setActionSuccess("");
           return;
         }
-        throw new Error(
-          `Status ${res.status}${txt ? " - " + txt : ""}`
-        );
+        throw new Error(`Status ${res.status}${txt ? " - " + txt : ""}`);
       }
 
-      // ✅ Succès
       setActionSuccess("Réponse envoyée avec succès ✅");
       setActionError("");
 
-      // ✅ Mettre à jour localement le flag reply_sent pour griser le bouton
+      // update local (grise le bouton)
       const nowIso = new Date().toISOString();
-
       setSelected((prev) =>
-        prev
-          ? {
-              ...prev,
-              reply_sent: true,
-              reply_sent_at: nowIso,
-            }
-          : prev
+        prev ? { ...prev, reply_sent: true, reply_sent_at: nowIso } : prev
       );
 
       setItems((prev) =>
         prev.map((e) =>
           String(e.id) === String(selectedId)
-            ? {
-                ...e,
-                reply_sent: true,
-                reply_sent_at: nowIso,
-              }
+            ? { ...e, reply_sent: true, reply_sent_at: nowIso }
             : e
         )
       );
     } catch (e) {
       console.error(e);
-      if (!actionError) {
-        setActionError(
-          "Impossible d’envoyer la réponse (vérifie POST /email/send côté backend)."
-        );
-      }
+      setActionError(
+        "Impossible d’envoyer la réponse (vérifie POST /email/send côté backend)."
+      );
       setActionSuccess("");
     } finally {
       setSending(false);
@@ -447,9 +416,7 @@ export default function EmailHistory() {
 
   async function handleDeleteEmail() {
     if (!selectedId) return;
-    const confirmDelete = window.confirm(
-      "Supprimer cet email de la liste ?"
-    );
+    const confirmDelete = window.confirm("Supprimer cet email de la liste ?");
     if (!confirmDelete) return;
 
     setDeleting(true);
@@ -457,10 +424,7 @@ export default function EmailHistory() {
     setActionSuccess("");
 
     try {
-      const res = await authFetch(`/email/history/${selectedId}`, {
-        method: "DELETE",
-      });
-
+      const res = await authFetch(`/email/history/${selectedId}`, { method: "DELETE" });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
@@ -470,17 +434,11 @@ export default function EmailHistory() {
         );
       }
 
-      // Retirer localement de la liste
-      setItems((prev) =>
-        prev.filter(
-          (e) => String(e.id) !== String(selectedId)
-        )
-      );
+      setItems((prev) => prev.filter((e) => String(e.id) !== String(selectedId)));
       setSelectedId(null);
       setSelected(null);
       setEmailIdInUrl(null);
 
-      // ✅ Message de succès visible même sans email sélectionné
       setActionSuccess("Email supprimé avec succès ✅");
       setActionError("");
     } catch (e) {
@@ -504,7 +462,7 @@ export default function EmailHistory() {
           </p>
         </div>
 
-              <div className="toolbar">
+        <div className="toolbar">
           <input
             className="input"
             placeholder="Rechercher… (objet, expéditeur, catégorie)"
@@ -512,17 +470,7 @@ export default function EmailHistory() {
             onChange={(e) => setQuery(e.target.value)}
           />
 
-          {/* Filtre simple : urgence */}
-          <select
-            className="select"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          >
-            <option value="all">Filtre : Tout</option>
-            <option value="high_urgency">Urgence haute</option>
-          </select>
-
-          {/* 🔎 Nouveau : filtre par catégorie */}
+          {/* Type de message (Catégorie) */}
           <select
             className="select"
             value={category}
@@ -531,11 +479,8 @@ export default function EmailHistory() {
               setCategory(nextCat);
 
               const next = new URLSearchParams(searchParams);
-              if (nextCat === "all") {
-                next.delete("category");
-              } else {
-                next.set("category", nextCat);
-              }
+              if (nextCat === "all") next.delete("category");
+              else next.set("category", nextCat);
               setSearchParams(next, { replace: true });
             }}
           >
@@ -546,47 +491,45 @@ export default function EmailHistory() {
             ))}
           </select>
 
-          {/* Tri chronologique */}
+          {/* Tri / Priorité */}
           <select
             className="select"
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value)}
+            title="Tri / Priorité"
           >
             <option value="recent">Tri : plus récents</option>
             <option value="oldest">Tri : plus anciens</option>
+            <option disabled>────────────</option>
+            <option value="prio_high">Priorité : haute</option>
+            <option value="prio_medium">Priorité : moyenne</option>
+            <option value="prio_low">Priorité : basse</option>
           </select>
 
-          {/* Bouton refresh */}
-          <button
-            className="btn"
-            onClick={loadHistory}
-            disabled={loading}
-          >
+          <button className="btn" onClick={loadHistory} disabled={loading}>
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
-          {/* Reset de la catégorie si elle vient de l’URL */}
-          {searchParams.get("category") && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.delete("category");
-                setSearchParams(next, { replace: true });
-                setCategory("all");
-              }}
-            >
-              Retirer la catégorie
-            </button>
-          )}
+          {/* mini reset */}
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setQuery("");
+              setSortMode("recent");
+              setCategory("all");
+              const next = new URLSearchParams(searchParams);
+              next.delete("category");
+              setSearchParams(next, { replace: true });
+            }}
+            title="Réinitialiser filtres"
+          >
+            Reset
+          </button>
         </div>
       </div>
 
-
       {loading ? (
-        <div className="muted">
-          Chargement de l’historique…
-        </div>
+        <div className="muted">Chargement de l’historique…</div>
       ) : filtered.length === 0 ? (
         <div className="muted">Aucun email trouvé.</div>
       ) : (
@@ -595,23 +538,18 @@ export default function EmailHistory() {
           <div className="card eh-panel">
             <div className="card-header">
               <h2 className="card-title">Liste</h2>
-              <span className="badge">
-                {filtered.length}
-              </span>
+              <span className="badge">{filtered.length}</span>
             </div>
 
             <div className="eh-list">
               {filtered.map((e) => {
-                const active =
-                  String(e.id) === String(selectedId);
-                const urg = safeStr(e.urgency).toLowerCase();
+                const active = String(e.id) === String(selectedId);
+                const lvl = getUrgencyLevel(e.urgency);
 
                 const pill =
-                  urg.includes("high") ||
-                  urg.includes("haute")
+                  lvl === "high"
                     ? "eh-pill eh-pill-high"
-                    : urg.includes("medium") ||
-                      urg.includes("moy")
+                    : lvl === "medium"
                     ? "eh-pill eh-pill-medium"
                     : "eh-pill eh-pill-none";
 
@@ -619,21 +557,15 @@ export default function EmailHistory() {
                   <button
                     key={e.id}
                     type="button"
-                    className={`eh-item ${
-                      active ? "is-active" : ""
-                    }`}
+                    className={`eh-item ${active ? "is-active" : ""}`}
                     onClick={() => onClickItem(e.id)}
                     title="Ouvrir"
                   >
                     <div className="eh-item-top">
                       <span className={pill}>
-                        {safeStr(
-                          e.urgency
-                        ).toUpperCase() || "—"}
+                        {safeStr(e.urgency).toUpperCase() || "—"}
                       </span>
-                      <span className="eh-date">
-                        {formatDateShort(e)}
-                      </span>
+                      <span className="eh-date">{formatDateShort(e)}</span>
                     </div>
 
                     <div className="eh-subject">
@@ -642,21 +574,13 @@ export default function EmailHistory() {
 
                     <div className="eh-meta">
                       <span className="eh-from">
-                        {e.from ||
-                          e.from_email ||
-                          e.sender_email ||
-                          "—"}
+                        {e.from || e.from_email || e.sender_email || "—"}
                       </span>
                       <span className="eh-dot">•</span>
                       <span className="eh-cat">
                         <span
                           className="eh-cat-dot"
-                          style={{
-                            backgroundColor:
-                              getCategoryColor(
-                                e.category
-                              ),
-                          }}
+                          style={{ backgroundColor: getCategoryColor(e.category) }}
                         />
                         {e.category || "—"}
                       </span>
@@ -670,22 +594,16 @@ export default function EmailHistory() {
           {/* PREVIEW */}
           <div className="card eh-panel">
             <div className="card-header">
-              <h2 className="card-title">
-                Prévisualisation
-              </h2>
+              <h2 className="card-title">Prévisualisation</h2>
 
               {!!selectedId && (
                 <div className="row">
                   <button
                     className="btn btn-ghost"
-                    onClick={() =>
-                      setShowRaw((v) => !v)
-                    }
+                    onClick={() => setShowRaw((v) => !v)}
                     title="Afficher/Masquer l'email brut"
                   >
-                    {showRaw
-                      ? "Masquer le brut"
-                      : "Afficher le brut"}
+                    {showRaw ? "Masquer le brut" : "Afficher le brut"}
                   </button>
 
                   <button
@@ -704,41 +622,29 @@ export default function EmailHistory() {
               )}
             </div>
 
-            {/* 🔹 Alertes toujours visibles, même si aucun email n'est sélectionné */}
+            {/* Alertes */}
             {actionSuccess && (
-              <div className="alert alert-success">
-                {actionSuccess}
-              </div>
+              <div className="alert alert-success">{actionSuccess}</div>
             )}
-
             {actionError && (
-              <div className="alert alert-error">
-                {actionError}
-              </div>
+              <div className="alert alert-error">{actionError}</div>
             )}
 
             {!selectedId ? (
               <div className="eh-empty">
-                <div className="eh-empty-title">
-                  Sélectionne un email
-                </div>
+                <div className="eh-empty-title">Sélectionne un email</div>
                 <div className="muted">
-                  Clique à gauche pour afficher le
-                  contenu ici.
+                  Clique à gauche pour afficher le contenu ici.
                 </div>
               </div>
             ) : detailLoading ? (
               <div className="eh-empty">
-                <div className="muted">
-                  Chargement de l’email…
-                </div>
+                <div className="muted">Chargement de l’email…</div>
               </div>
             ) : (
               <>
                 <div className="eh-preview-header">
-                  <div className="eh-preview-title">
-                    {titleLabel}
-                  </div>
+                  <div className="eh-preview-title">{titleLabel}</div>
 
                   <div className="eh-preview-sub muted">
                     <span>{fromLabel}</span>
@@ -747,10 +653,7 @@ export default function EmailHistory() {
                       <span
                         className="eh-cat-dot"
                         style={{
-                          backgroundColor:
-                            getCategoryColor(
-                              categoryLabel
-                            ),
+                          backgroundColor: getCategoryColor(categoryLabel),
                         }}
                       />
                       {categoryLabel}
@@ -760,10 +663,7 @@ export default function EmailHistory() {
                   </div>
 
                   {hasReplied && (
-                    <span
-                      className="badge badge-success"
-                      style={{ marginTop: 8 }}
-                    >
+                    <span className="badge badge-success" style={{ marginTop: 8 }}>
                       Réponse envoyée
                     </span>
                   )}
@@ -773,15 +673,10 @@ export default function EmailHistory() {
                 {summary && (
                   <div
                     className="card"
-                    style={{
-                      marginBottom: 12,
-                      padding: 12,
-                    }}
+                    style={{ marginBottom: 12, padding: 12 }}
                   >
                     <div className="card-header">
-                      <h3 className="card-title">
-                        Résumé IA
-                      </h3>
+                      <h3 className="card-title">Résumé IA</h3>
                     </div>
                     <div
                       className="muted"
@@ -796,23 +691,16 @@ export default function EmailHistory() {
                 {suggestedResponse && (
                   <div
                     className="card"
-                    style={{
-                      marginBottom: 12,
-                      padding: 12,
-                    }}
+                    style={{ marginBottom: 12, padding: 12 }}
                   >
                     <div className="card-header">
-                      <h3 className="card-title">
-                        Réponse proposée
-                      </h3>
+                      <h3 className="card-title">Réponse proposée</h3>
                       <div className="row">
                         <button
                           type="button"
                           className="btn btn-primary"
                           onClick={handleSendSuggestedResponse}
-                          disabled={
-                            sending || deleting || hasReplied
-                          }
+                          disabled={sending || deleting || hasReplied}
                         >
                           {hasReplied
                             ? "Réponse déjà envoyée"
@@ -825,21 +713,14 @@ export default function EmailHistory() {
                           type="button"
                           className="btn btn-ghost"
                           onClick={handleDeleteEmail}
-                          disabled={
-                            sending || deleting
-                          }
+                          disabled={sending || deleting}
                         >
-                          {deleting
-                            ? "Suppression…"
-                            : "Supprimer de la liste"}
+                          {deleting ? "Suppression…" : "Supprimer de la liste"}
                         </button>
                       </div>
                     </div>
 
-                    <pre
-                      className="email-body"
-                      style={{ maxHeight: 220 }}
-                    >
+                    <pre className="email-body" style={{ maxHeight: 220 }}>
                       {suggestedResponse}
                     </pre>
                   </div>
@@ -849,13 +730,9 @@ export default function EmailHistory() {
                 {showRaw && (
                   <div className="eh-preview-body">
                     {selected?.bodyText ? (
-                      <pre className="email-body">
-                        {selected.bodyText}
-                      </pre>
+                      <pre className="email-body">{selected.bodyText}</pre>
                     ) : (
-                      <div className="muted">
-                        Pas de contenu texte
-                      </div>
+                      <div className="muted">Pas de contenu texte</div>
                     )}
                   </div>
                 )}
