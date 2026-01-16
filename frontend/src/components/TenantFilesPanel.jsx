@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText } from "lucide-react";
+import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText, Trash2 } from "lucide-react";
 
 export default function TenantFilesPanel({ authFetch }) {
   const [tenants, setTenants] = useState([]);
@@ -24,7 +24,6 @@ export default function TenantFilesPanel({ authFetch }) {
     setError("");
     setTenantsLoading(true);
     try {
-      // ✅ BON endpoint backend
       const res = await authFetch("/tenant-files");
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -48,7 +47,6 @@ export default function TenantFilesPanel({ authFetch }) {
     setError("");
     setTenantLoading(true);
     try {
-      // ✅ BON endpoint backend
       const res = await authFetch(`/tenant-files/${tenantId}`);
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -70,7 +68,6 @@ export default function TenantFilesPanel({ authFetch }) {
     setError("");
     setFilesLoading(true);
     try {
-      // ✅ endpoint existant chez toi
       const res = await authFetch("/api/files/history");
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -92,7 +89,6 @@ export default function TenantFilesPanel({ authFetch }) {
     setError("");
     setAttachLoading(true);
     try {
-      // ✅ BON endpoint backend (celui que tu avais)
       const res = await authFetch(
         `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
         { method: "POST" }
@@ -110,6 +106,81 @@ export default function TenantFilesPanel({ authFetch }) {
       setError(e?.message || "Erreur : impossible d'attacher le document.");
     } finally {
       setAttachLoading(false);
+    }
+  };
+
+  // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
+  const handleViewFile = async (fileId) => {
+    if (!authFetchOk || !fileId) return;
+    setError("");
+    try {
+      const res = await authFetch(`/api/files/view/${fileId}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible d'ouvrir le document");
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      // Note: on ne revoke pas tout de suite sinon certains navigateurs ferment l'onglet/preview
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de l'ouverture du document.");
+    }
+  };
+
+  // ✅ Télécharger (force download)
+  const handleDownloadFile = async (file) => {
+    if (!authFetchOk || !file?.id) return;
+    setError("");
+    try {
+      const res = await authFetch(`/api/files/download/${file.id}`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de télécharger le document");
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.filename || `document_${file.id}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors du téléchargement du document.");
+    }
+  };
+
+  // ✅ Supprimer définitivement le fichier (DB + disque côté API)
+  const handleDeleteFile = async (fileId) => {
+    if (!authFetchOk || !fileId) return;
+
+    const ok = window.confirm(
+      "Supprimer définitivement ce document ?\nIl sera retiré de l'historique et des dossiers."
+    );
+    if (!ok) return;
+
+    setError("");
+    try {
+      const res = await authFetch(`/api/files/${fileId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de supprimer le document");
+      }
+
+      // refresh: historique + dossier ouvert
+      await fetchFilesHistory();
+      if (selectedTenantId) await fetchTenantDetail(selectedTenantId);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de la suppression du document.");
     }
   };
 
@@ -216,11 +287,7 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-item-sub">
                       <span>{t.candidate_email || "-"}</span>
                       {t.status && (
-                        <span
-                          className={`tf-status ${
-                            t.status === "complete" ? "complete" : "incomplete"
-                          }`}
-                        >
+                        <span className={`tf-status ${t.status === "complete" ? "complete" : "incomplete"}`}>
                           {t.status}
                         </span>
                       )}
@@ -247,22 +314,21 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-k">Email candidat</div>
                     <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
                   </div>
+
                   <div>
-                  <div className="tf-k">Statut</div>
-                  <div className="tf-v">
-                    {tenantDetail.status ? (
-                      <span
-                        className={`tf-status ${
-                          tenantDetail.status === "complete" ? "complete" : "incomplete"
-                        }`}
-                      >
-                        {tenantDetail.status}
-                      </span>
-                    ) : (
-                      "-"
-                    )}
+                    <div className="tf-k">Statut</div>
+                    <div className="tf-v">
+                      {tenantDetail.status ? (
+                        <span
+                          className={`tf-status ${tenantDetail.status === "complete" ? "complete" : "incomplete"}`}
+                        >
+                          {tenantDetail.status}
+                        </span>
+                      ) : (
+                        "-"
+                      )}
+                    </div>
                   </div>
-                </div>
 
                   <div>
                     <div className="tf-k">Documents liés</div>
@@ -331,14 +397,29 @@ export default function TenantFilesPanel({ authFetch }) {
                     </div>
 
                     <div className="tf-file-actions">
-                      <a className="tf-btn tf-btn-ghost" href={`/docs/${f.id}`} title="Voir">
+                      <button
+                        type="button"
+                        className="tf-btn tf-btn-ghost"
+                        onClick={() => handleViewFile(f.id)}
+                      >
                         <Eye size={16} /> Voir
-                      </a>
-                      {!!f.download_url && (
-                        <a className="tf-btn tf-btn-ghost" href={f.download_url} target="_blank" rel="noreferrer">
-                          <Download size={16} /> Download
-                        </a>
-                      )}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="tf-btn tf-btn-ghost"
+                        onClick={() => handleDownloadFile(f)}
+                      >
+                        <Download size={16} /> Télécharger
+                      </button>
+
+                      <button
+                        type="button"
+                        className="tf-btn tf-btn-danger"
+                        onClick={() => handleDeleteFile(f.id)}
+                      >
+                        <Trash2 size={16} /> Supprimer
+                      </button>
                     </div>
                   </div>
                 ))}
