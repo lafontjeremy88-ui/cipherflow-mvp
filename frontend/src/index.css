@@ -366,6 +366,30 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   flex-wrap:wrap;
 }
 
+/* Toolbar: overrides des inputs globaux (sinon ils prennent 100% de largeur) */
+.email-history .toolbar .input{
+  width: 420px;
+  max-width: 100%;
+  margin-bottom: 0;
+}
+
+.email-history .toolbar .select{
+  width: auto;
+  min-width: 220px;
+  margin-bottom: 0;
+}
+
+.email-history .toolbar .btn{
+  margin-bottom: 0;
+}
+
+/* Sur écran étroit : on laisse wrap, mais propre */
+@media (max-width: 900px){
+  .email-history .toolbar .input{ width: 100%; }
+  .email-history .toolbar .select{ width: 100%; min-width: 0; }
+}
+
+
 .select{
   height: 42px;
   padding: 10px 12px;
@@ -409,6 +433,8 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   padding: 12px;
   cursor:pointer;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  color: var(--text);
+  font-family: inherit;
 }
 
 .eh-item:hover{
@@ -456,11 +482,16 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 }
 
 .eh-cat-dot{
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-}
 
+  /* le vrai “premium” + visibilité */
+  border: 1px solid rgba(255,255,255,0.22);
+  box-shadow:
+    0 0 0 3px rgba(0,0,0,0.25),
+    0 0 14px rgba(255,255,255,0.06);
+}
 .eh-dot{ opacity: 0.6; }
 
 .eh-pill{
