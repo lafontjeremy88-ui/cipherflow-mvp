@@ -126,6 +126,7 @@ const CATEGORY_COLORS = {
   Publicité_Marketing: "#64748b",
   Spam: "#ef4444",
 };
+const CATEGORY_OPTIONS = ["all", ...Object.keys(CATEGORY_COLORS)];
 
 function getCategoryColor(name) {
   if (!name) return "#64748b";
@@ -503,7 +504,7 @@ export default function EmailHistory() {
           </p>
         </div>
 
-        <div className="toolbar">
+              <div className="toolbar">
           <input
             className="input"
             placeholder="Rechercher… (objet, expéditeur, catégorie)"
@@ -511,28 +512,51 @@ export default function EmailHistory() {
             onChange={(e) => setQuery(e.target.value)}
           />
 
+          {/* Filtre simple : urgence */}
           <select
             className="select"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           >
             <option value="all">Filtre : Tout</option>
-            <option value="high_urgency">
-              Urgence haute
-            </option>
+            <option value="high_urgency">Urgence haute</option>
           </select>
 
+          {/* 🔎 Nouveau : filtre par catégorie */}
+          <select
+            className="select"
+            value={category}
+            onChange={(e) => {
+              const nextCat = e.target.value;
+              setCategory(nextCat);
+
+              const next = new URLSearchParams(searchParams);
+              if (nextCat === "all") {
+                next.delete("category");
+              } else {
+                next.set("category", nextCat);
+              }
+              setSearchParams(next, { replace: true });
+            }}
+          >
+            {CATEGORY_OPTIONS.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat === "all" ? "Catégorie : Toutes" : cat}
+              </option>
+            ))}
+          </select>
+
+          {/* Tri chronologique */}
           <select
             className="select"
             value={sort}
             onChange={(e) => setSort(e.target.value)}
           >
             <option value="recent">Tri : plus récents</option>
-            <option value="oldest">
-              Tri : plus anciens
-            </option>
+            <option value="oldest">Tri : plus anciens</option>
           </select>
 
+          {/* Bouton refresh */}
           <button
             className="btn"
             onClick={loadHistory}
@@ -541,14 +565,15 @@ export default function EmailHistory() {
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
+          {/* Reset de la catégorie si elle vient de l’URL */}
           {searchParams.get("category") && (
             <button
               className="btn btn-ghost"
               onClick={() => {
-                const next =
-                  new URLSearchParams(searchParams);
+                const next = new URLSearchParams(searchParams);
                 next.delete("category");
                 setSearchParams(next, { replace: true });
+                setCategory("all");
               }}
             >
               Retirer la catégorie
@@ -556,6 +581,7 @@ export default function EmailHistory() {
           )}
         </div>
       </div>
+
 
       {loading ? (
         <div className="muted">

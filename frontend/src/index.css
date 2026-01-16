@@ -457,7 +457,8 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   gap:10px;
   margin-top: 8px;
   max-height: 520px;
-  overflow:auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 6px;
 }
 
