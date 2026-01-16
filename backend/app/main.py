@@ -1330,13 +1330,33 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
 
 
 @app.delete("/email/history/{email_id}")
-async def delete_history(email_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    item = db.query(EmailAnalysis).filter(EmailAnalysis.id == email_id, EmailAnalysis.agency_id == current_user.agency_id).first()
+async def delete_history(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Supprime un enregistrement d'historique d'email pour l'agence courante.
+    """
+    item = (
+        db.query(EmailAnalysis)
+        .filter(
+            EmailAnalysis.id == email_id,
+            EmailAnalysis.agency_id == current_user.agency_id,
+        )
+        .first()
+    )
+
     if not item:
-        raise HTTPException(status_code=404, detail="Introuvable ou accès refusé")
+        raise HTTPException(
+            status_code=404,
+            detail="Introuvable ou accès refusé",
+        )
+
     db.delete(item)
     db.commit()
     return {"status": "deleted"}
+
 
 @app.get("/settings")
 async def get_settings_route(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
