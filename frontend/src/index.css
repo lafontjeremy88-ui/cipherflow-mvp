@@ -383,6 +383,21 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   width:100%;
 }
 
+/* Panneaux Email History = colonnes flex pour mieux remplir la hauteur */
+.eh-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+/* État vide / chargement : centré dans le panneau */
+.eh-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+
 /* Toolbar: overrides des inputs globaux (sinon ils prennent 100% de largeur) */
 .email-history .toolbar .input{
   width: 420px;
@@ -454,16 +469,19 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   border-radius: 14px;
   padding: 12px;
   cursor:pointer;
-  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   color: var(--text);
   font-family: inherit;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.25);
 }
 
 .eh-item:hover{
   background: rgba(255,255,255,0.06);
   border-color: rgba(148,163,184,0.18);
   transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
 }
+
 
 .eh-item.is-active{
   border-color: rgba(139,92,246,0.45);
@@ -581,12 +599,12 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  background: rgba(0,0,0,0.18);
+  font-size: 0.95rem;          /* + léger boost */
+  line-height: 1.55;           /* + d'air */
+  background: rgba(0,0,0,0.16);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 12px;
+  padding: 14px 16px;
   margin: 0;
   max-height: 420px;
   overflow:auto;
