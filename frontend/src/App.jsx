@@ -27,7 +27,7 @@ import ResetPassword from "./pages/ResetPassword";
 
 // ✅ NOUVEL ONGLET : Analyse Email
 import EmailProcessor from "./pages/EmailProcessor";
-//essai
+
 // -----------------------------
 // Config
 // -----------------------------
@@ -112,7 +112,6 @@ function AppShell({ authFetch, onLogout }) {
             Mon compte
           </NavLink>
 
-
           <NavLink to="/settings" className={navItemClass}>
             Paramètres
           </NavLink>
@@ -131,19 +130,20 @@ function AppShell({ authFetch, onLogout }) {
         </nav>
       </aside>
 
-      <main className="content">
+      {/* 🔥 ICI : on utilise main-content qui a le layout plein écran */}
+      <main className="main-content">
         <Routes>
           <Route
             path="/dashboard"
             element={<Dashboard authFetch={authFetch} />}
           />
-         
+
           <Route
             path="/emails/history"
             element={<EmailHistory authFetch={authFetch} />}
           />
 
-          {/* ✅ AJOUT : route analyse email */}
+          {/* ✅ route analyse email */}
           <Route
             path="/emails/analyze"
             element={<EmailProcessor authFetch={authFetch} />}
@@ -168,11 +168,11 @@ function AppShell({ authFetch, onLogout }) {
             path="/settings"
             element={<SettingsPanel authFetch={authFetch} />}
           />
+
           <Route
             path="/account"
             element={<AccountPage authFetch={authFetch} />}
           />
-
 
           {/* fallback interne */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -192,11 +192,6 @@ function AppInner() {
   const [accessToken, setAccessToken] = useState(getStoredAccessToken());
   const isAuthed = !!accessToken;
 
-  // ---------------------
-  // authFetch : centralise TOUS les appels backend
-  // - ajoute Authorization
-  // - refresh si 401
-  // ---------------------
   const authFetch = useMemo(() => {
     return async (path, options = {}) => {
       const url = String(path || "").startsWith("http")
@@ -205,10 +200,12 @@ function AppInner() {
 
       const headers = new Headers(options.headers || {});
 
-      // Mets Content-Type JSON uniquement si pas FormData
       const isFormData = options.body instanceof FormData;
       if (!isFormData) {
-        headers.set("Content-Type", headers.get("Content-Type") || "application/json");
+        headers.set(
+          "Content-Type",
+          headers.get("Content-Type") || "application/json"
+        );
       }
 
       const token = getStoredAccessToken();
@@ -218,13 +215,12 @@ function AppInner() {
         return fetch(url, {
           ...options,
           headers,
-          credentials: "include", // utile si refresh token en cookie
+          credentials: "include",
         });
       };
 
       let res = await doFetch();
 
-      // Refresh automatique sur 401
       if (res.status === 401) {
         try {
           const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
@@ -238,8 +234,6 @@ function AppInner() {
             if (newToken) {
               setStoredAccessToken(newToken);
               setAccessToken(newToken);
-
-              // retry avec nouveau token
               headers.set("Authorization", `Bearer ${newToken}`);
               res = await doFetch();
             }
@@ -253,7 +247,6 @@ function AppInner() {
     };
   }, []);
 
-  // Sync si token change ailleurs
   useEffect(() => {
     const onStorage = () => setAccessToken(getStoredAccessToken());
     window.addEventListener("storage", onStorage);
@@ -271,9 +264,15 @@ function AppInner() {
     navigate("/dashboard", { replace: true });
   };
 
-  // Si on tente d’accéder à une route protégée sans auth, on renvoie au login
   useEffect(() => {
-   const publicPaths = ["/login", "/register", "/oauth/callback", "/verify-email", "/forgot-password", "/reset-password",];
+    const publicPaths = [
+      "/login",
+      "/register",
+      "/oauth/callback",
+      "/verify-email",
+      "/forgot-password",
+      "/reset-password",
+    ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
@@ -299,15 +298,26 @@ function AppInner() {
           isAuthed ? <Navigate to="/dashboard" replace /> : <Register />
         }
       />
+
       <Route
         path="/forgot-password"
-        element={isAuthed ? <Navigate to="/dashboard" replace /> : <ForgotPassword />
+        element={
+          isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <ForgotPassword />
+          )
         }
       />
 
       <Route
         path="/reset-password"
-        element={isAuthed ? <Navigate to="/dashboard" replace /> : <ResetPassword />
+        element={
+          isAuthed ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <ResetPassword />
+          )
         }
       />
 
@@ -315,11 +325,8 @@ function AppInner() {
         path="/oauth/callback"
         element={<OAuthCallback onDone={handleLoginSuccess} />}
       />
-      <Route
-            path="/verify-email"       
-            element={<VerifyEmail />}
-            />
 
+      <Route path="/verify-email" element={<VerifyEmail />} />
 
       {/* Protected shell */}
       <Route
