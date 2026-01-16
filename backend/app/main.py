@@ -1336,8 +1336,11 @@ async def delete_history(
     current_user: User = Depends(get_current_user_db),
 ):
     """
-    Supprime un enregistrement d'historique d'email pour l'agence courante.
+    Supprime un email d'historique + ses liens locataire (tenant_email_links)
+    pour l'agence courante.
     """
+
+    # 1) Vérifier que l'email appartient bien à l'agence
     item = (
         db.query(EmailAnalysis)
         .filter(
@@ -1353,9 +1356,17 @@ async def delete_history(
             detail="Introuvable ou accès refusé",
         )
 
+    # 2) Supprimer d'abord les liens enfants (tenant_email_links)
+    db.query(TenantEmailLink).filter(
+        TenantEmailLink.email_analysis_id == email_id
+    ).delete(synchronize_session=False)
+
+    # 3) Puis supprimer l'email lui-même
     db.delete(item)
     db.commit()
+
     return {"status": "deleted"}
+
 
 
 @app.get("/settings")
