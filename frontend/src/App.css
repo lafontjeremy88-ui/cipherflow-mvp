@@ -147,3 +147,9 @@
   max-width: 760px;
   opacity: 0.86;
 }
+.app-shell {
+  outline: 3px solid red;
+}
+.main-content {
+  outline: 3px solid lime;
+}
