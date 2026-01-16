@@ -366,6 +366,22 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   flex-wrap:wrap;
 }
 
+/* Email History — header centré comme le Dashboard */
+.email-history .page-header > div:first-child {
+  text-align: center;
+  margin: 0 auto 16px auto;
+}
+
+.email-history .page-header h1 {
+  margin-bottom: 6px;
+}
+
+.email-history .page-header .muted {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+
 /* Toolbar: overrides des inputs globaux (sinon ils prennent 100% de largeur) */
 .email-history .toolbar .input{
   width: 420px;
