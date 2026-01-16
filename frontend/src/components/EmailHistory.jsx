@@ -175,20 +175,39 @@ export default function EmailHistory() {
       const res = await authFetch(`/email/${emailId}`);
       const data = await res.json();
 
-      const raw = data?.raw_email_text || data?.raw || "";
+            const raw = data?.raw_email_text || data?.raw || "";
       const plain = extractMimePart(raw, "text/plain");
       const html = extractMimePart(raw, "text/html");
 
-      const bodyText = plain?.trim()
-        ? plain.trim()
-        : html?.trim()
-        ? htmlToText(html.trim())
-        : (data?.body || data?.snippet || "").toString();
+      let bodyText = "";
+
+      if (plain && plain.trim()) {
+        // Cas classique MIME text/plain
+        bodyText = plain.trim();
+      } else if (html && html.trim()) {
+        // Cas MIME HTML -> on le convertit en texte
+        bodyText = htmlToText(html.trim());
+      } else if (raw && raw.trim()) {
+        // ✅ Cas comme ton JSON actuel : raw_email_text déjà "lisible"
+        bodyText = raw.trim();
+      } else {
+        // Dernier fallback sur d'autres champs possibles
+        bodyText = (
+          data?.body_text ||
+          data?.bodyText ||
+          data?.text ||
+          data?.content ||
+          data?.body ||
+          data?.snippet ||
+          ""
+        ).toString();
+      }
 
       setSelected({
         ...data,
         bodyText,
       });
+
     } catch (e) {
       console.error(e);
       setSelected({ bodyText: "" });
