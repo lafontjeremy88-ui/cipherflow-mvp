@@ -427,7 +427,7 @@ export default function EmailHistory() {
                   >
                     <div className="eh-item-top">
                       <span className={pill}>
-                        safeStr(e.urgency).toUpperCase() || "—"
+                        {safeStr(e.urgency).toUpperCase() || "—"}
                       </span>
                       <span className="eh-date">{formatDateShort(e)}</span>
                     </div>
