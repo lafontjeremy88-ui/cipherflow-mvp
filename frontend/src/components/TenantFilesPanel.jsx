@@ -237,9 +237,22 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
                   </div>
                   <div>
-                    <div className="tf-k">Statut</div>
-                    <div className="tf-v">{tenantDetail.status || "-"}</div>
+                  <div className="tf-k">Statut</div>
+                  <div className="tf-v">
+                    {tenantDetail.status ? (
+                      <span
+                        className={`tf-status ${
+                          tenantDetail.status === "complete" ? "complete" : "incomplete"
+                        }`}
+                      >
+                        {tenantDetail.status}
+                      </span>
+                    ) : (
+                      "-"
+                    )}
                   </div>
+                </div>
+
                   <div>
                     <div className="tf-k">Documents liés</div>
                     <div className="tf-v">{linkedFileIds.length}</div>
