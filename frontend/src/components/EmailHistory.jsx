@@ -160,6 +160,7 @@ export default function EmailHistory() {
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
 
   const urlEmailId = searchParams.get("emailId");
   const urlFilter = searchParams.get("filter");
@@ -351,56 +352,58 @@ export default function EmailHistory() {
      ========================== */
 
     async function handleSendSuggestedResponse() {
-    if (!selectedId || !suggestedResponse) return;
+  if (!selectedId || !suggestedResponse) return;
 
-    // on prend les infos complètes de l’email courant
-    const target = selected || selectedFromList;
-    if (!target) return;
+  const target = selected || selectedFromList;
+  if (!target) return;
 
-    const toEmail =
-      target.sender_email ||
-      target.from_email ||
-      target.from ||
-      "";
+  const toEmail =
+    target.sender_email ||
+    target.from_email ||
+    target.from ||
+    "";
 
-    const subject = `Re: ${target.subject || titleLabel}`;
+  const subject = `Re: ${target.subject || titleLabel}`;
 
-    setSending(true);
-    setActionError("");
+  setSending(true);
+  setActionError("");
+  setActionSuccess("");
 
-    try {
-      const res = await authFetch("/email/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to_email: toEmail,
-          subject,
-          body: suggestedResponse,
-          email_id: Number(selectedId),
-        }),
-      });
+  try {
+    const res = await authFetch("/email/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to_email: toEmail,
+        subject,
+        body: suggestedResponse,
+        email_id: Number(selectedId),
+      }),
+    });
 
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(
-          `Status ${res.status} ${txt ? " - " + txt : ""}`
-        );
-      }
-
-      // ici tu peux plus tard déclencher un toast "Réponse envoyée ✅"
-      console.log("Réponse envoyée pour l’email", selectedId);
-      setActionError("");
-    } catch (e) {
-      console.error(e);
-      setActionError(
-        "Impossible d’envoyer la réponse (vérifie le endpoint POST /email/send côté backend)."
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(
+        `Status ${res.status}${txt ? " - " + txt : ""}`
       );
-    } finally {
-      setSending(false);
     }
+
+    // ✅ Succès
+    setActionSuccess("Réponse envoyée avec succès ✅");
+    setActionError("");
+  } catch (e) {
+    console.error(e);
+    setActionError(
+      "Impossible d’envoyer la réponse (vérifie POST /email/send côté backend)."
+    );
+    setActionSuccess("");
+  } finally {
+    setSending(false);
   }
+}
+
 
 
   async function handleDeleteEmail() {
