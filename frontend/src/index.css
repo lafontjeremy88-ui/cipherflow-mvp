@@ -938,7 +938,12 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .tf-item-sub {
   color: var(--text-secondary);
   font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
+
 
 /* bloc key/value des détails */
 .tf-kv {

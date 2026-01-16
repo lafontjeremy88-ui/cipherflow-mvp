@@ -212,8 +212,19 @@ export default function TenantFilesPanel({ authFetch }) {
                     onClick={() => setSelectedTenantId(t.id)}
                     type="button"
                   >
-                    <div className="tf-item-title">Dossier #{t.id} — {t.status || "?"}</div>
-                    <div className="tf-item-sub">{t.candidate_email || "-"}</div>
+                    <div className="tf-item-title">Dossier #{t.id}</div>
+                    <div className="tf-item-sub">
+                      <span>{t.candidate_email || "-"}</span>
+                      {t.status && (
+                        <span
+                          className={`tf-status ${
+                            t.status === "complete" ? "complete" : "incomplete"
+                          }`}
+                        >
+                          {t.status}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })}
