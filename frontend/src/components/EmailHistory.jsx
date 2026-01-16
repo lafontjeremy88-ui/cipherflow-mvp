@@ -478,8 +478,7 @@ export default function EmailHistory() {
       setSelectedId(null);
       setSelected(null);
       setEmailIdInUrl(null);
-
-      setActionSuccess("Email supprimé de l’historique.");
+      setActionSuccess("Email supprimé avec succès ✅");
       setActionError("");
     } catch (e) {
       console.error(e);
