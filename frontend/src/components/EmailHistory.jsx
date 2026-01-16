@@ -478,6 +478,8 @@ export default function EmailHistory() {
       setSelectedId(null);
       setSelected(null);
       setEmailIdInUrl(null);
+
+      // ✅ Message de succès visible même sans email sélectionné
       setActionSuccess("Email supprimé avec succès ✅");
       setActionError("");
     } catch (e) {
@@ -676,6 +678,19 @@ export default function EmailHistory() {
               )}
             </div>
 
+            {/* 🔹 Alertes toujours visibles, même si aucun email n'est sélectionné */}
+            {actionSuccess && (
+              <div className="alert alert-success">
+                {actionSuccess}
+              </div>
+            )}
+
+            {actionError && (
+              <div className="alert alert-error">
+                {actionError}
+              </div>
+            )}
+
             {!selectedId ? (
               <div className="eh-empty">
                 <div className="eh-empty-title">
@@ -727,19 +742,6 @@ export default function EmailHistory() {
                     </span>
                   )}
                 </div>
-
-                {/* Succès actions */}
-                {actionSuccess && (
-                  <div className="alert alert-success">
-                    {actionSuccess}
-                  </div>
-                )}
-                {/* Erreurs actions */}
-                {actionError && (
-                  <div className="alert alert-error">
-                    {actionError}
-                  </div>
-                )}
 
                 {/* Résumé IA */}
                 {summary && (
