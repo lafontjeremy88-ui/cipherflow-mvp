@@ -350,37 +350,58 @@ export default function EmailHistory() {
      Actions : envoyer / supprimer
      ========================== */
 
-  async function handleSendSuggestedResponse() {
+    async function handleSendSuggestedResponse() {
     if (!selectedId || !suggestedResponse) return;
+
+    // on prend les infos complètes de l’email courant
+    const target = selected || selectedFromList;
+    if (!target) return;
+
+    const toEmail =
+      target.sender_email ||
+      target.from_email ||
+      target.from ||
+      "";
+
+    const subject = `Re: ${target.subject || titleLabel}`;
+
     setSending(true);
     setActionError("");
 
     try {
-      const res = await authFetch(`/email/${selectedId}/reply`, {
+      const res = await authFetch("/email/send", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          to_email: toEmail,
+          subject,
           body: suggestedResponse,
+          email_id: Number(selectedId),
         }),
       });
 
       if (!res.ok) {
-        throw new Error("Reply endpoint returned " + res.status);
+        const txt = await res.text().catch(() => "");
+        throw new Error(
+          `Status ${res.status} ${txt ? " - " + txt : ""}`
+        );
       }
 
-      // tu peux rajouter un toast/notification ici si tu as un système
+      // ici tu peux plus tard déclencher un toast "Réponse envoyée ✅"
       console.log("Réponse envoyée pour l’email", selectedId);
+      setActionError("");
     } catch (e) {
       console.error(e);
       setActionError(
-        "Impossible d’envoyer la réponse (vérifie le endpoint /email/{id}/reply côté backend)."
+        "Impossible d’envoyer la réponse (vérifie le endpoint POST /email/send côté backend)."
       );
     } finally {
       setSending(false);
     }
   }
+
 
   async function handleDeleteEmail() {
     if (!selectedId) return;
