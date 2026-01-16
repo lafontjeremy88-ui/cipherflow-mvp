@@ -847,7 +847,7 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 /* Grille principale : liste à gauche, détails à droite */
 .tf-grid {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: 380px minmax(0, 1fr);
   gap: 18px;
   align-items: flex-start;
 }
@@ -894,8 +894,20 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   gap: 8px;
   max-height: 420px;
   overflow-y: auto;
+  overflow-x: hidden; /* ⛔ bloque le scroll horizontal */
   padding-right: 4px;
 }
+.tf-item-title,
+.tf-item-sub {
+  min-width: 0;              /* autorise le shrink */
+}
+
+.tf-item-sub span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;       /* coupe l’email proprement */
+}
+
 
 .tf-muted {
   color: var(--text-secondary);
