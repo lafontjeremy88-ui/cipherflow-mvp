@@ -366,10 +366,17 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   flex-wrap:wrap;
 }
 
-/* Email History — header centré comme le Dashboard */
-.email-history .page-header > div:first-child {
+/* Email History — header centré visuellement */
+.email-history .page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  margin: 0 auto 16px auto;
+}
+
+.email-history .page-header > div:first-child {
+  max-width: 720px;
+  margin-bottom: 20px;
 }
 
 .email-history .page-header h1 {
@@ -377,8 +384,13 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 }
 
 .email-history .page-header .muted {
-  max-width: 640px;
-  margin: 0 auto;
+  margin: 0;
+}
+
+/* Toolbar alignée sous le titre */
+.email-history .toolbar {
+  justify-content: center;
+  width: 100%;
 }
 
 
@@ -397,6 +409,12 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 
 .email-history .toolbar .btn{
   margin-bottom: 0;
+}
+
+/* Email History — layout full width comme le Dashboard */
+.email-history.page {
+  max-width: none;
+  width: 100%;
 }
 
 /* Sur écran étroit : on laisse wrap, mais propre */
