@@ -7,8 +7,8 @@ import { authFetch } from "../services/api";
  * ----------------
  * - GET /email/history?limit=50
  * - GET /email/{email_id}
- * - POST /email/{email_id}/reply (à brancher côté backend)
- * - DELETE /email/{email_id} (à brancher côté backend)
+ * - POST /email/send (avec email_id pour lier à l'historique)
+ * - DELETE /email/history/{email_id}
  */
 
 /* ==========================
@@ -237,6 +237,7 @@ export default function EmailHistory() {
     setEmailIdInUrl(id);
     setShowRaw(true);
     setActionError("");
+    setActionSuccess("");
   }
 
   // premier chargement
@@ -327,6 +328,11 @@ export default function EmailHistory() {
   );
   const isDevis = !!selected?.is_devis;
 
+  // flag "déjà répondu"
+  const hasReplied = !!(
+    selected?.reply_sent || selectedFromList?.reply_sent
+  );
+
   const fromLabel = safeStr(
     selected?.from ||
       selectedFromList?.from ||
@@ -351,60 +357,92 @@ export default function EmailHistory() {
      Actions : envoyer / supprimer
      ========================== */
 
-    async function handleSendSuggestedResponse() {
-  if (!selectedId || !suggestedResponse) return;
+  async function handleSendSuggestedResponse() {
+    if (!selectedId || !suggestedResponse) return;
 
-  const target = selected || selectedFromList;
-  if (!target) return;
+    const target = selected || selectedFromList;
+    if (!target) return;
 
-  const toEmail =
-    target.sender_email ||
-    target.from_email ||
-    target.from ||
-    "";
+    const toEmail =
+      target.sender_email ||
+      target.from_email ||
+      target.from ||
+      "";
 
-  const subject = `Re: ${target.subject || titleLabel}`;
+    const subject = `Re: ${target.subject || titleLabel}`;
 
-  setSending(true);
-  setActionError("");
-  setActionSuccess("");
-
-  try {
-    const res = await authFetch("/email/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        to_email: toEmail,
-        subject,
-        body: suggestedResponse,
-        email_id: Number(selectedId),
-      }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(
-        `Status ${res.status}${txt ? " - " + txt : ""}`
-      );
-    }
-
-    // ✅ Succès
-    setActionSuccess("Réponse envoyée avec succès ✅");
+    setSending(true);
     setActionError("");
-  } catch (e) {
-    console.error(e);
-    setActionError(
-      "Impossible d’envoyer la réponse (vérifie POST /email/send côté backend)."
-    );
     setActionSuccess("");
-  } finally {
-    setSending(false);
+
+    try {
+      const res = await authFetch("/email/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to_email: toEmail,
+          subject,
+          body: suggestedResponse,
+          email_id: Number(selectedId),
+        }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        if (res.status === 409) {
+          setActionError(
+            "Une réponse a déjà été envoyée pour cet email."
+          );
+          setActionSuccess("");
+          return;
+        }
+        throw new Error(
+          `Status ${res.status}${txt ? " - " + txt : ""}`
+        );
+      }
+
+      // ✅ Succès
+      setActionSuccess("Réponse envoyée avec succès ✅");
+      setActionError("");
+
+      // ✅ Mettre à jour localement le flag reply_sent pour griser le bouton
+      const nowIso = new Date().toISOString();
+
+      setSelected((prev) =>
+        prev
+          ? {
+              ...prev,
+              reply_sent: true,
+              reply_sent_at: nowIso,
+            }
+          : prev
+      );
+
+      setItems((prev) =>
+        prev.map((e) =>
+          String(e.id) === String(selectedId)
+            ? {
+                ...e,
+                reply_sent: true,
+                reply_sent_at: nowIso,
+              }
+            : e
+        )
+      );
+    } catch (e) {
+      console.error(e);
+      if (!actionError) {
+        setActionError(
+          "Impossible d’envoyer la réponse (vérifie POST /email/send côté backend)."
+        );
+      }
+      setActionSuccess("");
+    } finally {
+      setSending(false);
+    }
   }
-}
-
-
 
   async function handleDeleteEmail() {
     if (!selectedId) return;
@@ -415,15 +453,19 @@ export default function EmailHistory() {
 
     setDeleting(true);
     setActionError("");
+    setActionSuccess("");
 
     try {
-      const res = await authFetch(`/email/${selectedId}`, {
+      const res = await authFetch(`/email/history/${selectedId}`, {
         method: "DELETE",
       });
 
       if (!res.ok) {
+        const txt = await res.text().catch(() => "");
         throw new Error(
-          "Delete endpoint returned " + res.status
+          `DELETE /email/history/${selectedId} -> ${res.status}${
+            txt ? " - " + txt : ""
+          }`
         );
       }
 
@@ -436,11 +478,15 @@ export default function EmailHistory() {
       setSelectedId(null);
       setSelected(null);
       setEmailIdInUrl(null);
+
+      setActionSuccess("Email supprimé de l’historique.");
+      setActionError("");
     } catch (e) {
       console.error(e);
       setActionError(
-        "Impossible de supprimer l’email (vérifie le endpoint DELETE /email/{id} côté backend)."
+        "Impossible de supprimer l’email (vérifie le endpoint DELETE /email/history/{id} côté backend)."
       );
+      setActionSuccess("");
     } finally {
       setDeleting(false);
     }
@@ -622,6 +668,7 @@ export default function EmailHistory() {
                       setSelectedId(null);
                       setSelected(null);
                       setActionError("");
+                      setActionSuccess("");
                     }}
                   >
                     Fermer
@@ -672,22 +719,22 @@ export default function EmailHistory() {
                     <span>{receivedLabel}</span>
                   </div>
 
-                  <div
-                    className="row"
-                    style={{
-                      marginTop: 10,
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {isDevis && (
-                      <span className="badge badge-warn">
-                        Devis / Offre
-                      </span>
-                    )}
-                  </div>
+                  {hasReplied && (
+                    <span
+                      className="badge badge-success"
+                      style={{ marginTop: 8 }}
+                    >
+                      Réponse envoyée
+                    </span>
+                  )}
                 </div>
 
+                {/* Succès actions */}
+                {actionSuccess && (
+                  <div className="alert alert-success">
+                    {actionSuccess}
+                  </div>
+                )}
                 {/* Erreurs actions */}
                 {actionError && (
                   <div className="alert alert-error">
@@ -735,17 +782,18 @@ export default function EmailHistory() {
                         <button
                           type="button"
                           className="btn btn-primary"
-                          onClick={
-                            handleSendSuggestedResponse
-                          }
+                          onClick={handleSendSuggestedResponse}
                           disabled={
-                            sending || deleting
+                            sending || deleting || hasReplied
                           }
                         >
-                          {sending
+                          {hasReplied
+                            ? "Réponse déjà envoyée"
+                            : sending
                             ? "Envoi…"
                             : "Envoyer la réponse"}
                         </button>
+
                         <button
                           type="button"
                           className="btn btn-ghost"

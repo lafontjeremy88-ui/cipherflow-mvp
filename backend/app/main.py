@@ -485,6 +485,12 @@ class EmailHistoryItem(BaseModel):
     is_devis: bool
     raw_email_text: str
     suggested_response_text: str
+    reply_sent: bool = False
+    reply_sent_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 
 class EmailDetailResponse(BaseModel):
     id: int
@@ -497,13 +503,12 @@ class EmailDetailResponse(BaseModel):
     urgency: str
     is_devis: bool
     suggested_response_text: str
+    reply_sent: bool = False
+    reply_sent_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
-
-    class Config:
-        from_attributes = True
 
 class InvoiceItem(BaseModel):
     desc: str
@@ -1729,6 +1734,43 @@ async def download_file(
 
 
 @app.post("/email/send")
-async def send_mail_ep(req: SendEmailRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+async def send_mail_ep(
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    email = None
+
+    # 🛡️ Si on a un email_id, on vérifie droits + double envoi
+    if req.email_id is not None:
+        email = (
+            db.query(EmailAnalysis)
+            .filter(
+                EmailAnalysis.id == req.email_id,
+                EmailAnalysis.agency_id == current_user.agency_id,
+            )
+            .first()
+        )
+
+        if not email:
+            raise HTTPException(
+                status_code=404,
+                detail="Email introuvable ou accès refusé",
+            )
+
+        if email.reply_sent:
+            raise HTTPException(
+                status_code=409,
+                detail="Une réponse a déjà été envoyée pour cet email.",
+            )
+
+    # 📤 Envoi réel de l'email
     send_email_via_resend(req.to_email, req.subject, req.body)
+
+    # 📝 Marquer comme répondu si on a bien un email lié
+    if email is not None:
+        email.reply_sent = True
+        email.reply_sent_at = datetime.utcnow()
+        db.commit()
+
     return {"status": "sent"}

@@ -181,7 +181,8 @@ class EmailAnalysis(Base):
     suggested_response_text = Column(Text)
 
     raw_ai_output = Column(Text)
-
+    reply_sent = Column(Boolean, default=False)
+    reply_sent_at = Column(DateTime, nullable=False)
 
 class Invoice(Base):
     __tablename__ = "invoices"
