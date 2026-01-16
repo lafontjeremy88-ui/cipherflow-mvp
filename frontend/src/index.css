@@ -351,48 +351,37 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
    Email History (Pro++)
    ========================= */
 
+/* Header Email History centré + toolbar alignée */
 .email-history .page-header{
   display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:16px;
-  flex-wrap:wrap;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  gap:12px;
+  margin-bottom:18px;
 }
 
-.toolbar{
+.email-history .page-header > div:first-child{
+  max-width:720px;
+}
+
+.email-history .page-header h1{
+  margin-bottom:4px;
+}
+
+.email-history .page-header .muted{
+  margin:0;
+}
+
+/* Toolbar spécifique à Email History */
+.email-history .toolbar{
   display:flex;
   gap:10px;
   align-items:center;
   flex-wrap:wrap;
+  justify-content:center;
+  width:100%;
 }
-
-/* Email History — header centré visuellement */
-.email-history .page-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.email-history .page-header > div:first-child {
-  max-width: 720px;
-  margin-bottom: 20px;
-}
-
-.email-history .page-header h1 {
-  margin-bottom: 6px;
-}
-
-.email-history .page-header .muted {
-  margin: 0;
-}
-
-/* Toolbar alignée sous le titre */
-.email-history .toolbar {
-  justify-content: center;
-  width: 100%;
-}
-
 
 /* Toolbar: overrides des inputs globaux (sinon ils prennent 100% de largeur) */
 .email-history .toolbar .input{
@@ -422,7 +411,6 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   .email-history .toolbar .input{ width: 100%; }
   .email-history .toolbar .select{ width: 100%; min-width: 0; }
 }
-
 
 .select{
   height: 42px;
@@ -509,6 +497,7 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   color: var(--text-secondary);
   font-size: 0.9rem;
 }
+
 .eh-cat{
   display: inline-flex;
   align-items: center;
@@ -526,6 +515,7 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
     0 0 0 3px rgba(0,0,0,0.25),
     0 0 14px rgba(255,255,255,0.06);
 }
+
 .eh-dot{ opacity: 0.6; }
 
 .eh-pill{
@@ -673,7 +663,6 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   outline-offset: 2px;
 }
 
-
 .donut-swatch{
   width: 10px;
   height: 10px;
@@ -744,4 +733,3 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .recharts-sector {
   cursor: pointer;
 }
-
