@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi import Request
 
 from google import genai
 
@@ -1662,18 +1663,59 @@ async def analyze_file(
 async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
     return db.query(FileAnalysis).filter(FileAnalysis.agency_id == current_user.agency_id).order_by(FileAnalysis.id.desc()).all()
 
+@app.options("/api/files/{file_id}")
+async def options_files(file_id: int, request: Request):
+    """
+    Répond au preflight CORS pour DELETE /api/files/{file_id}.
+    """
+    origin = request.headers.get("origin", "")
+
+    resp = Response(status_code=204)
+    if origin:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+
+    resp.headers["Access-Control-Allow-Credentials"] = "true"
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Authorization,Content-Type"
+    return resp
+
 @app.delete("/api/files/{file_id}")
-async def delete_file(file_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    f = db.query(FileAnalysis).filter(FileAnalysis.id == file_id, FileAnalysis.agency_id == current_user.agency_id).first()
+async def delete_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    f = (
+        db.query(FileAnalysis)
+        .filter(
+            FileAnalysis.id == file_id,
+            FileAnalysis.agency_id == current_user.agency_id,
+        )
+        .first()
+    )
     if not f:
-        raise HTTPException(404, detail="Introuvable")
-    
+        raise HTTPException(status_code=404, detail="Introuvable")
+
+    # 1) Supprimer les liens vers les dossiers locataires (évite FK violation)
+    db.query(TenantDocumentLink).filter(
+        TenantDocumentLink.file_analysis_id == f.id
+    ).delete(synchronize_session=False)
+
+    # 2) Supprimer le fichier physique (si présent)
     path = os.path.join("uploads", f.filename)
     if os.path.exists(path):
-        os.remove(path)
+        try:
+            os.remove(path)
+        except OSError:
+            # on n'empêche pas la suppression DB si le fichier disque pose souci
+            pass
+
+    # 3) Supprimer la ligne FileAnalysis
     db.delete(f)
     db.commit()
+
     return {"status": "deleted"}
+
 
 # --- INVOICES (MULTI-AGENCE) ---
 @app.post("/api/generate-invoice")
