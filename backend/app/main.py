@@ -1228,6 +1228,14 @@ async def get_tenant_file(tenant_id: int, db: Session = Depends(get_db), current
     email_ids = [l.email_analysis_id for l in tf.email_links]
     file_ids = [l.file_analysis_id for l in tf.document_links]
 
+    # 🩹 Auto-fix des anciens dossiers incohérents :
+    # - 0 documents liés
+    # - mais un statut / checklist restés bloqués
+    if len(file_ids) == 0 and tf.checklist_json:
+        tf.checklist_json = None
+        tf.status = TenantFileStatus.NEW
+        db.commit()
+
     return TenantFileDetail(
         id=tf.id,
         status=tf.status.value if hasattr(tf.status, "value") else str(tf.status),
@@ -1240,6 +1248,7 @@ async def get_tenant_file(tenant_id: int, db: Session = Depends(get_db), current
         email_ids=email_ids,
         file_ids=file_ids
     )
+
 
 
 @app.post("/tenant-files/from-email/{email_id}", response_model=TenantFileDetail)
