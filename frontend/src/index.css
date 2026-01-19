@@ -1262,6 +1262,13 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   margin-bottom: 10px;
 }
 
+.tf-checklist-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+
 .tf-checklist-title {
   font-weight: 900;
   font-size: 0.95rem;
