@@ -99,7 +99,7 @@ export default function TenantFilesPanel({ authFetch }) {
 
       await fetchTenants(); // recharge la liste
       if (data?.id) {
-        setSelectedTenantId(data.id);   // auto-sélection
+        setSelectedTenantId(data.id); // auto-sélection
         await fetchTenantDetail(data.id);
       }
 
@@ -111,7 +111,6 @@ export default function TenantFilesPanel({ authFetch }) {
       setCreatingTenant(false);
     }
   };
-
 
   const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
@@ -361,10 +360,12 @@ export default function TenantFilesPanel({ authFetch }) {
     return null;
   }, [tenantDetail]);
 
-  const receivedDocs = Array.isArray(checklist?.received) ? checklist.received : [];
-  const missingDocs = Array.isArray(checklist?.missing) ? checklist.missing : [];
-
-
+  const receivedDocs = Array.isArray(checklist?.received)
+    ? checklist.received
+    : [];
+  const missingDocs = Array.isArray(checklist?.missing)
+    ? checklist.missing
+    : [];
 
   const linkedFiles = useMemo(() => {
     const set = new Set(linkedFileIds);
@@ -432,7 +433,7 @@ export default function TenantFilesPanel({ authFetch }) {
         </div>
       )}
 
-            <div className="tf-grid">
+      <div className="tf-grid">
         <div className="tf-card">
           <div className="tf-card-title">Locataires</div>
 
@@ -494,11 +495,11 @@ export default function TenantFilesPanel({ authFetch }) {
 
                       {t.status === "incomplete" && missingCount > 0 && (
                         <span className="tf-missing-count">
-                          {missingCount} pièce{missingCount > 1 ? "s" : ""} manquante
+                          {missingCount} pièce
+                          {missingCount > 1 ? "s" : ""} manquante
                           {missingCount > 1 ? "s" : ""}
                         </span>
                       )}
-
                     </div>
                   </button>
                 );
@@ -506,7 +507,6 @@ export default function TenantFilesPanel({ authFetch }) {
             </div>
           )}
         </div>
-
 
         <div className="tf-right">
           <div className="tf-card">
@@ -546,7 +546,6 @@ export default function TenantFilesPanel({ authFetch }) {
                       ) : (
                         "-"
                       )}
-
                     </div>
                   </div>
 
@@ -555,16 +554,30 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-v">{linkedFileIds.length}</div>
                   </div>
                 </div>
-                                {checklist && (
+
+                {checklist && (
                   <div className="tf-checklist">
                     <div className="tf-checklist-head">
-                      <div className="tf-checklist-title">Checklist du dossier</div>
+                      <div className="tf-checklist-header">
+                        <span>Checklist du dossier</span>
+
+                        {/* ✅ Correction MICRO-BUG 1 : missingDocs.length au lieu de missingCount */}
+                        {missingDocs.length > 0 && (
+                          <span className="tf-missing-badge">
+                            {missingDocs.length} manquante
+                            {missingDocs.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
                       <div className="tf-checklist-meta">
                         {missingDocs.length === 0 ? (
-                          <span className="tf-pill tf-pill-success">Complet</span>
+                          <span className="tf-pill tf-pill-success">
+                            Complet
+                          </span>
                         ) : (
                           <span className="tf-pill tf-pill-warning">
-                            {missingDocs.length} manquante{missingDocs.length > 1 ? "s" : ""}
+                            {missingDocs.length} manquante
+                            {missingDocs.length > 1 ? "s" : ""}
                           </span>
                         )}
                       </div>
@@ -574,11 +587,16 @@ export default function TenantFilesPanel({ authFetch }) {
                       <div className="tf-checklist-col">
                         <div className="tf-checklist-col-title">Reçues</div>
                         {receivedDocs.length === 0 ? (
-                          <div className="tf-muted">Aucune pièce reçue.</div>
+                          <div className="tf-muted">
+                            Aucune pièce reçue.
+                          </div>
                         ) : (
                           <div className="tf-badges">
                             {receivedDocs.map((d) => (
-                              <span className="tf-pill tf-pill-success" key={`rec-${d}`}>
+                              <span
+                                className="tf-pill tf-pill-success"
+                                key={`rec-${d}`}
+                              >
                                 ✅ {getDocLabel(d)}
                               </span>
                             ))}
@@ -587,13 +605,20 @@ export default function TenantFilesPanel({ authFetch }) {
                       </div>
 
                       <div className="tf-checklist-col">
-                        <div className="tf-checklist-col-title">Manquantes</div>
+                        <div className="tf-checklist-col-title">
+                          Manquantes
+                        </div>
                         {missingDocs.length === 0 ? (
-                          <div className="tf-muted">Aucune pièce manquante.</div>
+                          <div className="tf-muted">
+                            Aucune pièce manquante.
+                          </div>
                         ) : (
                           <div className="tf-badges">
                             {missingDocs.map((d) => (
-                              <span className="tf-pill tf-pill-danger" key={`mis-${d}`}>
+                              <span
+                                className="tf-pill tf-pill-danger"
+                                key={`mis-${d}`}
+                              >
                                 ❌ {getDocLabel(d)}
                               </span>
                             ))}
@@ -601,6 +626,14 @@ export default function TenantFilesPanel({ authFetch }) {
                         )}
                       </div>
                     </div>
+
+                    {/* ✅ Correction MICRO-BUG 2 :
+                        hint déplacé EN DEHORS de tf-checklist-grid */}
+                    {missingDocs.length > 0 && (
+                      <div className="tf-checklist-hint">
+                        Ajoute les pièces manquantes pour compléter le dossier.
+                      </div>
+                    )}
                   </div>
                 )}
 

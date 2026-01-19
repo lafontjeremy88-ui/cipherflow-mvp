@@ -1156,10 +1156,13 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 }
 
 .tf-status.incomplete {
-  background: rgba(239, 68, 68, 0.18);          /* rouge léger */
-  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
   color: #fecaca;
+  font-weight: 500;
+  opacity: 0.85;
 }
+
 
 .tf-status.new {
   border-color: rgba(129, 140, 248, 0.8);   /* indigo / violet, plus neutre */
