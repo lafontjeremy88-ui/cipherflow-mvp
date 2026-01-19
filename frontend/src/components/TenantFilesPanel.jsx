@@ -1,13 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  RefreshCw,
-  Eye,
-  Download,
-  Link2,
-  FolderOpen,
-  FileText,
-  Trash2,
-} from "lucide-react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText, Trash2, Upload } from "lucide-react";
 
 // Mapping des codes internes -> libellés lisibles
 const DOC_LABELS = {
@@ -18,6 +10,8 @@ const DOC_LABELS = {
   // rent_receipt: "Quittance de loyer",
   // guarantor_payslip: "Fiche de paie garant",
 };
+
+
 
 function getDocLabel(code) {
   return DOC_LABELS[code] || code;
@@ -36,6 +30,8 @@ export default function TenantFilesPanel({ authFetch }) {
 
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const uploadInputRef = useRef(null);
 
   const [error, setError] = useState("");
   const [confirmState, setConfirmState] = useState({
@@ -180,6 +176,46 @@ export default function TenantFilesPanel({ authFetch }) {
       setAttachLoading(false);
     }
   };
+
+  const handleUploadForTenant = async (event) => {
+    if (!authFetchOk || !selectedTenantId) return;
+    const file = event.target?.files?.[0];
+    if (!file) return;
+
+    setError("");
+    setUploadLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/upload-document`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Erreur upload document");
+      }
+
+      // On ne dépend pas de la forme de la réponse : on recharge l'état
+      await fetchTenantDetail(selectedTenantId);
+      await fetchFilesHistory();
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de l'upload du document.");
+    } finally {
+      setUploadLoading(false);
+      if (event.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
 
   // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
   const handleViewFile = async (fileId) => {
@@ -637,37 +673,31 @@ export default function TenantFilesPanel({ authFetch }) {
                   </div>
                 )}
 
-                <div className="tf-attach">
-                  <div className="tf-k">Attacher un document existant</div>
+                 <div className="tf-attach">
+                  <div className="tf-k">Ajouter un nouveau document</div>
                   <div className="tf-attach-row">
-                    <select
-                      className="tf-select"
-                      value={selectedFileIdToAttach}
-                      onChange={(e) =>
-                        setSelectedFileIdToAttach(e.target.value)
-                      }
-                    >
-                      <option value="">
-                        — Choisir un document (non attaché) —
-                      </option>
-                      {unlinkedFiles.map((f) => (
-                        <option key={f.id} value={String(f.id)}>
-                          #{f.id} — {f.file_type || "Doc"} — {f.filename}
-                        </option>
-                      ))}
-                    </select>
-
                     <button
-                      className="tf-btn tf-btn-primary"
-                      onClick={handleAttach}
-                      disabled={attachLoading || !selectedFileIdToAttach}
                       type="button"
+                      className="tf-btn tf-btn-secondary"
+                      onClick={() => uploadInputRef.current?.click()}
+                      disabled={uploadLoading}
                     >
-                      <Link2 size={16} />{" "}
-                      {attachLoading ? "Attache..." : "Attacher"}
+                      <Upload size={16} />{" "}
+                      {uploadLoading ? "Upload en cours..." : "Téléverser un fichier"}
                     </button>
+                    <span className="tf-muted">
+                      PDF, PNG, JPG – taille max 10 Mo
+                    </span>
+                    <input
+                      type="file"
+                      ref={uploadInputRef}
+                      style={{ display: "none" }}
+                      accept=".pdf,.png,.jpg,.jpeg,.pdf"
+                      onChange={handleUploadForTenant}
+                    />
                   </div>
                 </div>
+
               </>
             )}
           </div>

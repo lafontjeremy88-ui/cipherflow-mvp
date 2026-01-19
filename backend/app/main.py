@@ -1378,6 +1378,109 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
     db.commit()
 
     return {"status": "linked", "tenant_id": tf.id, "file_id": fa.id}
+@app.post("/tenant-files/{tenant_id}/upload-document")
+async def upload_document_for_tenant(
+    tenant_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Upload + analyse IA + création FileAnalysis + lien automatique au dossier locataire.
+    """
+    aid = current_user.agency_id
+
+    # 1) Vérifier que le dossier appartient bien à l'agence
+    tf = (
+        db.query(TenantFile)
+        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
+        .first()
+    )
+    if not tf:
+        raise HTTPException(status_code=404, detail="Dossier introuvable")
+
+    # 2) Sauvegarder le fichier comme dans /api/analyze-file
+    safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    file_path = uploads_dir / safe_name
+
+    try:
+        with open(file_path, "wb") as f_out:
+            shutil.copyfileobj(file.file, f_out)
+
+        # 3) Analyse IA (même logique que /api/analyze-file)
+        data = await analyze_document_logic(str(file_path), safe_name)
+        if not data:
+            raise HTTPException(status_code=500, detail="Erreur analyse document")
+
+        fa = FileAnalysis(
+            filename=safe_name,
+            file_type=str(data.get("type", "Inconnu")),
+            sender=str(data.get("sender", "Inconnu")),
+            extracted_date=str(data.get("date", "")),
+            amount=str(data.get("amount", "0")),
+            summary=str(data.get("summary", "Pas de résumé")),
+            owner_id=current_user.id,
+            agency_id=aid,
+        )
+        db.add(fa)
+        db.flush()  # pour récupérer fa.id sans commit séparé
+
+        # 4) Créer le lien vers le dossier locataire
+        doc_type = map_doc_type(getattr(fa, "file_type", "") or "")
+        link = TenantDocumentLink(
+            tenant_file_id=tf.id,
+            file_analysis_id=fa.id,
+            doc_type=doc_type,
+            quality=DocQuality.OK,
+        )
+        db.add(link)
+
+        # 5) Recalculer la checklist
+        links = (
+            db.query(TenantDocumentLink)
+            .filter(TenantDocumentLink.tenant_file_id == tf.id)
+            .all()
+        )
+        doc_types = [l.doc_type for l in links]
+        checklist = compute_checklist(doc_types)
+
+        tf.checklist_json = json.dumps(checklist)
+        tf.status = (
+            TenantFileStatus.TO_VALIDATE
+            if len(checklist["missing"]) == 0
+            else TenantFileStatus.INCOMPLETE
+        )
+
+        db.commit()
+
+        return {
+            "status": "uploaded_and_linked",
+            "file": {
+                "id": fa.id,
+                "filename": fa.filename,
+                "file_type": fa.file_type,
+                "sender": fa.sender,
+                "extracted_date": fa.extracted_date,
+                "amount": fa.amount,
+                "summary": fa.summary,
+            },
+            "checklist": checklist,
+            "tenant_id": tf.id,
+            "tenant_status": tf.status.value
+            if hasattr(tf.status, "value")
+            else str(tf.status),
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await file.close()
 
 
 @app.delete("/tenant-files/{tenant_id}/documents/{file_id}")
