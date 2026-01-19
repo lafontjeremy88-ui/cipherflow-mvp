@@ -463,6 +463,11 @@ export default function TenantFilesPanel({ authFetch }) {
             <div className="tf-list">
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
+                const checklist = t.checklist_json || {};
+                const missingCount = Object.values(checklist).filter(
+                  (v) => v === false
+                ).length;
+
                 return (
                   <button
                     key={t.id}
@@ -486,6 +491,14 @@ export default function TenantFilesPanel({ authFetch }) {
                           {t.status}
                         </span>
                       )}
+
+                      {t.status === "incomplete" && missingCount > 0 && (
+                        <span className="tf-missing-count">
+                          {missingCount} pièce{missingCount > 1 ? "s" : ""} manquante
+                          {missingCount > 1 ? "s" : ""}
+                        </span>
+                      )}
+
                     </div>
                   </button>
                 );
