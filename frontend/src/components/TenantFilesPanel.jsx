@@ -559,7 +559,7 @@ export default function TenantFilesPanel({ authFetch }) {
                   <div className="tf-checklist">
                     <div className="tf-checklist-head">
                       <div className="tf-checklist-header">
-                        <span>Checklist du dossier</span>
+                        <span>Checklist du dossier</span>{" "}
 
                         {/* ✅ Correction MICRO-BUG 1 : missingDocs.length au lieu de missingCount */}
                         {missingDocs.length > 0 && (
