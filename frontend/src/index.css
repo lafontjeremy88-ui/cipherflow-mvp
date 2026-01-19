@@ -905,8 +905,14 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .tf-item-sub span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;       /* coupe l’email proprement */
+  white-space: nowrap;   /* coupe l’email proprement */
+  flex: 1 1 auto;        /* l'email prend toute la place disponible */
 }
+
+.tf-item-sub span:last-child {
+  flex-shrink: 0;        /* la bulle INCOMPLETE ne se fait jamais écraser */
+}
+
 
 
 .tf-muted {
@@ -1168,4 +1174,11 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+}
+@media (max-width: 700px) {
+  .tf-item-sub {
+    flex-direction: column;   /* email sur la 1ère ligne, badge en dessous */
+    align-items: flex-start;
+    gap: 4px;
+  }
 }
