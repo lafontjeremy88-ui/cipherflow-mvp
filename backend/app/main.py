@@ -1783,12 +1783,47 @@ async def delete_file(
     if not f:
         raise HTTPException(status_code=404, detail="Introuvable")
 
-    # 1) Supprimer les liens vers les dossiers locataires (évite FK violation)
+    # 1) Récupérer les dossiers locataires impactés par ce fichier
+    tenant_ids = [
+        row[0]
+        for row in db.query(TenantDocumentLink.tenant_file_id)
+        .filter(TenantDocumentLink.file_analysis_id == f.id)
+        .all()
+    ]
+
+    # 2) Supprimer les liens vers les dossiers locataires (évite FK violation)
     db.query(TenantDocumentLink).filter(
         TenantDocumentLink.file_analysis_id == f.id
     ).delete(synchronize_session=False)
 
-    # 2) Supprimer le fichier physique (si présent)
+    # 3) Recalculer statut + checklist pour chaque dossier impacté
+    for tid in tenant_ids:
+        tf = db.query(TenantFile).filter(TenantFile.id == tid).first()
+        if not tf:
+            continue
+
+        remaining_links = (
+            db.query(TenantDocumentLink)
+            .filter(TenantDocumentLink.tenant_file_id == tf.id)
+            .all()
+        )
+
+        if not remaining_links:
+            # Plus aucun document lié => dossier "nouveau"
+            tf.checklist_json = None
+            tf.status = TenantFileStatus.NEW
+        else:
+            doc_types = [l.doc_type for l in remaining_links]
+            checklist = compute_checklist(doc_types)
+
+            tf.checklist_json = json.dumps(checklist)
+            tf.status = (
+                TenantFileStatus.TO_VALIDATE
+                if len(checklist.get("missing", [])) == 0
+                else TenantFileStatus.INCOMPLETE
+            )
+
+    # 4) Supprimer le fichier physique (si présent)
     path = os.path.join("uploads", f.filename)
     if os.path.exists(path):
         try:
@@ -1797,11 +1832,12 @@ async def delete_file(
             # on n'empêche pas la suppression DB si le fichier disque pose souci
             pass
 
-    # 3) Supprimer la ligne FileAnalysis
+    # 5) Supprimer la ligne FileAnalysis
     db.delete(f)
     db.commit()
 
     return {"status": "deleted"}
+
 
 
 # --- INVOICES (MULTI-AGENCE) ---
