@@ -256,31 +256,95 @@ def extract_json_from_text(text: str):
 # 🟦 HELPERS GESTION LOCATIVE (NOUVEAU)
 # ============================================================
 
-def map_doc_type(file_type: str) -> TenantDocType:
-    """Mappe un type texte (IA / filename) vers un type normalisé."""
-    ft = (file_type or "").lower()
-    if "ident" in ft or "cni" in ft or "passeport" in ft:
-        return TenantDocType.ID
-    if "paie" in ft or "payslip" in ft or "bulletin" in ft:
+def map_doc_type(raw: str) -> TenantDocType:
+    """Mappe un texte (type IA, nom de fichier, tags…) vers ID / PAYSLIP / TAX / OTHER."""
+    if not raw:
+        return TenantDocType.OTHER
+
+    t = raw.lower()
+
+    # --- FICHE DE PAIE / BULLETIN ---
+    if any(
+        k in t
+        for k in [
+            "fiche de paie",
+            "bulletin de paie",
+            "bulletin de salaire",
+            "payslip",
+            "pay slip",
+        ]
+    ):
         return TenantDocType.PAYSLIP
-    if "impot" in ft or "imposition" in ft or "tax" in ft or "dgfip" in ft:
+
+    # --- AVIS D'IMPOT / IMPOSITION ---
+    if any(
+        k in t
+        for k in [
+            "avis d'impot",
+            "avis d impôt",
+            "avis d imposition",
+            "avis d'imposition",
+            "impot",
+            "impôt",
+            "tax",
+        ]
+    ):
         return TenantDocType.TAX
-    if "contrat" in ft or "work" in ft:
-        return TenantDocType.WORK_CONTRACT
-    if "rib" in ft or "banque" in ft or "bank" in ft:
-        return TenantDocType.BANK
+
+    # --- PIECE D'IDENTITE / ID / PASSEPORT ---
+    if any(
+        k in t
+        for k in [
+            "pièce d'identité",
+            "piece d'identite",
+            "cni",
+            "carte nationale",
+            "identity card",
+            "id card",
+            "passeport",
+            "passport",
+        ]
+    ):
+        return TenantDocType.ID
+
+    # Par défaut
     return TenantDocType.OTHER
 
+
 def compute_checklist(doc_types: List[TenantDocType]) -> dict:
-    """Checklist MVP FR: ID + PAYSLIP + TAX requis."""
-    required = {TenantDocType.ID, TenantDocType.PAYSLIP, TenantDocType.TAX}
-    received = set(doc_types)
-    missing = list(required - received)
-    return {
-        "required": [d.value for d in required],
-        "received": [d.value for d in received],
-        "missing": [d.value for d in missing],
+    """
+    Calcule la checklist à partir des types de docs :
+    - required : ordre fixe [ID, PAYSLIP, TAX]
+    - received : sous-ensemble présent dans doc_types
+    - missing  : required - received
+    """
+    required_list = [TenantDocType.ID, TenantDocType.PAYSLIP, TenantDocType.TAX]
+    required_set = set(required_list)
+
+    # On ne garde que les types "utiles" (ID / PAYSLIP / TAX)
+    received_set = {dt for dt in doc_types if dt in required_set}
+    missing_set = required_set - received_set
+
+    # Ordre stable : ID -> PAYSLIP -> TAX
+    order = {
+        TenantDocType.ID: 0,
+        TenantDocType.PAYSLIP: 1,
+        TenantDocType.TAX: 2,
     }
+
+    def sort_key(dt: TenantDocType) -> int:
+        return order.get(dt, 99)
+
+    received = [dt.value for dt in sorted(received_set, key=sort_key)]
+    missing = [dt.value for dt in sorted(missing_set, key=sort_key)]
+    required = [dt.value for dt in required_list]
+
+    return {
+        "required": required,
+        "received": received,
+        "missing": missing,
+    }
+
 
 # --- IA LOGIQUE ---
 async def analyze_document_logic(file_path: str, filename: str):
