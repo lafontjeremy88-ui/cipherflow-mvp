@@ -756,6 +756,31 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
    Dossiers locataires (TenantFilesPanel)
    ========================= */
 
+/* --- Création nouveau dossier locataire --- */
+.tf-new-tenant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tf-new-tenant-row .tf-input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .tf-new-tenant-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tf-new-tenant-row .tf-btn {
+    width: 100%;
+  }
+}
+
+
 .tf-page {
   padding: 8px 0;
   width: 100%;
@@ -833,6 +858,17 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .tf-btn-primary:hover {
   background: var(--accent-hover);
 }
+
+.tf-btn-secondary {
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.55);
+  color: #e0e7ff;
+}
+
+.tf-btn-secondary:hover {
+  background: rgba(139, 92, 246, 0.24);
+}
+
 
 /* Alerte / erreur */
 .tf-warn {
