@@ -1359,7 +1359,7 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
         TenantDocumentLink.tenant_file_id == tf.id,
         TenantDocumentLink.file_analysis_id == fa.id
     ).first():
-        dt = map_doc_type(getattr(fa, "file_type", "") or "")
+        dt = map_doc_type(f"{getattr(fa, 'file_type', '')} {getattr(fa, 'filename', '')}".strip())
         db.add(TenantDocumentLink(
             tenant_file_id=tf.id,
             file_analysis_id=fa.id,
@@ -1428,7 +1428,7 @@ async def upload_document_for_tenant(
         db.flush()  # pour récupérer fa.id sans commit séparé
 
         # 4) Créer le lien vers le dossier locataire
-        doc_type = map_doc_type(getattr(fa, "file_type", "") or "")
+        doc_type = map_doc_type(f"{getattr(fa, 'file_type', '')} {getattr(fa, 'filename', '')}".strip())
         link = TenantDocumentLink(
             tenant_file_id=tf.id,
             file_analysis_id=fa.id,
