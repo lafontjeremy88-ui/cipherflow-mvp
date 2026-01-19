@@ -378,7 +378,11 @@ export default function TenantFilesPanel({ authFetch }) {
                       {t.status && (
                         <span
                           className={`tf-status ${
-                            t.status === "complete" ? "complete" : "incomplete"
+                            t.status === "complete"
+                              ? "complete"
+                              : t.status === "new"
+                              ? "new"
+                              : "incomplete"
                           }`}
                         >
                           {t.status}
@@ -420,6 +424,8 @@ export default function TenantFilesPanel({ authFetch }) {
                           className={`tf-status ${
                             tenantDetail.status === "complete"
                               ? "complete"
+                              : tenantDetail.status === "new"
+                              ? "new"
                               : "incomplete"
                           }`}
                         >
@@ -428,6 +434,7 @@ export default function TenantFilesPanel({ authFetch }) {
                       ) : (
                         "-"
                       )}
+
                     </div>
                   </div>
 

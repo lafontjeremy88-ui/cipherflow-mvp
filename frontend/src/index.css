@@ -976,6 +976,10 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   }
 }
 
+.tf-kv > div {
+  min-width: 0; /* 🔑 autorise le contenu à rester dans sa colonne */
+}
+
 .tf-k {
   color: var(--text-secondary);
   font-size: 0.82rem;
@@ -986,7 +990,9 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 
 .tf-v {
   font-weight: 800;
+  overflow-wrap: anywhere; /* 🔑 autorise la coupure des emails longs */
 }
+
 
 /* zone d'attache */
 .tf-attach {
@@ -1107,6 +1113,13 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   border: 1px solid rgba(239, 68, 68, 0.5);
   color: #fecaca;
 }
+
+.tf-status.new {
+  border-color: rgba(129, 140, 248, 0.8);   /* indigo / violet, plus neutre */
+  color: #e0e7ff;
+  background: rgba(79, 70, 229, 0.16);
+}
+
 
 .tf-status.complete {
   background: rgba(34, 197, 94, 0.18);          /* vert léger */
