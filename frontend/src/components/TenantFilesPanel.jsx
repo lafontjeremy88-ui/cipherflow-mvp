@@ -287,6 +287,27 @@ export default function TenantFilesPanel({ authFetch }) {
     return [];
   }, [tenantDetail]);
 
+  const checklist = useMemo(() => {
+    const raw = tenantDetail?.checklist_json ?? tenantDetail?.checklist ?? null;
+    if (!raw) return null;
+
+    if (typeof raw === "object") return raw;
+
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, [tenantDetail]);
+
+  const receivedDocs = Array.isArray(checklist?.received) ? checklist.received : [];
+  const missingDocs = Array.isArray(checklist?.missing) ? checklist.missing : [];
+
+
+
   const linkedFiles = useMemo(() => {
     const set = new Set(linkedFileIds);
     return filesHistory.filter((f) => set.has(String(f.id)));
@@ -443,6 +464,54 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-v">{linkedFileIds.length}</div>
                   </div>
                 </div>
+                                {checklist && (
+                  <div className="tf-checklist">
+                    <div className="tf-checklist-head">
+                      <div className="tf-checklist-title">Checklist du dossier</div>
+                      <div className="tf-checklist-meta">
+                        {missingDocs.length === 0 ? (
+                          <span className="tf-pill tf-pill-success">Complet</span>
+                        ) : (
+                          <span className="tf-pill tf-pill-warning">
+                            {missingDocs.length} manquante{missingDocs.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="tf-checklist-grid">
+                      <div className="tf-checklist-col">
+                        <div className="tf-checklist-col-title">Reçues</div>
+                        {receivedDocs.length === 0 ? (
+                          <div className="tf-muted">Aucune pièce reçue.</div>
+                        ) : (
+                          <div className="tf-badges">
+                            {receivedDocs.map((d) => (
+                              <span className="tf-pill tf-pill-success" key={`rec-${d}`}>
+                                ✅ {d}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="tf-checklist-col">
+                        <div className="tf-checklist-col-title">Manquantes</div>
+                        {missingDocs.length === 0 ? (
+                          <div className="tf-muted">Aucune pièce manquante.</div>
+                        ) : (
+                          <div className="tf-badges">
+                            {missingDocs.map((d) => (
+                              <span className="tf-pill tf-pill-danger" key={`mis-${d}`}>
+                                ❌ {d}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="tf-attach">
                   <div className="tf-k">Attacher un document existant</div>
