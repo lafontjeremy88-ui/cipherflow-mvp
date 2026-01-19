@@ -1329,6 +1329,93 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
     return {"status": "linked", "tenant_id": tf.id, "file_id": fa.id}
 
 
+@app.delete("/tenant-files/{tenant_id}/documents/{file_id}")
+async def detach_document_from_tenant(
+    tenant_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    aid = current_user.agency_id
+
+    # 1) Vérifier le dossier appartient bien à l'agence
+    tf = (
+        db.query(TenantFile)
+        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
+        .first()
+    )
+    if not tf:
+        raise HTTPException(status_code=404, detail="Dossier introuvable")
+
+    # 2) (Optionnel mais propre) Vérifier que le document appartient à l'agence
+    fa = (
+        db.query(FileAnalysis)
+        .filter(FileAnalysis.id == file_id, FileAnalysis.agency_id == aid)
+        .first()
+    )
+    if not fa:
+        raise HTTPException(status_code=404, detail="Document introuvable")
+
+    # 3) Récupérer le lien dossier <-> document
+    link = (
+        db.query(TenantDocumentLink)
+        .filter(
+            TenantDocumentLink.tenant_file_id == tf.id,
+            TenantDocumentLink.file_analysis_id == fa.id,
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(
+            status_code=404,
+            detail="Lien document/dossier introuvable",
+        )
+
+    # 4) Supprimer UNIQUEMENT ce lien
+    db.delete(link)
+    db.commit()
+
+    # 5) Recalculer la checklist et le statut du dossier
+    remaining_links = (
+        db.query(TenantDocumentLink)
+        .filter(TenantDocumentLink.tenant_file_id == tf.id)
+        .all()
+    )
+
+    if not remaining_links:
+        # Plus aucun document: on remet le dossier à l'état "nouveau"
+        tf.checklist_json = None
+        tf.status = TenantFileStatus.NEW
+    else:
+        doc_types = [l.doc_type for l in remaining_links]
+        checklist = compute_checklist(doc_types)
+
+        tf.checklist_json = json.dumps(checklist)
+        tf.status = (
+            TenantFileStatus.TO_VALIDATE
+            if len(checklist["missing"]) == 0
+            else TenantFileStatus.INCOMPLETE
+        )
+
+    db.commit()
+
+    # 6) Réponse pour le frontend
+    resp_checklist = None
+    if tf.checklist_json:
+        try:
+            resp_checklist = json.loads(tf.checklist_json)
+        except Exception:
+            resp_checklist = None
+
+    return {
+        "status": "unlinked",
+        "tenant_id": tf.id,
+        "file_id": fa.id,
+        "new_status": tf.status.value if hasattr(tf.status, "value") else str(tf.status),
+        "checklist": resp_checklist,
+    }
+
+
 
 @app.delete("/email/history/{email_id}")
 async def delete_history(

@@ -199,6 +199,24 @@ export async function getDashboardStats() {
   // On renvoie DIRECTEMENT les stats (pas {res,data})
   return data;
 }
+
+// ==============================
+// Tenant files - unlink document from tenant
+// ==============================
+export async function unlinkDocumentFromTenant(tenantId, fileId) {
+  const res = await authFetch(`/tenant-files/${tenantId}/documents/${fileId}`, {
+    method: "DELETE",
+  });
+
+  const data = await safeJson(res);
+  if (!res.ok) {
+    throw new Error(data?.detail || "Impossible de retirer le document du dossier.");
+  }
+
+  return data; // { status, tenant_id, file_id, new_status, checklist }
+}
+
+
 // ==============================
 // Email verification
 // ==============================

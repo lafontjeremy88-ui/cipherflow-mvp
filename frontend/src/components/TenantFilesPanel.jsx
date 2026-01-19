@@ -184,6 +184,38 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
+// ✅ Retirer du dossier (unlink uniquement)
+const handleUnlinkFromTenant = async (fileId) => {
+  if (!authFetchOk || !fileId || !selectedTenantId) return;
+
+  // (temp) confirmation simple — on basculera sur ton modal ensuite si tu veux
+  const ok = window.confirm(
+    "Retirer ce document du dossier ?\nLe fichier restera dans l'historique et pourra être rattaché ailleurs."
+  );
+  if (!ok) return;
+
+  setError("");
+  try {
+    const res = await authFetch(
+      `/tenant-files/${selectedTenantId}/documents/${fileId}`,
+      { method: "DELETE" }
+    );
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(txt || "Impossible de retirer le document du dossier");
+    }
+
+    // refresh: uniquement le dossier (pas besoin de refresh l'historique)
+    await fetchTenantDetail(selectedTenantId);
+  } catch (e) {
+    console.error(e);
+    setError(e?.message || "Erreur lors du retrait du document du dossier.");
+  }
+};
+
+
+
   // first load
   useEffect(() => {
     fetchTenants();
@@ -415,13 +447,21 @@ export default function TenantFilesPanel({ authFetch }) {
 
                       <button
                         type="button"
+                        className="tf-btn tf-btn-ghost"
+                        onClick={() => handleUnlinkFromTenant(f.id)}
+                      >
+                        <Link2 size={16} /> Retirer du dossier
+                      </button>
+
+                      <button
+                        type="button"
                         className="tf-btn tf-btn-danger"
                         onClick={() => handleDeleteFile(f.id)}
                       >
-                        <Trash2 size={16} /> Supprimer
+                        <Trash2 size={16} /> Supprimer définitivement
                       </button>
                     </div>
-                  </div>
+                    </div>
                 ))}
               </div>
             )}
