@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText, Trash2 } from "lucide-react";
+import {
+  RefreshCw,
+  Eye,
+  Download,
+  Link2,
+  FolderOpen,
+  FileText,
+  Trash2,
+} from "lucide-react";
 
 export default function TenantFilesPanel({ authFetch }) {
   const [tenants, setTenants] = useState([]);
@@ -16,6 +24,11 @@ export default function TenantFilesPanel({ authFetch }) {
   const [attachLoading, setAttachLoading] = useState(false);
 
   const [error, setError] = useState("");
+  const [confirmState, setConfirmState] = useState({
+    open: false,
+    mode: null, // "unlink" | "delete"
+    fileId: null,
+  });
 
   const authFetchOk = typeof authFetch === "function";
 
@@ -71,7 +84,9 @@ export default function TenantFilesPanel({ authFetch }) {
       const res = await authFetch("/api/files/history");
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Impossible de charger l'historique des documents");
+        throw new Error(
+          txt || "Impossible de charger l'historique des documents"
+        );
       }
       const data = await res.json().catch(() => []);
       setFilesHistory(Array.isArray(data) ? data : []);
@@ -162,11 +177,6 @@ export default function TenantFilesPanel({ authFetch }) {
   const handleDeleteFile = async (fileId) => {
     if (!authFetchOk || !fileId) return;
 
-    const ok = window.confirm(
-      "Supprimer définitivement ce document ?\nIl sera retiré de l'historique et des dossiers."
-    );
-    if (!ok) return;
-
     setError("");
     try {
       const res = await authFetch(`/api/files/${fileId}`, { method: "DELETE" });
@@ -184,37 +194,66 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
-// ✅ Retirer du dossier (unlink uniquement)
-const handleUnlinkFromTenant = async (fileId) => {
-  if (!authFetchOk || !fileId || !selectedTenantId) return;
+  // ✅ Retirer du dossier (unlink uniquement)
+  const handleUnlinkFromTenant = async (fileId) => {
+    if (!authFetchOk || !fileId || !selectedTenantId) return;
 
-  // (temp) confirmation simple — on basculera sur ton modal ensuite si tu veux
-  const ok = window.confirm(
-    "Retirer ce document du dossier ?\nLe fichier restera dans l'historique et pourra être rattaché ailleurs."
-  );
-  if (!ok) return;
+    setError("");
+    try {
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/documents/${fileId}`,
+        { method: "DELETE" }
+      );
 
-  setError("");
-  try {
-    const res = await authFetch(
-      `/tenant-files/${selectedTenantId}/documents/${fileId}`,
-      { method: "DELETE" }
-    );
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de retirer le document du dossier");
+      }
 
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(txt || "Impossible de retirer le document du dossier");
+      // refresh: uniquement le dossier (pas besoin de refresh l'historique)
+      await fetchTenantDetail(selectedTenantId);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors du retrait du document du dossier.");
+    }
+  };
+
+  // ===== Gestion de la modal de confirmation =====
+  const openConfirmUnlink = (fileId) => {
+    setConfirmState({
+      open: true,
+      mode: "unlink",
+      fileId,
+    });
+  };
+
+  const openConfirmDelete = (fileId) => {
+    setConfirmState({
+      open: true,
+      mode: "delete",
+      fileId,
+    });
+  };
+
+  const handleConfirmCancel = () => {
+    setConfirmState({ open: false, mode: null, fileId: null });
+  };
+
+  const handleConfirmValidate = async () => {
+    const { mode, fileId } = confirmState;
+    if (!fileId || !mode) {
+      handleConfirmCancel();
+      return;
     }
 
-    // refresh: uniquement le dossier (pas besoin de refresh l'historique)
-    await fetchTenantDetail(selectedTenantId);
-  } catch (e) {
-    console.error(e);
-    setError(e?.message || "Erreur lors du retrait du document du dossier.");
-  }
-};
+    if (mode === "unlink") {
+      await handleUnlinkFromTenant(fileId);
+    } else if (mode === "delete") {
+      await handleDeleteFile(fileId);
+    }
 
-
+    handleConfirmCancel();
+  };
 
   // first load
   useEffect(() => {
@@ -262,9 +301,12 @@ const handleUnlinkFromTenant = async (fileId) => {
     return (
       <div className="tf-page">
         <div className="tf-warn">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur de configuration</div>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>
+            Erreur de configuration
+          </div>
           <div>
-            <code>authFetch</code> n’a pas été passé à <code>&lt;TenantFilesPanel /&gt;</code>.
+            <code>authFetch</code> n’a pas été passé à{" "}
+            <code>&lt;TenantFilesPanel /&gt;</code>.
           </div>
         </div>
       </div>
@@ -276,21 +318,36 @@ const handleUnlinkFromTenant = async (fileId) => {
       <div className="tf-head">
         <div>
           <h2 className="tf-title">Dossiers locataires</h2>
-          <div className="tf-sub">Centralise les fichiers et rattache les documents aux locataires.</div>
+          <div className="tf-sub">
+            Centralise les fichiers et rattache les documents aux locataires.
+          </div>
         </div>
 
         <div className="tf-actions">
-          <button className="tf-btn tf-btn-ghost" onClick={fetchTenants} disabled={tenantsLoading}>
-            <RefreshCw size={16} /> {tenantsLoading ? "Chargement..." : "Rafraîchir locataires"}
+          <button
+            className="tf-btn tf-btn-ghost"
+            onClick={fetchTenants}
+            disabled={tenantsLoading}
+          >
+            <RefreshCw size={16} />{" "}
+            {tenantsLoading ? "Chargement..." : "Rafraîchir locataires"}
           </button>
-          <button className="tf-btn tf-btn-primary" onClick={fetchFilesHistory} disabled={filesLoading}>
-            <FolderOpen size={16} /> {filesLoading ? "Chargement..." : "Rafraîchir fichiers"}
+          <button
+            className="tf-btn tf-btn-primary"
+            onClick={fetchFilesHistory}
+            disabled={filesLoading}
+          >
+            <FolderOpen size={16} />{" "}
+            {filesLoading ? "Chargement..." : "Rafraîchir fichiers"}
           </button>
         </div>
       </div>
 
       {!!error && (
-        <div className="tf-warn" style={{ borderColor: "rgba(239,68,68,.45)" }}>
+        <div
+          className="tf-warn"
+          style={{ borderColor: "rgba(239,68,68,.45)" }}
+        >
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur</div>
           <div style={{ opacity: 0.95 }}>{error}</div>
         </div>
@@ -319,7 +376,11 @@ const handleUnlinkFromTenant = async (fileId) => {
                     <div className="tf-item-sub">
                       <span>{t.candidate_email || "-"}</span>
                       {t.status && (
-                        <span className={`tf-status ${t.status === "complete" ? "complete" : "incomplete"}`}>
+                        <span
+                          className={`tf-status ${
+                            t.status === "complete" ? "complete" : "incomplete"
+                          }`}
+                        >
                           {t.status}
                         </span>
                       )}
@@ -338,13 +399,17 @@ const handleUnlinkFromTenant = async (fileId) => {
             {tenantLoading ? (
               <div className="tf-muted">Chargement...</div>
             ) : !tenantDetail ? (
-              <div className="tf-muted">Sélectionne un locataire à gauche.</div>
+              <div className="tf-muted">
+                Sélectionne un locataire à gauche.
+              </div>
             ) : (
               <>
                 <div className="tf-kv">
                   <div>
                     <div className="tf-k">Email candidat</div>
-                    <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
+                    <div className="tf-v">
+                      {tenantDetail.candidate_email || "-"}
+                    </div>
                   </div>
 
                   <div>
@@ -352,7 +417,11 @@ const handleUnlinkFromTenant = async (fileId) => {
                     <div className="tf-v">
                       {tenantDetail.status ? (
                         <span
-                          className={`tf-status ${tenantDetail.status === "complete" ? "complete" : "incomplete"}`}
+                          className={`tf-status ${
+                            tenantDetail.status === "complete"
+                              ? "complete"
+                              : "incomplete"
+                          }`}
                         >
                           {tenantDetail.status}
                         </span>
@@ -374,9 +443,13 @@ const handleUnlinkFromTenant = async (fileId) => {
                     <select
                       className="tf-select"
                       value={selectedFileIdToAttach}
-                      onChange={(e) => setSelectedFileIdToAttach(e.target.value)}
+                      onChange={(e) =>
+                        setSelectedFileIdToAttach(e.target.value)
+                      }
                     >
-                      <option value="">— Choisir un document (non attaché) —</option>
+                      <option value="">
+                        — Choisir un document (non attaché) —
+                      </option>
                       {unlinkedFiles.map((f) => (
                         <option key={f.id} value={String(f.id)}>
                           #{f.id} — {f.file_type || "Doc"} — {f.filename}
@@ -390,7 +463,8 @@ const handleUnlinkFromTenant = async (fileId) => {
                       disabled={attachLoading || !selectedFileIdToAttach}
                       type="button"
                     >
-                      <Link2 size={16} /> {attachLoading ? "Attache..." : "Attacher"}
+                      <Link2 size={16} />{" "}
+                      {attachLoading ? "Attache..." : "Attacher"}
                     </button>
                   </div>
                 </div>
@@ -407,13 +481,16 @@ const handleUnlinkFromTenant = async (fileId) => {
             </div>
 
             {!tenantDetail ? (
-              <div className="tf-muted">Sélectionne un locataire pour voir ses pièces.</div>
+              <div className="tf-muted">
+                Sélectionne un locataire pour voir ses pièces.
+              </div>
             ) : linkedFileIds.length === 0 ? (
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
               <div className="tf-warn">
-                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve pas leurs détails dans{" "}
-                <code>/api/files/history</code>. Clique “Rafraîchir fichiers”.
+                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve
+                pas leurs détails dans <code>/api/files/history</code>. Clique
+                “Rafraîchir fichiers”.
               </div>
             ) : (
               <div className="tf-files">
@@ -424,7 +501,9 @@ const handleUnlinkFromTenant = async (fileId) => {
                         #{f.id} — {f.file_type || "Doc"} — {f.filename}
                       </div>
                       <div className="tf-file-sub">
-                        {f.created_at ? new Date(f.created_at).toLocaleString() : ""}
+                        {f.created_at
+                          ? new Date(f.created_at).toLocaleString()
+                          : ""}
                       </div>
                     </div>
 
@@ -448,7 +527,7 @@ const handleUnlinkFromTenant = async (fileId) => {
                       <button
                         type="button"
                         className="tf-btn tf-btn-ghost"
-                        onClick={() => handleUnlinkFromTenant(f.id)}
+                        onClick={() => openConfirmUnlink(f.id)}
                       >
                         <Link2 size={16} /> Retirer du dossier
                       </button>
@@ -456,18 +535,83 @@ const handleUnlinkFromTenant = async (fileId) => {
                       <button
                         type="button"
                         className="tf-btn tf-btn-danger"
-                        onClick={() => handleDeleteFile(f.id)}
+                        onClick={() => openConfirmDelete(f.id)}
                       >
                         <Trash2 size={16} /> Supprimer définitivement
                       </button>
                     </div>
-                    </div>
+                  </div>
                 ))}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Modal de confirmation */}
+      {confirmState.open && (
+        <div className="tf-modal-backdrop">
+          <div
+            className={`tf-modal ${
+              confirmState.mode === "delete"
+                ? "tf-modal-danger"
+                : "tf-modal-warning"
+            }`}
+          >
+            <div className="tf-modal-header">
+              {confirmState.mode === "delete"
+                ? "Supprimer définitivement le document ?"
+                : "Retirer le document du dossier ?"}
+            </div>
+
+            <div className="tf-modal-body">
+              {confirmState.mode === "delete" ? (
+                <>
+                  Ce document sera <strong>supprimé définitivement</strong> :
+                  <ul>
+                    <li>retiré du dossier locataire</li>
+                    <li>retiré de l'historique</li>
+                    <li>supprimé du stockage</li>
+                  </ul>
+                  Cette action est <strong>irréversible</strong>.
+                </>
+              ) : (
+                <>
+                  Le document sera <strong>retiré de ce dossier</strong>, mais :
+                  <ul>
+                    <li>restera visible dans l'historique</li>
+                    <li>pourra être rattaché à un autre dossier</li>
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="tf-modal-actions">
+              <button
+                type="button"
+                className="tf-btn tf-btn-ghost"
+                onClick={handleConfirmCancel}
+              >
+                Annuler
+              </button>
+
+              <button
+                type="button"
+                className={
+                  confirmState.mode === "delete"
+                    ? "tf-btn tf-btn-danger"
+                    : "tf-btn tf-btn-primary"
+                }
+                onClick={handleConfirmValidate}
+              >
+                {confirmState.mode === "delete"
+                  ? "Supprimer définitivement"
+                  : "Retirer du dossier"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
