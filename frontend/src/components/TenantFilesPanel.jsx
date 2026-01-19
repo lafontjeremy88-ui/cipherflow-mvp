@@ -9,6 +9,20 @@ import {
   Trash2,
 } from "lucide-react";
 
+// Mapping des codes internes -> libellés lisibles
+const DOC_LABELS = {
+  payslip: "Fiche de paie",
+  id: "Pièce d'identité",
+  tax: "Avis d'impôt",
+  // Tu pourras en rajouter ici au fur et à mesure :
+  // rent_receipt: "Quittance de loyer",
+  // guarantor_payslip: "Fiche de paie garant",
+};
+
+function getDocLabel(code) {
+  return DOC_LABELS[code] || code;
+}
+
 export default function TenantFilesPanel({ authFetch }) {
   const [tenants, setTenants] = useState([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
@@ -488,7 +502,7 @@ export default function TenantFilesPanel({ authFetch }) {
                           <div className="tf-badges">
                             {receivedDocs.map((d) => (
                               <span className="tf-pill tf-pill-success" key={`rec-${d}`}>
-                                ✅ {d}
+                                ✅ {getDocLabel(d)}
                               </span>
                             ))}
                           </div>
@@ -503,7 +517,7 @@ export default function TenantFilesPanel({ authFetch }) {
                           <div className="tf-badges">
                             {missingDocs.map((d) => (
                               <span className="tf-pill tf-pill-danger" key={`mis-${d}`}>
-                                ❌ {d}
+                                ❌ {getDocLabel(d)}
                               </span>
                             ))}
                           </div>
