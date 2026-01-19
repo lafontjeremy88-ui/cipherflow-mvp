@@ -44,6 +44,9 @@ export default function TenantFilesPanel({ authFetch }) {
     fileId: null,
   });
 
+  const [newTenantEmail, setNewTenantEmail] = useState("");
+  const [creatingTenant, setCreatingTenant] = useState(false);
+
   const authFetchOk = typeof authFetch === "function";
 
   const fetchTenants = async () => {
@@ -68,6 +71,47 @@ export default function TenantFilesPanel({ authFetch }) {
       setTenantsLoading(false);
     }
   };
+
+  const handleCreateTenant = async () => {
+    if (!authFetchOk) return;
+    setError("");
+    setCreatingTenant(true);
+    try {
+      const payload = {};
+      if (newTenantEmail.trim()) {
+        payload.candidate_email = newTenantEmail.trim();
+      }
+
+      const res = await authFetch("/tenant-files", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de créer le dossier locataire");
+      }
+
+      const data = await res.json().catch(() => null);
+
+      await fetchTenants(); // recharge la liste
+      if (data?.id) {
+        setSelectedTenantId(data.id);   // auto-sélection
+        await fetchTenantDetail(data.id);
+      }
+
+      setNewTenantEmail("");
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur création dossier locataire");
+    } finally {
+      setCreatingTenant(false);
+    }
+  };
+
 
   const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
@@ -388,9 +432,28 @@ export default function TenantFilesPanel({ authFetch }) {
         </div>
       )}
 
-      <div className="tf-grid">
+            <div className="tf-grid">
         <div className="tf-card">
           <div className="tf-card-title">Locataires</div>
+
+          {/* Barre de création de nouveau dossier */}
+          <div className="tf-new-tenant-row">
+            <input
+              type="email"
+              className="tf-input"
+              placeholder="Email candidat (optionnel)"
+              value={newTenantEmail}
+              onChange={(e) => setNewTenantEmail(e.target.value)}
+            />
+            <button
+              type="button"
+              className="tf-btn tf-btn-secondary"
+              onClick={handleCreateTenant}
+              disabled={creatingTenant}
+            >
+              {creatingTenant ? "Création..." : "Nouveau dossier"}
+            </button>
+          </div>
 
           {tenantsLoading ? (
             <div className="tf-muted">Chargement...</div>
@@ -430,6 +493,7 @@ export default function TenantFilesPanel({ authFetch }) {
             </div>
           )}
         </div>
+
 
         <div className="tf-right">
           <div className="tf-card">

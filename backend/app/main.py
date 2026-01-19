@@ -568,6 +568,11 @@ class TenantFileListItem(BaseModel):
     class Config:
         from_attributes = True
 
+class TenantFileCreate(BaseModel):
+    candidate_email: Optional[EmailStr] = None
+    candidate_name: Optional[str] = None
+
+
 class TenantFileDetail(BaseModel):
     id: int
     status: str
@@ -1206,6 +1211,43 @@ async def get_email_detail(
 # ============================================================
 # 🟦 DOSSIERS LOCATAIRES (GESTION LOCATIVE) — API
 # ============================================================
+
+@app.post("/tenant-files", response_model=TenantFileDetail)
+async def create_tenant_file(
+    payload: TenantFileCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    aid = current_user.agency_id
+
+    email = (payload.candidate_email or "").strip() or None
+    name = (payload.candidate_name or "").strip() or None
+
+    tf = TenantFile(
+        agency_id=aid,
+        candidate_email=email,
+        candidate_name=name,
+        status=TenantFileStatus.NEW,
+        checklist_json=None,
+        risk_level=None,
+    )
+    db.add(tf)
+    db.commit()
+    db.refresh(tf)
+
+    return TenantFileDetail(
+        id=tf.id,
+        status=tf.status.value if hasattr(tf.status, "value") else str(tf.status),
+        candidate_email=tf.candidate_email,
+        candidate_name=tf.candidate_name,
+        checklist_json=tf.checklist_json,
+        risk_level=tf.risk_level,
+        created_at=tf.created_at,
+        updated_at=tf.updated_at,
+        email_ids=[],
+        file_ids=[],
+    )
+
 
 @app.get("/tenant-files", response_model=List[TenantFileListItem])
 async def list_tenant_files(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
