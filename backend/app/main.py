@@ -1453,82 +1453,75 @@ async def upload_document_for_tenant(
 ):
     aid = current_user.agency_id
 
-    tf = (
-        db.query(TenantFile)
-        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
-        .first()
-    )
+    tf = db.query(TenantFile).filter(
+        TenantFile.id == tenant_id,
+        TenantFile.agency_id == aid
+    ).first()
     if not tf:
         raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
 
-    contents = await file.read()
+    # 1️⃣ Sauvegarde disque (COMME PARTOUT AILLEURS)
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
 
+    safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
+    file_path = uploads_dir / safe_name
+
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # 2️⃣ Analyse IA (optionnelle mais cohérente)
+    data = await analyze_document_logic(str(file_path), safe_name) or {}
+
+    # 3️⃣ Création FileAnalysis (CHAMPS VALIDES UNIQUEMENT)
     new_file = FileAnalysis(
-        filename=file.filename,
-        content_type=file.content_type,
-        raw_data=contents,
+        filename=safe_name,
+        file_type=str(data.get("type", "Document")),
+        sender="Upload manuel",
+        extracted_date=str(data.get("date", "")),
+        amount=str(data.get("amount", "0")),
+        summary=str(data.get("summary", "Document uploadé")),
+        owner_id=current_user.id,
         agency_id=aid,
     )
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
 
-    # Lien dossier ↔ document
-    link = TenantDocumentLink(
-        tenant_file_id=tf.id,
-        file_analysis_id=new_file.id,
-        doc_type=map_doc_type(file.filename),
-        quality=DocQuality.OK,
+    # 4️⃣ Lien dossier ↔ document
+    db.add(
+        TenantDocumentLink(
+            tenant_file_id=tf.id,
+            file_analysis_id=new_file.id,
+            doc_type=map_doc_type(new_file.file_type),
+            quality=DocQuality.OK,
+        )
     )
-    db.add(link)
     db.commit()
 
-    # Recalcul checklist
-    links = (
-        db.query(TenantDocumentLink)
-        .filter(TenantDocumentLink.tenant_file_id == tf.id)
-        .all()
-    )
+    # 5️⃣ Recalcul checklist
+    links = db.query(TenantDocumentLink).filter(
+        TenantDocumentLink.tenant_file_id == tf.id
+    ).all()
+
     doc_types = [l.doc_type for l in links]
     checklist = compute_checklist(doc_types)
 
     tf.checklist_json = json.dumps(checklist)
     tf.status = (
         TenantFileStatus.TO_VALIDATE
-        if len(checklist["missing"]) == 0
+        if not checklist["missing"]
         else TenantFileStatus.INCOMPLETE
     )
-
-
-    documents = (
-    db.query(FileAnalysis)
-    .join(TenantDocumentLink, TenantDocumentLink.file_analysis_id == FileAnalysis.id)
-    .filter(TenantDocumentLink.tenant_file_id == tf.id)
-    .order_by(FileAnalysis.id.desc())
-    .all()
-)
+    db.commit()
 
     return {
-    "id": tf.id,
-    "status": tf.status.value if hasattr(tf.status, "value") else str(tf.status),
-    "candidate_email": tf.candidate_email,
-    "candidate_name": tf.candidate_name,
-    "checklist_json": tf.checklist_json,
-    "risk_level": tf.risk_level,
-    "created_at": tf.created_at,
-    "updated_at": tf.updated_at,
-    "email_ids": email_ids,
-    "file_ids": file_ids,
-    "documents": [
-        {
-            "id": f.id,
-            "filename": f.filename,
-            "created_at": f.created_at,
-            "file_type": f.file_type,
-        }
-        for f in documents
-    ],
-}
+        "file_id": new_file.id,
+        "filename": new_file.filename,
+        "doc_type": new_file.file_type,
+        "checklist": checklist,
+    }
+
 
 
 
