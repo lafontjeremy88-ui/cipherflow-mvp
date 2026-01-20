@@ -1443,6 +1443,7 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
     db.commit()
 
     return {"status": "linked", "tenant_id": tf.id, "file_id": fa.id}
+
 @app.post("/tenant-files/{tenant_id}/upload-document")
 async def upload_document_for_tenant(
     tenant_id: int,
@@ -1941,14 +1942,17 @@ async def analyze_file(
     file_path = uploads_dir / safe_name
 
     try:
+        # 1) Sauvegarder le fichier sur le disque
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
+        # 2) Analyse IA du document
         data = await analyze_document_logic(str(file_path), safe_name)
-        
+
         if not data:
             return {"extracted": False, "summary": "Erreur lecture JSON"}
 
+        # 3) Enregistrer l’analyse en base
         new_analysis = FileAnalysis(
             filename=safe_name,
             file_type=str(data.get("type", "Inconnu")),
@@ -1957,25 +1961,35 @@ async def analyze_file(
             amount=str(data.get("amount", "0")),
             summary=str(data.get("summary", "Pas de résumé")),
             owner_id=current_user.id,
-            agency_id=current_user.agency_id
+            agency_id=current_user.agency_id,
         )
         db.add(new_analysis)
         db.commit()
-        db.refresh(new_analysis)  # ✅ OBLIGATOIRE pour avoir l'id
+        db.refresh(new_analysis)  # ✅ pour avoir new_analysis.id
 
-            # ✅ Injecter l'id du fichier analysé dans la réponse
+        # 4) Injecter l'id dans la réponse JSON
         if isinstance(data, dict):
-                data["file_analysis_id"] = new_analysis.id
+            data["file_analysis_id"] = new_analysis.id
 
         return data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         await file.close()
 
 @app.get("/api/files/history")
-async def get_file_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    return db.query(FileAnalysis).filter(FileAnalysis.agency_id == current_user.agency_id).order_by(FileAnalysis.id.desc()).all()
+async def get_file_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    return (
+        db.query(FileAnalysis)
+        .filter(FileAnalysis.agency_id == current_user.agency_id)
+        .order_by(FileAnalysis.id.desc())
+        .all()
+    )
+
 
 @app.options("/api/files/{file_id}")
 async def options_files(file_id: int, request: Request):

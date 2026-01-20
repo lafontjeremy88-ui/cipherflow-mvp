@@ -153,29 +153,35 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   const handleAttach = async () => {
-    if (!authFetchOk || !selectedTenantId || !selectedFileIdToAttach) return;
-    setError("");
-    setAttachLoading(true);
-    try {
-      const res = await authFetch(
-        `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
-        { method: "POST" }
-      );
+  if (!authFetchOk || !selectedTenantId || !selectedFileIdToAttach) return;
+  setError("");
+  setAttachLoading(true);
+  try {
+    const res = await authFetch(
+      `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
+      { method: "POST" }
+    );
 
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Erreur attach-document");
-      }
-
-      await fetchTenantDetail(selectedTenantId);
-      setSelectedFileIdToAttach("");
-    } catch (e) {
-      console.error(e);
-      setError(e?.message || "Erreur : impossible d'attacher le document.");
-    } finally {
-      setAttachLoading(false);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(txt || "Erreur attach-document");
     }
-  };
+
+    // ✅ on recharge à la fois le dossier et l'historique des fichiers
+    await Promise.all([
+      fetchTenantDetail(selectedTenantId),
+      fetchFilesHistory(),
+    ]);
+
+    setSelectedFileIdToAttach("");
+  } catch (e) {
+    console.error(e);
+    setError(e?.message || "Erreur : impossible d'attacher le document.");
+  } finally {
+    setAttachLoading(false);
+  }
+};
+
 
   const handleUploadForTenant = async (event) => {
   if (!authFetchOk) return;
@@ -187,65 +193,35 @@ export default function TenantFilesPanel({ authFetch }) {
     setError("");
     setUploadLoading(true);
 
-    // 1) Upload + analyse du fichier
     const formData = new FormData();
     formData.append("file", file);
 
-    const analyzeRes = await authFetch("/api/analyze-file", {
+    // ✅ ENDPOINT PRO: upload + analyse + attach en 1 seul call
+    const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
       method: "POST",
       body: formData,
     });
 
-    if (!analyzeRes.ok) {
-      console.error("analyze-file error:", await analyzeRes.text());
-      alert("Erreur upload/analyse.");
-      return;
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(txt || "Erreur upload-document");
     }
 
-    const analyzeData = await analyzeRes.json();
-    const fileAnalysisId = analyzeData.file_analysis_id;
-
-    if (!fileAnalysisId) {
-      console.error("file_analysis_id manquant:", analyzeData);
-      alert("Upload OK mais impossible de rattacher au dossier (ID manquant).");
-      return;
-    }
-
-    // 2) Rattacher ce file_analysis au dossier locataire sélectionné
-    const attachRes = await authFetch(
-      `/tenant-files/${selectedTenantId}/attach-document`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_analysis_id: fileAnalysisId }),
-      }
-    );
-
-    if (!attachRes.ok) {
-      console.error("attach-document error:", await attachRes.text());
-      alert("Upload OK mais rattachement au dossier échoué.");
-      return;
-    }
-
-    // 3) Rafraîchir l’UI (locataires + détails + pièces + historique)
+    // ✅ Refresh UI (les 3 zones)
     await Promise.all([
       fetchTenantDetail(selectedTenantId),
-      fetchTenantFiles(selectedTenantId),
       fetchTenants(),
       fetchFilesHistory(),
     ]);
 
-    // reset de l’input file
     event.target.value = "";
   } catch (e) {
     console.error(e);
-    alert("Erreur inattendue.");
+    setError(e?.message || "Erreur upload dossier");
   } finally {
     setUploadLoading(false);
   }
 };
-
-
 
   // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
   const handleViewFile = async (fileId) => {

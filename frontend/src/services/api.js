@@ -79,6 +79,7 @@ export async function apiPublicFetch(path, options = {}) {
   return data;
 }
 
+
 // ==============================
 // Auth fetch (avec Bearer token)
 // - si 401 => tente refresh => retry 1 fois
