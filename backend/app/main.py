@@ -11,7 +11,7 @@ import hashlib
 from typing import Optional, List
 from datetime import datetime, timedelta
 from pathlib import Path
-
+from enum import Enum
 from fastapi.security import OAuth2PasswordRequestForm
 
 from PIL import Image
