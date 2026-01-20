@@ -244,101 +244,122 @@ export default function TenantFilesPanel({ authFetch }) {
 
   // ✅ Upload direct + lien au dossier via endpoint atomic
   // ✅ Fix : on n'attend plus filesHistory pour afficher dans "Pièces du dossier"
-  const handleUploadForTenant = async (event) => {
-    if (!authFetchOk) return;
+const handleUploadForTenant = async (event) => {
+  if (!authFetchOk) return;
 
-    const file = event.target.files?.[0];
-    if (!file || !selectedTenantId) return;
+  const file = event.target.files?.[0];
+  if (!file || !selectedTenantId) return;
 
-    try {
-      setError("");
-      setUploadLoading(true);
+  try {
+    setError("");
+    setUploadLoading(true);
 
-      const formData = new FormData();
-      formData.append("file", file);
+    const formData = new FormData();
+    formData.append("file", file);
 
-      const res = await authFetch(
-        `/tenant-files/${selectedTenantId}/upload-document`,
-        { method: "POST", body: formData }
+    const res = await authFetch(
+      `/tenant-files/${selectedTenantId}/upload-document`,
+      { method: "POST", body: formData }
+    );
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.error("upload-document error:", txt);
+      throw new Error(
+        txt || "Erreur lors de l'upload du fichier pour ce dossier locataire."
       );
+    }
 
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        console.error("upload-document error:", txt);
-        throw new Error(
-          txt || "Erreur lors de l'upload du fichier pour ce dossier locataire."
+    const payload = await res.json().catch(() => null);
+
+    // -------------------------------
+    // 🔁 MODE SÉCURITÉ : pas de `file` dans la réponse => on force un gros refresh
+    // (utile si le backend renvoie encore juste {status: 'linked', ...})
+    // -------------------------------
+    const newFile = payload?.file;
+    const tenantPayload = payload?.tenant;
+    const checklistPayload = payload?.checklist;
+    const tenantStatus = payload?.tenant_status ?? tenantPayload?.status;
+
+    if (!newFile || !newFile.id) {
+      console.warn(
+        "upload-document: payload sans file.id, on force un refresh complet."
+      );
+      await Promise.all([
+        fetchTenantDetail(selectedTenantId),
+        fetchFilesHistory(),
+        fetchTenants(),
+      ]);
+      return;
+    }
+
+    const newFileIdStr = String(newFile.id);
+
+    // -------------------------------
+    // ✅ MODE OPTIMISTE : le backend renvoie bien le fichier
+    // -------------------------------
+
+    // 1) Met à jour l'historique global (utile pour la zone "À classer")
+    setFilesHistory((prev) => {
+      const arr = Array.isArray(prev) ? prev : [];
+      const exists = arr.some((f) => String(f.id) === newFileIdStr);
+      if (exists) {
+        return arr.map((f) =>
+          String(f.id) === newFileIdStr ? { ...f, ...newFile } : f
         );
       }
+      return [newFile, ...arr];
+    });
 
-      const payload = await res.json().catch(() => null);
-      const newFile = payload?.file;
-      const tenantPayload = payload?.tenant;
-      const checklistPayload = payload?.checklist;
-      const tenantStatus = payload?.tenant_status ?? tenantPayload?.status;
+    // 2) Met à jour instantanément la liste "Pièces du dossier"
+    setTenantDocuments((prev) => {
+      const arr = Array.isArray(prev) ? prev : [];
+      const exists = arr.some((f) => String(f.id) === newFileIdStr);
+      return exists ? arr : [newFile, ...arr];
+    });
 
-      if (newFile?.id) {
-        const newFileIdStr = String(newFile.id);
+    // 3) Met à jour le détail du dossier (file_ids + checklist + status)
+    setTenantDetail((prev) => {
+      const base = { ...(prev || {}), ...(tenantPayload || {}) };
 
-        // 1) Met à jour l'historique global (utile pour la zone "À classer")
-        setFilesHistory((prev) => {
-          const arr = Array.isArray(prev) ? prev : [];
-          const exists = arr.some((f) => String(f.id) === newFileIdStr);
-          if (exists) {
-            return arr.map((f) =>
-              String(f.id) === newFileIdStr ? { ...f, ...newFile } : f
-            );
-          }
-          return [newFile, ...arr];
-        });
+      const prevIds = normalizeIds(base.file_ids);
+      const nextIds = prevIds.includes(newFileIdStr)
+        ? prevIds
+        : [newFileIdStr, ...prevIds];
 
-        // 2) Met à jour instantanément la liste "Pièces du dossier" (✅ plus besoin d'uploader 2x)
-        setTenantDocuments((prev) => {
-          const arr = Array.isArray(prev) ? prev : [];
-          const exists = arr.some((f) => String(f.id) === newFileIdStr);
-          return exists ? arr : [newFile, ...arr];
-        });
+      return {
+        ...base,
+        file_ids: nextIds,
+        status: tenantStatus ?? base.status,
+        checklist_json:
+          checklistPayload ?? base.checklist_json ?? base.checklist,
+        checklist: checklistPayload ?? base.checklist,
+      };
+    });
 
-        // 3) Met à jour le détail du dossier (file_ids + checklist + status)
-        setTenantDetail((prev) => {
-          const base = { ...(prev || {}), ...(tenantPayload || {}) };
+    // 4) Met à jour la colonne de gauche (statut)
+    setTenants((prev) => {
+      const arr = Array.isArray(prev) ? prev : [];
+      return arr.map((t) =>
+        String(t.id) === String(selectedTenantId)
+          ? { ...t, status: tenantStatus ?? t.status }
+          : t
+      );
+    });
 
-          const prevIds = normalizeIds(base.file_ids);
-          const nextIds = prevIds.includes(newFileIdStr)
-            ? prevIds
-            : [newFileIdStr, ...prevIds];
+    // 5) Re-sync léger en arrière-plan (optionnel mais propre)
+    await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
+  } catch (e) {
+    console.error(e);
+    setError(
+      e?.message || "Erreur lors de l'upload du document pour ce dossier."
+    );
+  } finally {
+    setUploadLoading(false);
+    if (event?.target) event.target.value = "";
+  }
+};
 
-          return {
-            ...base,
-            file_ids: nextIds,
-            status: tenantStatus ?? base.status,
-            checklist_json:
-              checklistPayload ?? base.checklist_json ?? base.checklist,
-            checklist: checklistPayload ?? base.checklist,
-          };
-        });
-
-        // 4) Met à jour la colonne de gauche (statut)
-        setTenants((prev) => {
-          const arr = Array.isArray(prev) ? prev : [];
-          return arr.map((t) =>
-            String(t.id) === String(selectedTenantId)
-              ? { ...t, status: tenantStatus ?? t.status }
-              : t
-          );
-        });
-      }
-
-      // ✅ Re-sync en arrière-plan via source de vérité (facultatif mais safe)
-      // Si tu veux ZERO requête après upload, commente cette ligne.
-      await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
-    } catch (e) {
-      console.error(e);
-      setError(e?.message || "Erreur lors de l'upload du document pour ce dossier.");
-    } finally {
-      setUploadLoading(false);
-      if (event?.target) event.target.value = "";
-    }
-  };
 
   const handleViewFile = async (fileId) => {
     if (!authFetchOk || !fileId) return;
