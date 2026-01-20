@@ -197,7 +197,6 @@ export default function TenantFilesPanel({ authFetch }) {
       setFilesHistory(arr);
 
       // ✅ Si on a déjà un dossier sélectionné, on resynchronise tenantDocuments depuis file_ids
-      // (sans casser l'instantanéité, car tenantDocuments est déjà alimenté à l'upload)
       if (tenantDetail?.file_ids) {
         const ids = normalizeIds(tenantDetail.file_ids);
         setTenantDocuments((prev) => {
@@ -243,123 +242,114 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   // ✅ Upload direct + lien au dossier via endpoint atomic
-  // ✅ Fix : on n'attend plus filesHistory pour afficher dans "Pièces du dossier"
-const handleUploadForTenant = async (event) => {
-  if (!authFetchOk) return;
+  // ✅ Fix : le backend renvoie {file_id, filename, doc_type, checklist}
+  //         donc on crée un "newFile" minimal côté UI pour mise à jour instantanée
+  const handleUploadForTenant = async (event) => {
+    if (!authFetchOk) return;
 
-  const file = event.target.files?.[0];
-  if (!file || !selectedTenantId) return;
+    const file = event.target.files?.[0];
+    if (!file || !selectedTenantId) return;
 
-  try {
-    setError("");
-    setUploadLoading(true);
+    try {
+      setError("");
+      setUploadLoading(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
+      const formData = new FormData();
+      formData.append("file", file);
 
-    const res = await authFetch(
-      `/tenant-files/${selectedTenantId}/upload-document`,
-      { method: "POST", body: formData }
-    );
+      const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
+        method: "POST",
+        body: formData,
+      });
 
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.error("upload-document error:", txt);
-      throw new Error(
-        txt || "Erreur lors de l'upload du fichier pour ce dossier locataire."
-      );
-    }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.error("upload-document error:", txt);
+        throw new Error(txt || "Erreur lors de l'upload du fichier pour ce dossier locataire.");
+      }
 
-    const payload = await res.json().catch(() => null);
+      const payload = await res.json().catch(() => null);
 
-    // -------------------------------
-    // 🔁 MODE SÉCURITÉ : pas de `file` dans la réponse => on force un gros refresh
-    // (utile si le backend renvoie encore juste {status: 'linked', ...})
-    // -------------------------------
-    const newFile = payload?.file;
-    const tenantPayload = payload?.tenant;
-    const checklistPayload = payload?.checklist;
-    const tenantStatus = payload?.tenant_status ?? tenantPayload?.status;
+      // ✅ Backend attendu:
+      // { file_id: 59, filename: "...", doc_type: "Autre", checklist: {...} }
+      const fileId = payload?.file_id;
+      if (!fileId) {
+        console.warn("upload-document: réponse sans file_id, refresh complet.");
+        await Promise.all([
+          fetchTenantDetail(selectedTenantId),
+          fetchFilesHistory(),
+          fetchTenants(),
+        ]);
+        return;
+      }
 
-    if (!newFile || !newFile.id) {
-      console.warn(
-        "upload-document: payload sans file.id, on force un refresh complet."
-      );
+      const newFileIdStr = String(fileId);
+      const docType = payload?.doc_type || "Document";
+      const filename = payload?.filename || file.name || `document_${fileId}`;
+      const checklistPayload = payload?.checklist || null;
+
+      // On crée un objet fichier minimal pour l'UI
+      // (le vrai objet complet sera récupéré par fetchFilesHistory)
+      const nowIso = new Date().toISOString();
+      const newFile = {
+        id: Number(fileId),
+        filename,
+        file_type: docType,
+        created_at: nowIso,
+        sender: "Upload manuel",
+        summary: "",
+      };
+
+      // 1) UI immédiate : Pièces du dossier
+      setTenantDocuments((prev) => {
+        const arr = Array.isArray(prev) ? prev : [];
+        const exists = arr.some((f) => String(f.id) === newFileIdStr);
+        return exists ? arr : [newFile, ...arr];
+      });
+
+      // 2) Historique global (utile pour "documents existants à attacher")
+      setFilesHistory((prev) => {
+        const arr = Array.isArray(prev) ? prev : [];
+        const exists = arr.some((f) => String(f.id) === newFileIdStr);
+        return exists ? arr : [newFile, ...arr];
+      });
+
+      // 3) Met à jour le détail du dossier : file_ids + checklist
+      setTenantDetail((prev) => {
+        const base = { ...(prev || {}) };
+        const prevIds = normalizeIds(base.file_ids);
+        const nextIds = prevIds.includes(newFileIdStr)
+          ? prevIds
+          : [newFileIdStr, ...prevIds];
+
+        // checklist_json chez toi peut être string/object selon sources
+        const checklistJson =
+          checklistPayload && typeof checklistPayload === "object"
+            ? JSON.stringify(checklistPayload)
+            : checklistPayload;
+
+        return {
+          ...base,
+          file_ids: nextIds,
+          checklist: checklistPayload ?? base.checklist,
+          checklist_json: checklistJson ?? base.checklist_json,
+        };
+      });
+
+      // 4) Refresh propre (source de vérité) — l'UI est déjà mise à jour, donc pas de clignotement
       await Promise.all([
         fetchTenantDetail(selectedTenantId),
         fetchFilesHistory(),
         fetchTenants(),
       ]);
-      return;
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de l'upload du document pour ce dossier.");
+    } finally {
+      setUploadLoading(false);
+      if (event?.target) event.target.value = "";
     }
-
-    const newFileIdStr = String(newFile.id);
-
-    // -------------------------------
-    // ✅ MODE OPTIMISTE : le backend renvoie bien le fichier
-    // -------------------------------
-
-    // 1) Met à jour l'historique global (utile pour la zone "À classer")
-    setFilesHistory((prev) => {
-      const arr = Array.isArray(prev) ? prev : [];
-      const exists = arr.some((f) => String(f.id) === newFileIdStr);
-      if (exists) {
-        return arr.map((f) =>
-          String(f.id) === newFileIdStr ? { ...f, ...newFile } : f
-        );
-      }
-      return [newFile, ...arr];
-    });
-
-    // 2) Met à jour instantanément la liste "Pièces du dossier"
-    setTenantDocuments((prev) => {
-      const arr = Array.isArray(prev) ? prev : [];
-      const exists = arr.some((f) => String(f.id) === newFileIdStr);
-      return exists ? arr : [newFile, ...arr];
-    });
-
-    // 3) Met à jour le détail du dossier (file_ids + checklist + status)
-    setTenantDetail((prev) => {
-      const base = { ...(prev || {}), ...(tenantPayload || {}) };
-
-      const prevIds = normalizeIds(base.file_ids);
-      const nextIds = prevIds.includes(newFileIdStr)
-        ? prevIds
-        : [newFileIdStr, ...prevIds];
-
-      return {
-        ...base,
-        file_ids: nextIds,
-        status: tenantStatus ?? base.status,
-        checklist_json:
-          checklistPayload ?? base.checklist_json ?? base.checklist,
-        checklist: checklistPayload ?? base.checklist,
-      };
-    });
-
-    // 4) Met à jour la colonne de gauche (statut)
-    setTenants((prev) => {
-      const arr = Array.isArray(prev) ? prev : [];
-      return arr.map((t) =>
-        String(t.id) === String(selectedTenantId)
-          ? { ...t, status: tenantStatus ?? t.status }
-          : t
-      );
-    });
-
-    // 5) Re-sync léger en arrière-plan (optionnel mais propre)
-    await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
-  } catch (e) {
-    console.error(e);
-    setError(
-      e?.message || "Erreur lors de l'upload du document pour ce dossier."
-    );
-  } finally {
-    setUploadLoading(false);
-    if (event?.target) event.target.value = "";
-  }
-};
-
+  };
 
   const handleViewFile = async (fileId) => {
     if (!authFetchOk || !fileId) return;
@@ -419,8 +409,12 @@ const handleUploadForTenant = async (event) => {
       }
 
       // Optimiste
-      setFilesHistory((prev) => (Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []));
-      setTenantDocuments((prev) => (Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []));
+      setFilesHistory((prev) =>
+        Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []
+      );
+      setTenantDocuments((prev) =>
+        Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []
+      );
 
       await fetchFilesHistory();
       if (selectedTenantId) await fetchTenantDetail(selectedTenantId);
@@ -436,10 +430,9 @@ const handleUploadForTenant = async (event) => {
 
     setError("");
     try {
-      const res = await authFetch(
-        `/tenant-files/${selectedTenantId}/documents/${fileId}`,
-        { method: "DELETE" }
-      );
+      const res = await authFetch(`/tenant-files/${selectedTenantId}/documents/${fileId}`, {
+        method: "DELETE",
+      });
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -539,12 +532,9 @@ const handleUploadForTenant = async (event) => {
     return (
       <div className="tf-page">
         <div className="tf-warn">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>
-            Erreur de configuration
-          </div>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur de configuration</div>
           <div>
-            <code>authFetch</code> n’a pas été passé à{" "}
-            <code>&lt;TenantFilesPanel /&gt;</code>.
+            <code>authFetch</code> n’a pas été passé à <code>&lt;TenantFilesPanel /&gt;</code>.
           </div>
         </div>
       </div>
@@ -621,9 +611,8 @@ const handleUploadForTenant = async (event) => {
                 const active = String(selectedTenantId) === String(t.id);
 
                 const checklistLocal = t.checklist_json || {};
-                const missingCount = Object.values(checklistLocal).filter(
-                  (v) => v === false
-                ).length;
+                const missingCount = Object.values(checklistLocal).filter((v) => v === false)
+                  .length;
 
                 return (
                   <button
@@ -713,8 +702,7 @@ const handleUploadForTenant = async (event) => {
                         <span>Checklist du dossier</span>{" "}
                         {missingDocs.length > 0 && (
                           <span className="tf-missing-badge">
-                            {missingDocs.length} manquante
-                            {missingDocs.length > 1 ? "s" : ""}
+                            {missingDocs.length} manquante{missingDocs.length > 1 ? "s" : ""}
                           </span>
                         )}
                       </div>
@@ -723,8 +711,7 @@ const handleUploadForTenant = async (event) => {
                           <span className="tf-pill tf-pill-success">Complet</span>
                         ) : (
                           <span className="tf-pill tf-pill-warning">
-                            {missingDocs.length} manquante
-                            {missingDocs.length > 1 ? "s" : ""}
+                            {missingDocs.length} manquante{missingDocs.length > 1 ? "s" : ""}
                           </span>
                         )}
                       </div>
@@ -826,15 +813,13 @@ const handleUploadForTenant = async (event) => {
             </div>
 
             {!tenantDetail ? (
-              <div className="tf-muted">
-                Sélectionne un locataire pour voir ses pièces.
-              </div>
+              <div className="tf-muted">Sélectionne un locataire pour voir ses pièces.</div>
             ) : linkedFileIds.length === 0 ? (
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
               <div className="tf-warn">
-                ⚠️ Le dossier a des <code>file_ids</code> mais aucun document n’est
-                encore chargé côté UI. (Normalement corrigé par tenantDocuments)
+                ⚠️ Le dossier a des <code>file_ids</code> mais aucun document n’est encore
+                chargé côté UI. (Normalement corrigé par tenantDocuments)
               </div>
             ) : (
               <div className="tf-files">
@@ -926,26 +911,16 @@ const handleUploadForTenant = async (event) => {
             </div>
 
             <div className="tf-modal-actions">
-              <button
-                type="button"
-                className="tf-btn tf-btn-ghost"
-                onClick={handleConfirmCancel}
-              >
+              <button type="button" className="tf-btn tf-btn-ghost" onClick={handleConfirmCancel}>
                 Annuler
               </button>
 
               <button
                 type="button"
-                className={
-                  confirmState.mode === "delete"
-                    ? "tf-btn tf-btn-danger"
-                    : "tf-btn tf-btn-primary"
-                }
+                className={confirmState.mode === "delete" ? "tf-btn tf-btn-danger" : "tf-btn tf-btn-primary"}
                 onClick={handleConfirmValidate}
               >
-                {confirmState.mode === "delete"
-                  ? "Supprimer définitivement"
-                  : "Retirer du dossier"}
+                {confirmState.mode === "delete" ? "Supprimer définitivement" : "Retirer du dossier"}
               </button>
             </div>
           </div>
