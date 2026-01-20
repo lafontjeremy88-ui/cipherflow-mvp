@@ -1447,63 +1447,89 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
 @app.post("/tenant-files/{tenant_id}/upload-document")
 async def upload_document_for_tenant(
     tenant_id: int,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
 ):
-    # 1) Lire le tenant
-    tf = TenantFile.get_or_none(TenantFile.id == tenant_id)
+    aid = current_user.agency_id
+
+    tf = (
+        db.query(TenantFile)
+        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
+        .first()
+    )
     if not tf:
         raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
 
-    # 2) Sauvegarde du fichier dans FileAnalysis
     contents = await file.read()
-    new_file = FileAnalysis.create(
-        tenant_id=tenant_id,
+
+    new_file = FileAnalysis(
         filename=file.filename,
         content_type=file.content_type,
         raw_data=contents,
-        file_type="unknown",   # à remplacer si tu détectes le type
+        agency_id=aid,
+    )
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+
+    # Lien dossier ↔ document
+    link = TenantDocumentLink(
+        tenant_file_id=tf.id,
+        file_analysis_id=new_file.id,
+        doc_type=map_doc_type(file.filename),
+        quality=DocQuality.OK,
+    )
+    db.add(link)
+    db.commit()
+
+    # Recalcul checklist
+    links = (
+        db.query(TenantDocumentLink)
+        .filter(TenantDocumentLink.tenant_file_id == tf.id)
+        .all()
+    )
+    doc_types = [l.doc_type for l in links]
+    checklist = compute_checklist(doc_types)
+
+    tf.checklist_json = json.dumps(checklist)
+    tf.status = (
+        TenantFileStatus.TO_VALIDATE
+        if len(checklist["missing"]) == 0
+        else TenantFileStatus.INCOMPLETE
     )
 
-    # 3) Lier le fichier au dossier
-    TenantDocumentLink.create(
-        tenant_file=tf,
-        document=new_file
-    )
 
-    # 4) Recalcul checklist
-    checklist_json = rebuild_checklist_for_tenant(tf.id)
+    documents = (
+    db.query(FileAnalysis)
+    .join(TenantDocumentLink, TenantDocumentLink.file_analysis_id == FileAnalysis.id)
+    .filter(TenantDocumentLink.tenant_file_id == tf.id)
+    .order_by(FileAnalysis.id.desc())
+    .all()
+)
 
-    # 5) Forcer mise à jour des file_ids
-    ids = [str(link.document.id) for link in tf.documents]
-
-    # 6) Mise à jour du statut
-    tf.file_ids = json.dumps(ids)
-    tf.checklist_json = json.dumps(checklist_json)
-    tf.status = compute_tenant_status(checklist_json)
-    tf.save()
-
-    # 7) Réponse complète pour que le frontend puisse MAJ immédiatement
     return {
-        "status": "uploaded_and_linked",
-        "file": {
-            "id": new_file.id,
-            "filename": new_file.filename,
-            "file_type": new_file.file_type,
-            "created_at": new_file.created_at.isoformat(),
-        },
-        "tenant_id": tf.id,
-        "tenant_status": tf.status,
-        "tenant": {
-            "id": tf.id,
-            "candidate_email": tf.candidate_email,
-            "file_ids": ids,
-            "checklist_json": checklist_json,
-            "status": tf.status,
-            "created_at": tf.created_at.isoformat(),
-            "updated_at": tf.updated_at.isoformat()
-        },
-        "checklist": checklist_json
-    }
+    "id": tf.id,
+    "status": tf.status.value if hasattr(tf.status, "value") else str(tf.status),
+    "candidate_email": tf.candidate_email,
+    "candidate_name": tf.candidate_name,
+    "checklist_json": tf.checklist_json,
+    "risk_level": tf.risk_level,
+    "created_at": tf.created_at,
+    "updated_at": tf.updated_at,
+    "email_ids": email_ids,
+    "file_ids": file_ids,
+    "documents": [
+        {
+            "id": f.id,
+            "filename": f.filename,
+            "created_at": f.created_at,
+            "file_type": f.file_type,
+        }
+        for f in documents
+    ],
+}
+
 
 
 
