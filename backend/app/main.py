@@ -1961,6 +1961,11 @@ async def analyze_file(
         )
         db.add(new_analysis)
         db.commit()
+        db.refresh(new_analysis)  # ✅ OBLIGATOIRE pour avoir l'id
+
+            # ✅ Injecter l'id du fichier analysé dans la réponse
+        if isinstance(data, dict):
+                data["file_analysis_id"] = new_analysis.id
 
         return data
     except Exception as e:

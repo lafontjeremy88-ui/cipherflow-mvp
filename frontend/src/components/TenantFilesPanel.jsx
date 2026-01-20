@@ -31,7 +31,7 @@ export default function TenantFilesPanel({ authFetch }) {
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const uploadInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
 
   const [error, setError] = useState("");
   const [confirmState, setConfirmState] = useState({
@@ -178,43 +178,73 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   const handleUploadForTenant = async (event) => {
-    if (!authFetchOk || !selectedTenantId) return;
-    const file = event.target?.files?.[0];
-    if (!file) return;
+  if (!authFetchOk) return;
 
+  const file = event.target.files?.[0];
+  if (!file || !selectedTenantId) return;
+
+  try {
     setError("");
     setUploadLoading(true);
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
+    // 1) Upload + analyse du fichier
+    const formData = new FormData();
+    formData.append("file", file);
 
-      const res = await authFetch(
-        `/tenant-files/${selectedTenantId}/upload-document`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+    const analyzeRes = await authFetch("/api/analyze-file", {
+      method: "POST",
+      body: formData,
+    });
 
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Erreur upload document");
-      }
-
-      // On ne dépend pas de la forme de la réponse : on recharge l'état
-      await fetchTenantDetail(selectedTenantId);
-      await fetchFilesHistory();
-    } catch (e) {
-      console.error(e);
-      setError(e?.message || "Erreur lors de l'upload du document.");
-    } finally {
-      setUploadLoading(false);
-      if (event.target) {
-        event.target.value = "";
-      }
+    if (!analyzeRes.ok) {
+      console.error("analyze-file error:", await analyzeRes.text());
+      alert("Erreur upload/analyse.");
+      return;
     }
-  };
+
+    const analyzeData = await analyzeRes.json();
+    const fileAnalysisId = analyzeData.file_analysis_id;
+
+    if (!fileAnalysisId) {
+      console.error("file_analysis_id manquant:", analyzeData);
+      alert("Upload OK mais impossible de rattacher au dossier (ID manquant).");
+      return;
+    }
+
+    // 2) Rattacher ce file_analysis au dossier locataire sélectionné
+    const attachRes = await authFetch(
+      `/tenant-files/${selectedTenantId}/attach-document`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_analysis_id: fileAnalysisId }),
+      }
+    );
+
+    if (!attachRes.ok) {
+      console.error("attach-document error:", await attachRes.text());
+      alert("Upload OK mais rattachement au dossier échoué.");
+      return;
+    }
+
+    // 3) Rafraîchir l’UI (locataires + détails + pièces + historique)
+    await Promise.all([
+      fetchTenantDetail(selectedTenantId),
+      fetchTenantFiles(selectedTenantId),
+      fetchTenants(),
+      fetchFilesHistory(),
+    ]);
+
+    // reset de l’input file
+    event.target.value = "";
+  } catch (e) {
+    console.error(e);
+    alert("Erreur inattendue.");
+  } finally {
+    setUploadLoading(false);
+  }
+};
+
 
 
   // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
@@ -673,31 +703,27 @@ export default function TenantFilesPanel({ authFetch }) {
                   </div>
                 )}
 
-                 <div className="tf-attach">
-                  <div className="tf-k">Ajouter un nouveau document</div>
-                  <div className="tf-attach-row">
-                    <button
-                      type="button"
-                      className="tf-btn tf-btn-secondary"
-                      onClick={() => uploadInputRef.current?.click()}
-                      disabled={uploadLoading}
-                    >
-                      <Upload size={16} />{" "}
-                      {uploadLoading ? "Upload en cours..." : "Téléverser un fichier"}
-                    </button>
-                    <span className="tf-muted">
-                      PDF, PNG, JPG – taille max 10 Mo
-                    </span>
-                    <input
-                      type="file"
-                      ref={uploadInputRef}
-                      style={{ display: "none" }}
-                      accept=".pdf,.png,.jpg,.jpeg,.pdf"
-                      onChange={handleUploadForTenant}
-                    />
-                  </div>
-                </div>
+                 <div className="tf-attach-row">
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={handleUploadForTenant}
+                    disabled={!selectedTenantId || uploadLoading || !authFetchOk}
+                    style={{ display: "none" }}
+                    id="tenant-upload-input"
+                  />
 
+                  <label
+                    htmlFor="tenant-upload-input"
+                    className="tf-btn tf-btn-secondary"
+                  >
+                    {uploadLoading ? "Téléversement..." : "Téléverser un fichier"}
+                  </label>
+
+                  <span className="tf-muted">
+                    PDF, PNG, JPG – taille max 10 Mo
+                  </span>
+                </div>
               </>
             )}
           </div>
