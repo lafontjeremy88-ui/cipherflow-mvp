@@ -1447,109 +1447,64 @@ async def attach_document_to_tenant(tenant_id: int, file_id: int, db: Session = 
 @app.post("/tenant-files/{tenant_id}/upload-document")
 async def upload_document_for_tenant(
     tenant_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_db),
+    file: UploadFile = File(...)
 ):
-    """
-    Upload + analyse IA + création FileAnalysis + lien automatique au dossier locataire.
-    """
-    aid = current_user.agency_id
-
-    # 1) Vérifier que le dossier appartient bien à l'agence
-    tf = (
-        db.query(TenantFile)
-        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
-        .first()
-    )
+    # 1) Lire le tenant
+    tf = TenantFile.get_or_none(TenantFile.id == tenant_id)
     if not tf:
-        raise HTTPException(status_code=404, detail="Dossier introuvable")
+        raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
 
-    # 2) Sauvegarder le fichier comme dans /api/analyze-file
-    safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
-    uploads_dir = Path("uploads")
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    file_path = uploads_dir / safe_name
+    # 2) Sauvegarde du fichier dans FileAnalysis
+    contents = await file.read()
+    new_file = FileAnalysis.create(
+        tenant_id=tenant_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        raw_data=contents,
+        file_type="unknown",   # à remplacer si tu détectes le type
+    )
 
-    try:
-        with open(file_path, "wb") as f_out:
-            shutil.copyfileobj(file.file, f_out)
+    # 3) Lier le fichier au dossier
+    TenantDocumentLink.create(
+        tenant_file=tf,
+        document=new_file
+    )
 
-        # 3) Analyse IA (même logique que /api/analyze-file)
-        data = await analyze_document_logic(str(file_path), safe_name)
-        if not data:
-            raise HTTPException(status_code=500, detail="Erreur analyse document")
+    # 4) Recalcul checklist
+    checklist_json = rebuild_checklist_for_tenant(tf.id)
 
-        fa = FileAnalysis(
-            filename=safe_name,
-            file_type=str(data.get("type", "Inconnu")),
-            sender=str(data.get("sender", "Inconnu")),
-            extracted_date=str(data.get("date", "")),
-            amount=str(data.get("amount", "0")),
-            summary=str(data.get("summary", "Pas de résumé")),
-            owner_id=current_user.id,
-            agency_id=aid,
-        )
-        db.add(fa)
-        db.flush()  # pour récupérer fa.id sans commit séparé
+    # 5) Forcer mise à jour des file_ids
+    ids = [str(link.document.id) for link in tf.documents]
 
-        # 4) Créer le lien vers le dossier locataire
-            # On combine file_type + filename pour aider le mapping
-        raw_for_mapping = f"{getattr(fa, 'file_type', '')} {getattr(fa, 'filename', '')}".strip()
-        doc_type = map_doc_type(raw_for_mapping)
+    # 6) Mise à jour du statut
+    tf.file_ids = json.dumps(ids)
+    tf.checklist_json = json.dumps(checklist_json)
+    tf.status = compute_tenant_status(checklist_json)
+    tf.save()
 
-        link = TenantDocumentLink(
-            tenant_file_id=tf.id,
-            file_analysis_id=fa.id,
-            doc_type=doc_type,
-            quality=DocQuality.OK,
-        )
-        db.add(link)
+    # 7) Réponse complète pour que le frontend puisse MAJ immédiatement
+    return {
+        "status": "uploaded_and_linked",
+        "file": {
+            "id": new_file.id,
+            "filename": new_file.filename,
+            "file_type": new_file.file_type,
+            "created_at": new_file.created_at.isoformat(),
+        },
+        "tenant_id": tf.id,
+        "tenant_status": tf.status,
+        "tenant": {
+            "id": tf.id,
+            "candidate_email": tf.candidate_email,
+            "file_ids": ids,
+            "checklist_json": checklist_json,
+            "status": tf.status,
+            "created_at": tf.created_at.isoformat(),
+            "updated_at": tf.updated_at.isoformat()
+        },
+        "checklist": checklist_json
+    }
 
-        # 5) Recalculer la checklist
-        links = (
-            db.query(TenantDocumentLink)
-            .filter(TenantDocumentLink.tenant_file_id == tf.id)
-            .all()
-        )
-        doc_types = [l.doc_type for l in links]
-        checklist = compute_checklist(doc_types)
-
-        tf.checklist_json = json.dumps(checklist)
-        tf.status = (
-            TenantFileStatus.TO_VALIDATE
-            if len(checklist["missing"]) == 0
-            else TenantFileStatus.INCOMPLETE
-        )
-
-        db.commit()
-
-        return {
-            "status": "uploaded_and_linked",
-            "file": {
-                "id": fa.id,
-                "filename": fa.filename,
-                "file_type": fa.file_type,
-                "sender": fa.sender,
-                "extracted_date": fa.extracted_date,
-                "amount": fa.amount,
-                "summary": fa.summary,
-            },
-            "checklist": checklist,
-            "tenant_id": tf.id,
-            "tenant_status": tf.status.value
-            if hasattr(tf.status, "value")
-            else str(tf.status),
-        }
-
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await file.close()
 
 
 @app.delete("/tenant-files/{tenant_id}/documents/{file_id}")
