@@ -1,17 +1,22 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
-import { RefreshCw, Eye, Download, Link2, FolderOpen, FileText, Trash2, Upload } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  RefreshCw,
+  Eye,
+  Download,
+  Link2,
+  FolderOpen,
+  FileText,
+  Trash2,
+} from "lucide-react";
 
 // Mapping des codes internes -> libellés lisibles
 const DOC_LABELS = {
   payslip: "Fiche de paie",
   id: "Pièce d'identité",
   tax: "Avis d'impôt",
-  // Tu pourras en rajouter ici au fur et à mesure :
   // rent_receipt: "Quittance de loyer",
   // guarantor_payslip: "Fiche de paie garant",
 };
-
-
 
 function getDocLabel(code) {
   return DOC_LABELS[code] || code;
@@ -31,7 +36,6 @@ export default function TenantFilesPanel({ authFetch }) {
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
 
   const [error, setError] = useState("");
   const [confirmState, setConfirmState] = useState({
@@ -80,9 +84,7 @@ export default function TenantFilesPanel({ authFetch }) {
 
       const res = await authFetch("/tenant-files", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
@@ -93,9 +95,9 @@ export default function TenantFilesPanel({ authFetch }) {
 
       const data = await res.json().catch(() => null);
 
-      await fetchTenants(); // recharge la liste
+      await fetchTenants();
       if (data?.id) {
-        setSelectedTenantId(data.id); // auto-sélection
+        setSelectedTenantId(data.id);
         await fetchTenantDetail(data.id);
       }
 
@@ -137,9 +139,7 @@ export default function TenantFilesPanel({ authFetch }) {
       const res = await authFetch("/api/files/history");
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(
-          txt || "Impossible de charger l'historique des documents"
-        );
+        throw new Error(txt || "Impossible de charger l'historique des documents");
       }
       const data = await res.json().catch(() => []);
       setFilesHistory(Array.isArray(data) ? data : []);
@@ -153,83 +153,103 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   const handleAttach = async () => {
-  if (!authFetchOk || !selectedTenantId || !selectedFileIdToAttach) return;
-  setError("");
-  setAttachLoading(true);
-  try {
-    const res = await authFetch(
-      `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
-      { method: "POST" }
-    );
-
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(txt || "Erreur attach-document");
-    }
-
-    // ✅ on recharge à la fois le dossier et l'historique des fichiers
-    await Promise.all([
-  fetchTenantDetail(selectedTenantId),
-  fetchFilesHistory(),
-]);
-setSelectedFileIdToAttach("");
-  } catch (e) {
-    console.error(e);
-    setError(e?.message || "Erreur : impossible d'attacher le document.");
-  } finally {
-    setAttachLoading(false);
-  }
-};
-
-
-const handleUploadForTenant = async (event) => {
-  if (!authFetchOk) return;
-
-  const file = event.target.files?.[0];
-  if (!file || !selectedTenantId) return;
-
-  try {
+    if (!authFetchOk || !selectedTenantId || !selectedFileIdToAttach) return;
     setError("");
-    setUploadLoading(true);
+    setAttachLoading(true);
+    try {
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/attach-document/${selectedFileIdToAttach}`,
+        { method: "POST" }
+      );
 
-    const formData = new FormData();
-    formData.append("file", file);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Erreur attach-document");
+      }
 
-    // ✅ NOUVEAU FLOW : un seul endpoint qui fait tout
-    const res = await authFetch(
-      `/tenant-files/${selectedTenantId}/upload-document`,
-      {
+      // ✅ Recharge dossier + historique (évite le warning file_ids sans détails)
+      await Promise.all([fetchTenantDetail(selectedTenantId), fetchFilesHistory()]);
+      setSelectedFileIdToAttach("");
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur : impossible d'attacher le document.");
+    } finally {
+      setAttachLoading(false);
+    }
+  };
+
+  // ✅ Upload direct + lien au dossier via endpoint atomic
+  // ✅ FIX PRO: update optimiste (filesHistory + tenantDetail.file_ids + checklist) => plus besoin d'uploader 2 fois
+  const handleUploadForTenant = async (event) => {
+    if (!authFetchOk) return;
+
+    const file = event.target.files?.[0];
+    if (!file || !selectedTenantId) return;
+
+    try {
+      setError("");
+      setUploadLoading(true);
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
         method: "POST",
         body: formData,
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Erreur upload-document");
       }
-    );
 
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(txt || "Erreur upload-document");
+      const payload = await res.json().catch(() => null);
+      console.log("upload-document payload:", payload);
+
+      const newFile = payload?.file;
+      const newChecklist = payload?.checklist;
+      const newTenantStatus = payload?.tenant_status;
+
+      // ✅ 1) Injecte le fichier dans l'historique immédiatement (sinon linkedFiles ne le voit pas)
+      if (newFile?.id) {
+        setFilesHistory((prev) => {
+          const arr = Array.isArray(prev) ? prev : [];
+          const exists = arr.some((f) => String(f.id) === String(newFile.id));
+          return exists ? arr : [newFile, ...arr];
+        });
+
+        // ✅ 2) Injecte son ID dans le dossier immédiatement + update checklist/status
+        setTenantDetail((prev) => {
+          if (!prev) return prev;
+
+          const prevIds = Array.isArray(prev.file_ids) ? prev.file_ids.map(String) : [];
+          const idStr = String(newFile.id);
+          const nextIds = prevIds.includes(idStr) ? prevIds : [...prevIds, idStr];
+
+          return {
+            ...prev,
+            file_ids: nextIds,
+            checklist_json: newChecklist ?? prev.checklist_json,
+            status: newTenantStatus ?? prev.status,
+          };
+        });
+      }
+
+      // ✅ 3) Sécurité : refetch derrière (source de vérité)
+      await Promise.all([
+        fetchTenantDetail(selectedTenantId),
+        fetchFilesHistory(),
+        fetchTenants(),
+      ]);
+
+      event.target.value = "";
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur upload dossier");
+    } finally {
+      setUploadLoading(false);
     }
-
-    // Même si on ne se sert pas du JSON pour l'instant,
-    // on le lit une fois pour debugger si besoin.
-    const payload = await res.json().catch(() => null);
-    console.log("upload-document payload:", payload);
-
-    // ✅ Mise à jour fiable de l’UI depuis la base
-    await Promise.all([
-      fetchTenantDetail(selectedTenantId),
-      fetchFilesHistory(),
-      fetchTenants(),
-    ]);
-
-    // reset input file
-    event.target.value = "";
-  } catch (e) {
-    console.error(e);
-    setError(e?.message || "Erreur upload dossier");
-  } finally {
-    setUploadLoading(false);
-  }
-};
+  };
 
   // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
   const handleViewFile = async (fileId) => {
@@ -245,7 +265,6 @@ const handleUploadForTenant = async (event) => {
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       window.open(url, "_blank", "noopener,noreferrer");
-      // Note: on ne revoke pas tout de suite sinon certains navigateurs ferment l'onglet/preview
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur lors de l'ouverture du document.");
@@ -292,9 +311,9 @@ const handleUploadForTenant = async (event) => {
         throw new Error(txt || "Impossible de supprimer le document");
       }
 
-      // refresh: historique + dossier ouvert
       await fetchFilesHistory();
       if (selectedTenantId) await fetchTenantDetail(selectedTenantId);
+      await fetchTenants();
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur lors de la suppression du document.");
@@ -317,8 +336,7 @@ const handleUploadForTenant = async (event) => {
         throw new Error(txt || "Impossible de retirer le document du dossier");
       }
 
-      // refresh: uniquement le dossier (pas besoin de refresh l'historique)
-      await fetchTenantDetail(selectedTenantId);
+      await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur lors du retrait du document du dossier.");
@@ -327,19 +345,11 @@ const handleUploadForTenant = async (event) => {
 
   // ===== Gestion de la modal de confirmation =====
   const openConfirmUnlink = (fileId) => {
-    setConfirmState({
-      open: true,
-      mode: "unlink",
-      fileId,
-    });
+    setConfirmState({ open: true, mode: "unlink", fileId });
   };
 
   const openConfirmDelete = (fileId) => {
-    setConfirmState({
-      open: true,
-      mode: "delete",
-      fileId,
-    });
+    setConfirmState({ open: true, mode: "delete", fileId });
   };
 
   const handleConfirmCancel = () => {
@@ -410,12 +420,8 @@ const handleUploadForTenant = async (event) => {
     return null;
   }, [tenantDetail]);
 
-  const receivedDocs = Array.isArray(checklist?.received)
-    ? checklist.received
-    : [];
-  const missingDocs = Array.isArray(checklist?.missing)
-    ? checklist.missing
-    : [];
+  const receivedDocs = Array.isArray(checklist?.received) ? checklist.received : [];
+  const missingDocs = Array.isArray(checklist?.missing) ? checklist.missing : [];
 
   const linkedFiles = useMemo(() => {
     const set = new Set(linkedFileIds);
@@ -462,6 +468,7 @@ const handleUploadForTenant = async (event) => {
             <RefreshCw size={16} />{" "}
             {tenantsLoading ? "Chargement..." : "Rafraîchir locataires"}
           </button>
+
           <button
             className="tf-btn tf-btn-primary"
             onClick={fetchFilesHistory}
@@ -474,10 +481,7 @@ const handleUploadForTenant = async (event) => {
       </div>
 
       {!!error && (
-        <div
-          className="tf-warn"
-          style={{ borderColor: "rgba(239,68,68,.45)" }}
-        >
+        <div className="tf-warn" style={{ borderColor: "rgba(239,68,68,.45)" }}>
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur</div>
           <div style={{ opacity: 0.95 }}>{error}</div>
         </div>
@@ -514,6 +518,9 @@ const handleUploadForTenant = async (event) => {
             <div className="tf-list">
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
+
+                // NOTE: ta liste "tenants" a parfois checklist_json sous forme d'objet "clé->bool"
+                // et parfois sous forme {required/received/missing}. On garde ton calcul actuel.
                 const checklist = t.checklist_json || {};
                 const missingCount = Object.values(checklist).filter(
                   (v) => v === false
@@ -545,8 +552,7 @@ const handleUploadForTenant = async (event) => {
 
                       {t.status === "incomplete" && missingCount > 0 && (
                         <span className="tf-missing-count">
-                          {missingCount} pièce
-                          {missingCount > 1 ? "s" : ""} manquante
+                          {missingCount} pièce{missingCount > 1 ? "s" : ""} manquante
                           {missingCount > 1 ? "s" : ""}
                         </span>
                       )}
@@ -565,17 +571,13 @@ const handleUploadForTenant = async (event) => {
             {tenantLoading ? (
               <div className="tf-muted">Chargement...</div>
             ) : !tenantDetail ? (
-              <div className="tf-muted">
-                Sélectionne un locataire à gauche.
-              </div>
+              <div className="tf-muted">Sélectionne un locataire à gauche.</div>
             ) : (
               <>
                 <div className="tf-kv">
                   <div>
                     <div className="tf-k">Email candidat</div>
-                    <div className="tf-v">
-                      {tenantDetail.candidate_email || "-"}
-                    </div>
+                    <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
                   </div>
 
                   <div>
@@ -610,8 +612,6 @@ const handleUploadForTenant = async (event) => {
                     <div className="tf-checklist-head">
                       <div className="tf-checklist-header">
                         <span>Checklist du dossier</span>{" "}
-
-                        {/* ✅ Correction MICRO-BUG 1 : missingDocs.length au lieu de missingCount */}
                         {missingDocs.length > 0 && (
                           <span className="tf-missing-badge">
                             {missingDocs.length} manquante
@@ -621,9 +621,7 @@ const handleUploadForTenant = async (event) => {
                       </div>
                       <div className="tf-checklist-meta">
                         {missingDocs.length === 0 ? (
-                          <span className="tf-pill tf-pill-success">
-                            Complet
-                          </span>
+                          <span className="tf-pill tf-pill-success">Complet</span>
                         ) : (
                           <span className="tf-pill tf-pill-warning">
                             {missingDocs.length} manquante
@@ -637,16 +635,11 @@ const handleUploadForTenant = async (event) => {
                       <div className="tf-checklist-col">
                         <div className="tf-checklist-col-title">Reçues</div>
                         {receivedDocs.length === 0 ? (
-                          <div className="tf-muted">
-                            Aucune pièce reçue.
-                          </div>
+                          <div className="tf-muted">Aucune pièce reçue.</div>
                         ) : (
                           <div className="tf-badges">
                             {receivedDocs.map((d) => (
-                              <span
-                                className="tf-pill tf-pill-success"
-                                key={`rec-${d}`}
-                              >
+                              <span className="tf-pill tf-pill-success" key={`rec-${d}`}>
                                 ✅ {getDocLabel(d)}
                               </span>
                             ))}
@@ -655,20 +648,13 @@ const handleUploadForTenant = async (event) => {
                       </div>
 
                       <div className="tf-checklist-col">
-                        <div className="tf-checklist-col-title">
-                          Manquantes
-                        </div>
+                        <div className="tf-checklist-col-title">Manquantes</div>
                         {missingDocs.length === 0 ? (
-                          <div className="tf-muted">
-                            Aucune pièce manquante.
-                          </div>
+                          <div className="tf-muted">Aucune pièce manquante.</div>
                         ) : (
                           <div className="tf-badges">
                             {missingDocs.map((d) => (
-                              <span
-                                className="tf-pill tf-pill-danger"
-                                key={`mis-${d}`}
-                              >
+                              <span className="tf-pill tf-pill-danger" key={`mis-${d}`}>
                                 ❌ {getDocLabel(d)}
                               </span>
                             ))}
@@ -677,8 +663,6 @@ const handleUploadForTenant = async (event) => {
                       </div>
                     </div>
 
-                    {/* ✅ Correction MICRO-BUG 2 :
-                        hint déplacé EN DEHORS de tf-checklist-grid */}
                     {missingDocs.length > 0 && (
                       <div className="tf-checklist-hint">
                         Ajoute les pièces manquantes pour compléter le dossier.
@@ -687,7 +671,7 @@ const handleUploadForTenant = async (event) => {
                   </div>
                 )}
 
-                 <div className="tf-attach-row">
+                <div className="tf-attach-row">
                   <input
                     type="file"
                     accept=".pdf,.png,.jpg,.jpeg"
@@ -697,17 +681,40 @@ const handleUploadForTenant = async (event) => {
                     id="tenant-upload-input"
                   />
 
-                  <label
-                    htmlFor="tenant-upload-input"
-                    className="tf-btn tf-btn-secondary"
-                  >
+                  <label htmlFor="tenant-upload-input" className="tf-btn tf-btn-secondary">
                     {uploadLoading ? "Téléversement..." : "Téléverser un fichier"}
                   </label>
 
-                  <span className="tf-muted">
-                    PDF, PNG, JPG – taille max 10 Mo
-                  </span>
+                  <span className="tf-muted">PDF, PNG, JPG – taille max 10 Mo</span>
                 </div>
+
+                {/* (Optionnel) UI d'attache depuis l'historique - tu l'avais déjà ailleurs */}
+                {unlinkedFiles.length > 0 && (
+                  <div className="tf-attach-row" style={{ marginTop: 12 }}>
+                    <select
+                      className="tf-input"
+                      value={selectedFileIdToAttach}
+                      onChange={(e) => setSelectedFileIdToAttach(e.target.value)}
+                      disabled={!selectedTenantId || filesLoading}
+                    >
+                      <option value="">Attacher un document existant…</option>
+                      {unlinkedFiles.slice(0, 200).map((f) => (
+                        <option key={f.id} value={f.id}>
+                          #{f.id} — {f.file_type || "Doc"} — {f.filename}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="tf-btn tf-btn-primary"
+                      onClick={handleAttach}
+                      disabled={!selectedFileIdToAttach || attachLoading}
+                    >
+                      {attachLoading ? "Attachement..." : "Attacher"}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -728,9 +735,8 @@ const handleUploadForTenant = async (event) => {
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
               <div className="tf-warn">
-                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve
-                pas leurs détails dans <code>/api/files/history</code>. Clique
-                “Rafraîchir fichiers”.
+                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve pas leurs
+                détails dans <code>/api/files/history</code>. Clique “Rafraîchir fichiers”.
               </div>
             ) : (
               <div className="tf-files">
@@ -741,9 +747,7 @@ const handleUploadForTenant = async (event) => {
                         #{f.id} — {f.file_type || "Doc"} — {f.filename}
                       </div>
                       <div className="tf-file-sub">
-                        {f.created_at
-                          ? new Date(f.created_at).toLocaleString()
-                          : ""}
+                        {f.created_at ? new Date(f.created_at).toLocaleString() : ""}
                       </div>
                     </div>
 
@@ -793,9 +797,7 @@ const handleUploadForTenant = async (event) => {
         <div className="tf-modal-backdrop">
           <div
             className={`tf-modal ${
-              confirmState.mode === "delete"
-                ? "tf-modal-danger"
-                : "tf-modal-warning"
+              confirmState.mode === "delete" ? "tf-modal-danger" : "tf-modal-warning"
             }`}
           >
             <div className="tf-modal-header">
@@ -844,9 +846,7 @@ const handleUploadForTenant = async (event) => {
                 }
                 onClick={handleConfirmValidate}
               >
-                {confirmState.mode === "delete"
-                  ? "Supprimer définitivement"
-                  : "Retirer du dossier"}
+                {confirmState.mode === "delete" ? "Supprimer définitivement" : "Retirer du dossier"}
               </button>
             </div>
           </div>
@@ -855,7 +855,3 @@ const handleUploadForTenant = async (event) => {
     </div>
   );
 }
-
-
-
-/*=====essai====*/
