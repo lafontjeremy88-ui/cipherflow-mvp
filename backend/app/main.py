@@ -1481,7 +1481,7 @@ async def upload_document_for_tenant(
     # 3️⃣ Création FileAnalysis (CHAMPS VALIDES UNIQUEMENT)
     new_file = FileAnalysis(
         filename=safe_name,
-        file_type=str(data.get("type", "Document")),
+        file_type=raw_type,
         sender="Upload manuel",
         extracted_date=str(data.get("date", "")),
         amount=str(data.get("amount", "0")),
