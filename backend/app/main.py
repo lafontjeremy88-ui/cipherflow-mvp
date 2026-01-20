@@ -256,59 +256,60 @@ def extract_json_from_text(text: str):
 # 🟦 HELPERS GESTION LOCATIVE (NOUVEAU)
 # ============================================================
 
-def map_doc_type(raw: str) -> TenantDocType:
-    """Mappe un texte (type IA, nom de fichier, tags…) vers ID / PAYSLIP / TAX / OTHER."""
+class DocType(str, Enum):
+    PAYSLIP = "payslip"
+    TAX = "tax"
+    ID = "id"
+    OTHER = "other"
+
+
+def map_doc_type(raw: str) -> str:
+    """
+    Transforme une description libre ('Fiche de paie', 'Pièce d'identité', etc.)
+    en un type normalisé: 'payslip' | 'tax' | 'id' | 'other'.
+    """
     if not raw:
-        return TenantDocType.OTHER
+        return DocType.OTHER.value
 
-    t = raw.lower()
+    txt = raw.lower()
+    txt = txt.replace("_", " ").strip()
 
-    # --- FICHE DE PAIE / BULLETIN ---
-    if any(
-        k in t
-        for k in [
-            "fiche de paie",
-            "bulletin de paie",
-            "bulletin de salaire",
-            "payslip",
-            "pay slip",
-        ]
+    # --- Fiche de paie / bulletin de salaire ---
+    if (
+        "fiche de paie" in txt
+        or "fiche de paye" in txt
+        or "bulletin de paie" in txt
+        or "bulletin de paye" in txt
+        or "bulletin" in txt and "paie" in txt
+        or "paye" in txt
     ):
-        return TenantDocType.PAYSLIP
+        return DocType.PAYSLIP.value
 
-    # --- AVIS D'IMPOT / IMPOSITION ---
-    if any(
-        k in t
-        for k in [
-            "avis d'impot",
-            "avis d impôt",
-            "avis d imposition",
-            "avis d'imposition",
-            "impot",
-            "impôt",
-            "tax",
-        ]
+    # --- Avis d'impôt / impots ---
+    if (
+        "avis d'impot" in txt
+        or "avis d impôt" in txt
+        or "avis d impot" in txt
+        or "avis d’impôt" in txt
+        or ("avis" in txt and ("impot" in txt or "impôt" in txt))
     ):
-        return TenantDocType.TAX
+        return DocType.TAX.value
 
-    # --- PIECE D'IDENTITE / ID / PASSEPORT ---
-    if any(
-        k in t
-        for k in [
-            "pièce d'identité",
-            "piece d'identite",
-            "cni",
-            "carte nationale",
-            "identity card",
-            "id card",
-            "passeport",
-            "passport",
-        ]
+    # --- Pièce d'identité / carte d'identité / CNI / passeport ---
+    if (
+        "pièce d'identité" in txt
+        or "piece d'identite" in txt
+        or "piece d identite" in txt
+        or "carte d'identité" in txt
+        or "carte nationale d'identité" in txt
+        or "cni" in txt
+        or "passeport" in txt
+        or "identité" in txt
+        or "identite" in txt
     ):
-        return TenantDocType.ID
+        return DocType.ID.value
 
-    # Par défaut
-    return TenantDocType.OTHER
+    return DocType.OTHER.value
 
 
 def compute_checklist(doc_types: List[TenantDocType]) -> dict:
@@ -1492,7 +1493,10 @@ async def upload_document_for_tenant(
         db.flush()  # pour récupérer fa.id sans commit séparé
 
         # 4) Créer le lien vers le dossier locataire
-        doc_type = map_doc_type(f"{getattr(fa, 'file_type', '')} {getattr(fa, 'filename', '')}".strip())
+            # On combine file_type + filename pour aider le mapping
+        raw_for_mapping = f"{getattr(fa, 'file_type', '')} {getattr(fa, 'filename', '')}".strip()
+        doc_type = map_doc_type(raw_for_mapping)
+
         link = TenantDocumentLink(
             tenant_file_id=tf.id,
             file_analysis_id=fa.id,
