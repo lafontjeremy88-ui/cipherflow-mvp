@@ -375,7 +375,8 @@ async def analyze_document_logic(file_path: str, filename: str):
 
     except Exception as e:
         print(f"Erreur analyse doc: {e}")
-        return {"summary": "Erreur analyse", "type": "Erreur"}
+        return {"summary": "Analyse indisponible (erreur IA)",
+        "type": "Autre"}
 
 async def analyze_email_logic(req, company_name, db: Session, agency_id: int, attachment_summary=""):
     last_files = (
@@ -1472,6 +1473,10 @@ async def upload_document_for_tenant(
 
     # 2️⃣ Analyse IA (optionnelle mais cohérente)
     data = await analyze_document_logic(str(file_path), safe_name) or {}
+
+    raw_type = str(data.get("type", "Document") or "").strip()
+    if not raw_type or raw_type.lower().startswith("erreur"):
+      raw_type = "Document"
 
     # 3️⃣ Création FileAnalysis (CHAMPS VALIDES UNIQUEMENT)
     new_file = FileAnalysis(
