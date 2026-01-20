@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw,
   Eye,
@@ -14,12 +14,37 @@ const DOC_LABELS = {
   payslip: "Fiche de paie",
   id: "Pièce d'identité",
   tax: "Avis d'impôt",
-  // rent_receipt: "Quittance de loyer",
-  // guarantor_payslip: "Fiche de paie garant",
 };
 
 function getDocLabel(code) {
   return DOC_LABELS[code] || code;
+}
+
+function uniqById(arr) {
+  const map = new Map();
+  (Array.isArray(arr) ? arr : []).forEach((x) => {
+    if (!x) return;
+    map.set(String(x.id), x);
+  });
+  return Array.from(map.values());
+}
+
+function normalizeIds(ids) {
+  if (!ids) return [];
+  if (Array.isArray(ids)) return ids.map(String);
+
+  if (typeof ids === "string") {
+    try {
+      const parsed = JSON.parse(ids);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return ids
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
 }
 
 export default function TenantFilesPanel({ authFetch }) {
@@ -32,6 +57,9 @@ export default function TenantFilesPanel({ authFetch }) {
 
   const [filesHistory, setFilesHistory] = useState([]);
   const [filesLoading, setFilesLoading] = useState(false);
+
+  // ✅ Source de vérité UI pour "Pièces du dossier" (évite dépendance au timing de filesHistory)
+  const [tenantDocuments, setTenantDocuments] = useState([]);
 
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
@@ -48,6 +76,12 @@ export default function TenantFilesPanel({ authFetch }) {
   const [creatingTenant, setCreatingTenant] = useState(false);
 
   const authFetchOk = typeof authFetch === "function";
+
+  // 🔒 On garde la dernière version de filesHistory pour les syncs (évite stale closures)
+  const filesHistoryRef = useRef([]);
+  useEffect(() => {
+    filesHistoryRef.current = Array.isArray(filesHistory) ? filesHistory : [];
+  }, [filesHistory]);
 
   const fetchTenants = async () => {
     if (!authFetchOk) return;
@@ -78,9 +112,7 @@ export default function TenantFilesPanel({ authFetch }) {
     setCreatingTenant(true);
     try {
       const payload = {};
-      if (newTenantEmail.trim()) {
-        payload.candidate_email = newTenantEmail.trim();
-      }
+      if (newTenantEmail.trim()) payload.candidate_email = newTenantEmail.trim();
 
       const res = await authFetch("/tenant-files", {
         method: "POST",
@@ -120,12 +152,31 @@ export default function TenantFilesPanel({ authFetch }) {
         const txt = await res.text().catch(() => "");
         throw new Error(txt || "Impossible de charger le détail du dossier");
       }
+
       const data = await res.json().catch(() => null);
       setTenantDetail(data || null);
+
+      // ✅ Sync robuste des docs du dossier :
+      // - si backend renvoie data.documents => on prend ça
+      // - sinon on reconstruit via file_ids en gardant nos docs déjà connus + ceux de l'historique
+      const ids = normalizeIds(data?.file_ids);
+      if (Array.isArray(data?.documents)) {
+        setTenantDocuments(uniqById(data.documents));
+      } else {
+        setTenantDocuments((prev) => {
+          const prevArr = Array.isArray(prev) ? prev : [];
+          const keptPrev = prevArr.filter((d) => ids.includes(String(d.id)));
+          const fromHistory = (filesHistoryRef.current || []).filter((d) =>
+            ids.includes(String(d.id))
+          );
+          return uniqById([...keptPrev, ...fromHistory]);
+        });
+      }
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur chargement dossier");
       setTenantDetail(null);
+      setTenantDocuments([]);
     } finally {
       setTenantLoading(false);
     }
@@ -142,7 +193,20 @@ export default function TenantFilesPanel({ authFetch }) {
         throw new Error(txt || "Impossible de charger l'historique des documents");
       }
       const data = await res.json().catch(() => []);
-      setFilesHistory(Array.isArray(data) ? data : []);
+      const arr = Array.isArray(data) ? data : [];
+      setFilesHistory(arr);
+
+      // ✅ Si on a déjà un dossier sélectionné, on resynchronise tenantDocuments depuis file_ids
+      // (sans casser l'instantanéité, car tenantDocuments est déjà alimenté à l'upload)
+      if (tenantDetail?.file_ids) {
+        const ids = normalizeIds(tenantDetail.file_ids);
+        setTenantDocuments((prev) => {
+          const prevArr = Array.isArray(prev) ? prev : [];
+          const keptPrev = prevArr.filter((d) => ids.includes(String(d.id)));
+          const fromHistory = arr.filter((d) => ids.includes(String(d.id)));
+          return uniqById([...keptPrev, ...fromHistory]);
+        });
+      }
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur chargement documents");
@@ -167,7 +231,7 @@ export default function TenantFilesPanel({ authFetch }) {
         throw new Error(txt || "Erreur attach-document");
       }
 
-      // ✅ Recharge dossier + historique (évite le warning file_ids sans détails)
+      // ✅ Recharge dossier + historique (source de vérité)
       await Promise.all([fetchTenantDetail(selectedTenantId), fetchFilesHistory()]);
       setSelectedFileIdToAttach("");
     } catch (e) {
@@ -179,7 +243,7 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   // ✅ Upload direct + lien au dossier via endpoint atomic
-  // ✅ FIX PRO: update optimiste (filesHistory + tenantDetail.file_ids + checklist) => plus besoin d'uploader 2 fois
+  // ✅ Fix : on n'attend plus filesHistory pour afficher dans "Pièces du dossier"
   const handleUploadForTenant = async (event) => {
     if (!authFetchOk) return;
 
@@ -193,65 +257,89 @@ export default function TenantFilesPanel({ authFetch }) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
-        method: "POST",
-        body: formData,
-      });
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/upload-document`,
+        { method: "POST", body: formData }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Erreur upload-document");
+        console.error("upload-document error:", txt);
+        throw new Error(
+          txt || "Erreur lors de l'upload du fichier pour ce dossier locataire."
+        );
       }
 
       const payload = await res.json().catch(() => null);
-      console.log("upload-document payload:", payload);
-
       const newFile = payload?.file;
-      const newChecklist = payload?.checklist;
-      const newTenantStatus = payload?.tenant_status;
+      const tenantPayload = payload?.tenant;
+      const checklistPayload = payload?.checklist;
+      const tenantStatus = payload?.tenant_status ?? tenantPayload?.status;
 
-      // ✅ 1) Injecte le fichier dans l'historique immédiatement (sinon linkedFiles ne le voit pas)
       if (newFile?.id) {
+        const newFileIdStr = String(newFile.id);
+
+        // 1) Met à jour l'historique global (utile pour la zone "À classer")
         setFilesHistory((prev) => {
           const arr = Array.isArray(prev) ? prev : [];
-          const exists = arr.some((f) => String(f.id) === String(newFile.id));
+          const exists = arr.some((f) => String(f.id) === newFileIdStr);
+          if (exists) {
+            return arr.map((f) =>
+              String(f.id) === newFileIdStr ? { ...f, ...newFile } : f
+            );
+          }
+          return [newFile, ...arr];
+        });
+
+        // 2) Met à jour instantanément la liste "Pièces du dossier" (✅ plus besoin d'uploader 2x)
+        setTenantDocuments((prev) => {
+          const arr = Array.isArray(prev) ? prev : [];
+          const exists = arr.some((f) => String(f.id) === newFileIdStr);
           return exists ? arr : [newFile, ...arr];
         });
 
-        // ✅ 2) Injecte son ID dans le dossier immédiatement + update checklist/status
+        // 3) Met à jour le détail du dossier (file_ids + checklist + status)
         setTenantDetail((prev) => {
-          if (!prev) return prev;
+          const base = { ...(prev || {}), ...(tenantPayload || {}) };
 
-          const prevIds = Array.isArray(prev.file_ids) ? prev.file_ids.map(String) : [];
-          const idStr = String(newFile.id);
-          const nextIds = prevIds.includes(idStr) ? prevIds : [...prevIds, idStr];
+          const prevIds = normalizeIds(base.file_ids);
+          const nextIds = prevIds.includes(newFileIdStr)
+            ? prevIds
+            : [newFileIdStr, ...prevIds];
 
           return {
-            ...prev,
+            ...base,
             file_ids: nextIds,
-            checklist_json: newChecklist ?? prev.checklist_json,
-            status: newTenantStatus ?? prev.status,
+            status: tenantStatus ?? base.status,
+            checklist_json:
+              checklistPayload ?? base.checklist_json ?? base.checklist,
+            checklist: checklistPayload ?? base.checklist,
           };
+        });
+
+        // 4) Met à jour la colonne de gauche (statut)
+        setTenants((prev) => {
+          const arr = Array.isArray(prev) ? prev : [];
+          return arr.map((t) =>
+            String(t.id) === String(selectedTenantId)
+              ? { ...t, status: tenantStatus ?? t.status }
+              : t
+          );
         });
       }
 
-      // ✅ 3) Sécurité : refetch derrière (source de vérité)
-      await Promise.all([
-        fetchTenantDetail(selectedTenantId),
-        fetchFilesHistory(),
-        fetchTenants(),
-      ]);
-
-      event.target.value = "";
+      // ✅ Re-sync en arrière-plan via source de vérité (facultatif mais safe)
+      // Si tu veux ZERO requête après upload, commente cette ligne.
+      await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
     } catch (e) {
       console.error(e);
-      setError(e?.message || "Erreur upload dossier");
+      setError(e?.message || "Erreur lors de l'upload du document pour ce dossier.");
     } finally {
       setUploadLoading(false);
+      if (event?.target) event.target.value = "";
     }
   };
 
-  // ✅ Voir (ouvre dans un nouvel onglet via Blob, compatible JWT)
   const handleViewFile = async (fileId) => {
     if (!authFetchOk || !fileId) return;
     setError("");
@@ -271,7 +359,6 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
-  // ✅ Télécharger (force download)
   const handleDownloadFile = async (file) => {
     if (!authFetchOk || !file?.id) return;
     setError("");
@@ -299,7 +386,6 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
-  // ✅ Supprimer définitivement le fichier (DB + disque côté API)
   const handleDeleteFile = async (fileId) => {
     if (!authFetchOk || !fileId) return;
 
@@ -311,6 +397,10 @@ export default function TenantFilesPanel({ authFetch }) {
         throw new Error(txt || "Impossible de supprimer le document");
       }
 
+      // Optimiste
+      setFilesHistory((prev) => (Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []));
+      setTenantDocuments((prev) => (Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []));
+
       await fetchFilesHistory();
       if (selectedTenantId) await fetchTenantDetail(selectedTenantId);
       await fetchTenants();
@@ -320,7 +410,6 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
-  // ✅ Retirer du dossier (unlink uniquement)
   const handleUnlinkFromTenant = async (fileId) => {
     if (!authFetchOk || !fileId || !selectedTenantId) return;
 
@@ -336,6 +425,16 @@ export default function TenantFilesPanel({ authFetch }) {
         throw new Error(txt || "Impossible de retirer le document du dossier");
       }
 
+      // Optimiste
+      setTenantDocuments((prev) =>
+        Array.isArray(prev) ? prev.filter((f) => String(f.id) !== String(fileId)) : []
+      );
+      setTenantDetail((prev) => {
+        if (!prev) return prev;
+        const ids = normalizeIds(prev.file_ids).filter((id) => id !== String(fileId));
+        return { ...prev, file_ids: ids };
+      });
+
       await Promise.all([fetchTenantDetail(selectedTenantId), fetchTenants()]);
     } catch (e) {
       console.error(e);
@@ -343,7 +442,6 @@ export default function TenantFilesPanel({ authFetch }) {
     }
   };
 
-  // ===== Gestion de la modal de confirmation =====
   const openConfirmUnlink = (fileId) => {
     setConfirmState({ open: true, mode: "unlink", fileId });
   };
@@ -372,36 +470,19 @@ export default function TenantFilesPanel({ authFetch }) {
     handleConfirmCancel();
   };
 
-  // first load
   useEffect(() => {
     fetchTenants();
     fetchFilesHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetchOk]);
 
-  // tenant selection -> detail
   useEffect(() => {
     if (selectedTenantId) fetchTenantDetail(selectedTenantId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
   const linkedFileIds = useMemo(() => {
-    const ids = tenantDetail?.file_ids;
-    if (!ids) return [];
-    if (Array.isArray(ids)) return ids.map(String);
-
-    if (typeof ids === "string") {
-      try {
-        const parsed = JSON.parse(ids);
-        if (Array.isArray(parsed)) return parsed.map(String);
-      } catch {
-        return ids
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean);
-      }
-    }
-    return [];
+    return normalizeIds(tenantDetail?.file_ids);
   }, [tenantDetail]);
 
   const checklist = useMemo(() => {
@@ -423,14 +504,14 @@ export default function TenantFilesPanel({ authFetch }) {
   const receivedDocs = Array.isArray(checklist?.received) ? checklist.received : [];
   const missingDocs = Array.isArray(checklist?.missing) ? checklist.missing : [];
 
-  const linkedFiles = useMemo(() => {
-    const set = new Set(linkedFileIds);
-    return filesHistory.filter((f) => set.has(String(f.id)));
-  }, [filesHistory, linkedFileIds]);
+  // ✅ Pièces du dossier = tenantDocuments (plus de course avec filesHistory)
+  const linkedFiles = tenantDocuments;
 
   const unlinkedFiles = useMemo(() => {
     const set = new Set(linkedFileIds);
-    return filesHistory.filter((f) => !set.has(String(f.id)));
+    return (Array.isArray(filesHistory) ? filesHistory : []).filter(
+      (f) => !set.has(String(f.id))
+    );
   }, [filesHistory, linkedFileIds]);
 
   if (!authFetchOk) {
@@ -491,7 +572,6 @@ export default function TenantFilesPanel({ authFetch }) {
         <div className="tf-card">
           <div className="tf-card-title">Locataires</div>
 
-          {/* Barre de création de nouveau dossier */}
           <div className="tf-new-tenant-row">
             <input
               type="email"
@@ -519,10 +599,8 @@ export default function TenantFilesPanel({ authFetch }) {
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
 
-                // NOTE: ta liste "tenants" a parfois checklist_json sous forme d'objet "clé->bool"
-                // et parfois sous forme {required/received/missing}. On garde ton calcul actuel.
-                const checklist = t.checklist_json || {};
-                const missingCount = Object.values(checklist).filter(
+                const checklistLocal = t.checklist_json || {};
+                const missingCount = Object.values(checklistLocal).filter(
                   (v) => v === false
                 ).length;
 
@@ -688,7 +766,6 @@ export default function TenantFilesPanel({ authFetch }) {
                   <span className="tf-muted">PDF, PNG, JPG – taille max 10 Mo</span>
                 </div>
 
-                {/* (Optionnel) UI d'attache depuis l'historique - tu l'avais déjà ailleurs */}
                 {unlinkedFiles.length > 0 && (
                   <div className="tf-attach-row" style={{ marginTop: 12 }}>
                     <select
@@ -735,8 +812,8 @@ export default function TenantFilesPanel({ authFetch }) {
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
               <div className="tf-warn">
-                ⚠️ Le dossier a des <code>file_ids</code> mais je ne retrouve pas leurs
-                détails dans <code>/api/files/history</code>. Clique “Rafraîchir fichiers”.
+                ⚠️ Le dossier a des <code>file_ids</code> mais aucun document n’est
+                encore chargé côté UI. (Normalement corrigé par tenantDocuments)
               </div>
             ) : (
               <div className="tf-files">
@@ -792,7 +869,6 @@ export default function TenantFilesPanel({ authFetch }) {
         </div>
       </div>
 
-      {/* Modal de confirmation */}
       {confirmState.open && (
         <div className="tf-modal-backdrop">
           <div
@@ -846,7 +922,9 @@ export default function TenantFilesPanel({ authFetch }) {
                 }
                 onClick={handleConfirmValidate}
               >
-                {confirmState.mode === "delete" ? "Supprimer définitivement" : "Retirer du dossier"}
+                {confirmState.mode === "delete"
+                  ? "Supprimer définitivement"
+                  : "Retirer du dossier"}
               </button>
             </div>
           </div>
