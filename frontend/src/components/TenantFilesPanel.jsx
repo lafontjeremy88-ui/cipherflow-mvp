@@ -169,11 +169,10 @@ export default function TenantFilesPanel({ authFetch }) {
 
     // ✅ on recharge à la fois le dossier et l'historique des fichiers
     await Promise.all([
-      fetchTenantDetail(selectedTenantId),
-      fetchFilesHistory(),
-    ]);
-
-    setSelectedFileIdToAttach("");
+  fetchTenantDetail(selectedTenantId),
+  fetchFilesHistory(),
+]);
+setSelectedFileIdToAttach("");
   } catch (e) {
     console.error(e);
     setError(e?.message || "Erreur : impossible d'attacher le document.");
@@ -183,7 +182,7 @@ export default function TenantFilesPanel({ authFetch }) {
 };
 
 
-  const handleUploadForTenant = async (event) => {
+const handleUploadForTenant = async (event) => {
   if (!authFetchOk) return;
 
   const file = event.target.files?.[0];
@@ -196,24 +195,33 @@ export default function TenantFilesPanel({ authFetch }) {
     const formData = new FormData();
     formData.append("file", file);
 
-    // ✅ ENDPOINT PRO: upload + analyse + attach en 1 seul call
-    const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
-      method: "POST",
-      body: formData,
-    });
+    // ✅ NOUVEAU FLOW : un seul endpoint qui fait tout
+    const res = await authFetch(
+      `/tenant-files/${selectedTenantId}/upload-document`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       throw new Error(txt || "Erreur upload-document");
     }
 
-    // ✅ Refresh UI (les 3 zones)
+    // Même si on ne se sert pas du JSON pour l'instant,
+    // on le lit une fois pour debugger si besoin.
+    const payload = await res.json().catch(() => null);
+    console.log("upload-document payload:", payload);
+
+    // ✅ Mise à jour fiable de l’UI depuis la base
     await Promise.all([
       fetchTenantDetail(selectedTenantId),
-      fetchTenants(),
       fetchFilesHistory(),
+      fetchTenants(),
     ]);
 
+    // reset input file
     event.target.value = "";
   } catch (e) {
     console.error(e);
