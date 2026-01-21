@@ -83,6 +83,7 @@ export default function TenantFilesPanel({ authFetch }) {
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [deleteTenantLoading, setDeleteTenantLoading] = useState(false);
 
   const [error, setError] = useState("");
   const [confirmState, setConfirmState] = useState({
@@ -160,6 +161,46 @@ export default function TenantFilesPanel({ authFetch }) {
       setCreatingTenant(false);
     }
   };
+
+  const handleDeleteTenant = async () => {
+    if (!authFetchOk || !selectedTenantId) return;
+
+    const ok = window.confirm(
+      "Supprimer définitivement ce dossier locataire ?\n\nLes documents ne seront pas supprimés, seulement le dossier et ses liens."
+    );
+    if (!ok) return;
+
+    setError("");
+    setDeleteTenantLoading(true);
+    try {
+      const res = await authFetch(`/tenant-files/${selectedTenantId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de supprimer le dossier locataire");
+      }
+
+      // On enlève le dossier de la liste locale
+      setTenants((prev) =>
+        Array.isArray(prev)
+          ? prev.filter((t) => String(t.id) !== String(selectedTenantId))
+          : []
+      );
+
+      // On reset la sélection & le détail
+      setSelectedTenantId(null);
+      setTenantDetail(null);
+      setTenantDocuments([]);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de la suppression du dossier.");
+    } finally {
+      setDeleteTenantLoading(false);
+    }
+  };
+
 
   const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
@@ -666,7 +707,22 @@ export default function TenantFilesPanel({ authFetch }) {
 
         <div className="tf-right">
           <div className="tf-card">
-            <div className="tf-card-title">Détails</div>
+            <div className="tf-card-title tf-row">
+              <span className="tf-row-left">Détails</span>
+
+              {tenantDetail && (
+                <button
+                  type="button"
+                  className="tf-btn tf-btn-danger"
+                  onClick={handleDeleteTenant}
+                  disabled={deleteTenantLoading}
+                >
+                  <Trash2 size={16} />
+                  {deleteTenantLoading ? "Suppression..." : "Supprimer le dossier"}
+                </button>
+              )}
+            </div>
+
 
             {tenantLoading ? (
               <div className="tf-muted">Chargement...</div>
