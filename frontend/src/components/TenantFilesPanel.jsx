@@ -100,6 +100,11 @@ export default function TenantFilesPanel({ authFetch }) {
 
   const [newTenantEmail, setNewTenantEmail] = useState("");
   const [creatingTenant, setCreatingTenant] = useState(false);
+    // Édition / renommage du dossier
+  const [editingEmail, setEditingEmail] = useState("");
+  const [editingName, setEditingName] = useState("");
+  const [savingMeta, setSavingMeta] = useState(false);
+
 
   const authFetchOk = typeof authFetch === "function";
 
@@ -218,6 +223,47 @@ export default function TenantFilesPanel({ authFetch }) {
       setDeleteTenantLoading(false);
     }
   };
+
+  // Sauvegarde des infos du dossier (email + nom)
+  const handleSaveTenantMeta = async () => {
+    if (!authFetchOk || !selectedTenantId) return;
+
+    setError("");
+    setSavingMeta(true);
+    try {
+      const payload = {
+        candidate_email: editingEmail.trim() || null,
+        candidate_name: editingName.trim() || null,
+      };
+
+      const res = await authFetch(`/tenant-files/${selectedTenantId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(
+          txt || "Impossible de mettre à jour les informations du dossier locataire."
+        );
+      }
+
+      const data = await res.json().catch(() => null);
+      if (data) {
+        setTenantDetail(data);
+      }
+
+      // On rafraîchit la liste de gauche pour voir le nouveau nom/email
+      await fetchTenants();
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de la mise à jour du dossier.");
+    } finally {
+      setSavingMeta(false);
+    }
+  };
+
 
   const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
@@ -583,6 +629,19 @@ export default function TenantFilesPanel({ authFetch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
+    // Quand on change de dossier ou qu'on recharge son détail,
+  // on met à jour les champs d'édition (email + nom de dossier)
+  useEffect(() => {
+    if (tenantDetail) {
+      setEditingEmail(tenantDetail.candidate_email || "");
+      setEditingName(tenantDetail.candidate_name || "");
+    } else {
+      setEditingEmail("");
+      setEditingName("");
+    }
+  }, [tenantDetail]);
+
+
   const linkedFileIds = useMemo(() => {
     return normalizeIds(tenantDetail?.file_ids);
   }, [tenantDetail]);
@@ -697,14 +756,16 @@ export default function TenantFilesPanel({ authFetch }) {
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
 
-                return (
+                                return (
                   <button
                     key={t.id}
                     className={`tf-item ${active ? "is-active" : ""}`}
                     onClick={() => setSelectedTenantId(t.id)}
                     type="button"
                   >
-                    <div className="tf-item-title">Dossier #{t.id}</div>
+                    <div className="tf-item-title">
+                      {t.candidate_name || `Dossier #${t.id}`}
+                    </div>
                     <div className="tf-item-sub">
                       <span>{t.candidate_email || "-"}</span>
                       {t.status && (
@@ -723,6 +784,7 @@ export default function TenantFilesPanel({ authFetch }) {
                     </div>
                   </button>
                 );
+
               })}
             </div>
           )}
@@ -752,10 +814,18 @@ export default function TenantFilesPanel({ authFetch }) {
               <div className="tf-muted">Sélectionne un locataire à gauche.</div>
             ) : (
               <>
-                <div className="tf-kv">
+                                <div className="tf-kv">
                   <div>
                     <div className="tf-k">Email candidat</div>
-                    <div className="tf-v">{tenantDetail.candidate_email || "-"}</div>
+                    <div className="tf-v">
+                      <input
+                        type="email"
+                        className="tf-input"
+                        placeholder="Email candidat (optionnel)"
+                        value={editingEmail}
+                        onChange={(e) => setEditingEmail(e.target.value)}
+                      />
+                    </div>
                   </div>
 
                   <div>
@@ -784,6 +854,38 @@ export default function TenantFilesPanel({ authFetch }) {
                     <div className="tf-v">{linkedFileIds.length}</div>
                   </div>
                 </div>
+
+                <div className="tf-kv">
+                  <div>
+                    <div className="tf-k">Nom du dossier</div>
+                    <div className="tf-v">
+                      <input
+                        type="text"
+                        className="tf-input"
+                        placeholder="Nom / alias du dossier (optionnel)"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="tf-k">&nbsp;</div>
+                    <div className="tf-v">
+                      <button
+                        type="button"
+                        className="tf-btn tf-btn-primary"
+                        onClick={handleSaveTenantMeta}
+                        disabled={savingMeta}
+                      >
+                        {savingMeta ? "Enregistrement..." : "Enregistrer"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div />
+                </div>
+
 
                 {checklist && (
                   <div className="tf-checklist">

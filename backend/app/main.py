@@ -638,6 +638,10 @@ class TenantFileCreate(BaseModel):
     candidate_email: Optional[EmailStr] = None
     candidate_name: Optional[str] = None
 
+class TenantFileUpdate(BaseModel):
+    candidate_email: Optional[str] = None
+    candidate_name: Optional[str] = None
+
 
 class TenantFileDetail(BaseModel):
     id: int
@@ -1356,6 +1360,41 @@ async def get_tenant_file(tenant_id: int, db: Session = Depends(get_db), current
         email_ids=email_ids,
         file_ids=file_ids
     )
+
+@app.put("/tenant-files/{tenant_id}", response_model=TenantFileDetail)
+async def update_tenant_file(
+    tenant_id: int,
+    payload: TenantFileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    aid = current_user.agency_id
+    tf = (
+        db.query(TenantFile)
+        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
+        .first()
+    )
+    if not tf:
+        raise HTTPException(status_code=404, detail="Dossier introuvable")
+
+    updated = False
+
+    if payload.candidate_email is not None:
+        tf.candidate_email = (payload.candidate_email or "").strip() or None
+        updated = True
+
+    if payload.candidate_name is not None:
+        tf.candidate_name = (payload.candidate_name or "").strip() or None
+        updated = True
+
+    if updated:
+        tf.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(tf)
+
+    # On réutilise la logique existante pour formater la réponse
+    return await get_tenant_file(tenant_id=tenant_id, db=db, current_user=current_user)
+
 
 @app.delete("/tenant-files/{tenant_id}")
 async def delete_tenant_file(
