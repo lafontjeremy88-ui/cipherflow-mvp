@@ -814,10 +814,8 @@ export default function TenantFilesPanel({ authFetch }) {
             ) : linkedFileIds.length === 0 ? (
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
-              <div className="tf-warn">
-                ⚠️ Le dossier a des <code>file_ids</code> mais aucun document n’est encore
-                chargé côté UI. (Normalement corrigé maintenant)
-              </div>
+              // État transitoire : on ne montre plus le message de debug, juste un texte propre
+              <div className="tf-muted">Chargement des documents du dossier...</div>
             ) : (
               <div className="tf-files">
                 {linkedFiles.map((f) => (
@@ -868,6 +866,7 @@ export default function TenantFilesPanel({ authFetch }) {
                 ))}
               </div>
             )}
+
           </div>
         </div>
       </div>
