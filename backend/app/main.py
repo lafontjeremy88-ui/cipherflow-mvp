@@ -1934,6 +1934,67 @@ async def delete_my_account(
     db.commit()
     return {"success": True, "deleted": "user+agency"}
 
+# ===============================
+# AUTO-LINK EMAIL → DOSSIER LOCATAIRE
+# ===============================
+
+def auto_link_email_to_tenant_file(db: Session, email):
+    """
+    V1 très simple :
+    - si un dossier locataire existe déjà pour cet email -> on crée juste le lien
+    - sinon on crée un nouveau dossier + le lien
+    """
+    try:
+        sender = (email.sender_email or "").strip().lower()
+        if not sender or not email.agency_id:
+            return
+
+        tf = (
+            db.query(TenantFile)
+            .filter(
+                TenantFile.agency_id == email.agency_id,
+                func.lower(TenantFile.candidate_email) == sender,
+            )
+            .order_by(TenantFile.id.desc())
+            .first()
+        )
+
+        created = False
+        if tf is None:
+            tf = TenantFile(
+                agency_id=email.agency_id,
+                candidate_email=sender,
+                status=TenantFileStatus.NEW,
+            )
+            db.add(tf)
+            db.commit()
+            db.refresh(tf)
+            created = True
+
+        existing_link = (
+            db.query(TenantEmailLink)
+            .filter(
+                TenantEmailLink.tenant_file_id == tf.id,
+                TenantEmailLink.email_analysis_id == email.id,
+            )
+            .first()
+        )
+
+        if not existing_link:
+            db.add(
+                TenantEmailLink(
+                    tenant_file_id=tf.id,
+                    email_analysis_id=email.id,
+                )
+            )
+            db.commit()
+
+        print(
+            f"[auto_link] email #{email.id} → dossier #{tf.id} (created={created})"
+        )
+
+    except Exception as e:
+        print("[auto_link_email_to_tenant_file] ERROR:", e)
 
 
 # --- PROCESS MANUEL / UPLOAD ---
@@ -2045,6 +2106,10 @@ async def process_manual(
     db.add(new_email)
     db.commit()
     db.refresh(new_email)
+
+    # 🔥 AUTO-LIAISON EMAIL → DOSSIER LOCATAIRE
+    auto_link_email_to_tenant_file(db, new_email)
+
 
     # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
     try:
