@@ -1357,6 +1357,31 @@ async def get_tenant_file(tenant_id: int, db: Session = Depends(get_db), current
         file_ids=file_ids
     )
 
+@app.delete("/tenant-files/{tenant_id}")
+async def delete_tenant_file(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Supprime un dossier locataire pour l'agence courante.
+    ⚠️ Les documents (FileAnalysis) NE sont PAS supprimés,
+    seules les liaisons (TenantDocumentLink / TenantEmailLink) le sont via les relations.
+    """
+    aid = current_user.agency_id
+
+    tf = (
+        db.query(TenantFile)
+        .filter(TenantFile.id == tenant_id, TenantFile.agency_id == aid)
+        .first()
+    )
+    if not tf:
+        raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
+
+    db.delete(tf)
+    db.commit()
+
+    return {"status": "deleted"}
 
 
 @app.post("/tenant-files/from-email/{email_id}", response_model=TenantFileDetail)
