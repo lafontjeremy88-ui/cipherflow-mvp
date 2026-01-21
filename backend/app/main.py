@@ -1938,21 +1938,99 @@ async def delete_my_account(
 
 # --- PROCESS MANUEL / UPLOAD ---
 @app.post("/email/process", response_model=EmailProcessResponse)
-async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    aid = current_user.agency_id
-    s = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
-    comp = s.company_name if s else "Mon Agence"
-    
-    analyse = await analyze_email_logic(
-        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content), 
-        comp, 
-        db,
-        aid
+async def process_manual(
+    req: EmailProcessRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Traitement manuel d'un email (depuis l’UI) avec la même pipeline que le webhook :
+    - analyse des pièces jointes
+    - analyse IA de l’email
+    - génération de la réponse
+    - création EmailAnalysis
+    - auto-création / liaison dossier locataire + pièces + checklist
+    """
+    agency_id = current_user.agency_id
+
+    # 0) Settings agence
+    s = (
+        db.query(AppSettings)
+        .filter(AppSettings.agency_id == agency_id)
+        .first()
     )
-    reponse = await generate_reply_logic(EmailReplyRequest(from_email=req.from_email, subject=req.subject, content=req.content, summary=analyse.summary, category=analyse.category, urgency=analyse.urgency), comp, s.tone if s else "pro", s.signature if s else "Team")
-    
+    comp_name = s.company_name if s else "Mon Agence"
+
+    # 1) TRAITEMENT DES PIÈCES JOINTES (même logique que le webhook)
+    attachment_summary_text = ""
+    attachment_file_ids: List[int] = []
+
+    if req.attachments:
+        for att in req.attachments:
+            try:
+                file_data = base64.b64decode(att.content_base64)
+                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
+                file_path = os.path.join("uploads", safe_filename)
+
+                os.makedirs("uploads", exist_ok=True)
+                with open(file_path, "wb") as f:
+                    f.write(file_data)
+
+                doc_analysis = await analyze_document_logic(file_path, safe_filename)
+
+                if doc_analysis:
+                    new_file = FileAnalysis(
+                        filename=safe_filename,
+                        file_type=str(doc_analysis.get("type", "Autre")),
+                        sender=str(doc_analysis.get("sender", req.from_email)),
+                        extracted_date=str(doc_analysis.get("date", "")),
+                        amount=str(doc_analysis.get("amount", "0")),
+                        summary=str(doc_analysis.get("summary", "Reçu (analyse manuelle)")),
+                        owner_id=current_user.id,
+                        agency_id=agency_id,
+                    )
+                    db.add(new_file)
+                    db.commit()
+                    db.refresh(new_file)
+
+                    attachment_file_ids.append(new_file.id)
+                    attachment_summary_text += (
+                        f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
+                    )
+            except Exception as e:
+                print(f"Erreur PJ (manual): {e}")
+
+    # 2) ANALYSE EMAIL (avec contexte PJ)
+    analyse = await analyze_email_logic(
+        EmailAnalyseRequest(
+            from_email=req.from_email,
+            subject=req.subject,
+            content=req.content,
+        ),
+        comp_name,
+        db,
+        agency_id,
+        attachment_summary=attachment_summary_text,
+    )
+
+    # 3) GÉNÉRATION DE LA RÉPONSE
+    reponse = await generate_reply_logic(
+        EmailReplyRequest(
+            from_email=req.from_email,
+            subject=req.subject,
+            content=req.content,
+            summary=analyse.summary,
+            category=analyse.category,
+            urgency=analyse.urgency,
+        ),
+        comp_name,
+        s.tone if s else "pro",
+        s.signature if s else "Team",
+    )
+
+    # 4) ENREGISTRER L’EMAIL EN BDD
     new_email = EmailAnalysis(
-        agency_id=aid,
+        agency_id=agency_id,
         sender_email=req.from_email,
         subject=req.subject,
         raw_email_text=req.content,
@@ -1962,16 +2040,115 @@ async def process_manual(req: EmailProcessRequest, db: Session = Depends(get_db)
         summary=analyse.summary,
         suggested_title=analyse.suggested_title,
         suggested_response_text=reponse.reply,
-        raw_ai_output=analyse.raw_ai_text
+        raw_ai_output=analyse.raw_ai_text,
     )
     db.add(new_email)
     db.commit()
-    
+    db.refresh(new_email)
+
+    # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
+    try:
+        cat = (
+            (analyse.category or "").lower().strip()
+            if hasattr(analyse, "category")
+            else (new_email.category or "").lower().strip()
+        )
+
+        # On ne déclenche l’auto-dossier que si ça ressemble à une candidature / locataire
+        if ("candid" in cat) or ("locat" in cat) or ("dossier" in cat):
+            candidate_email = (req.from_email or "").lower().strip()
+
+            tf = None
+            if candidate_email:
+                tf = (
+                    db.query(TenantFile)
+                    .filter(
+                        TenantFile.agency_id == agency_id,
+                        TenantFile.candidate_email == candidate_email,
+                    )
+                    .order_by(TenantFile.id.desc())
+                    .first()
+                )
+
+            # Créer le dossier si inexistant
+            if not tf:
+                tf = TenantFile(
+                    agency_id=agency_id,
+                    candidate_email=candidate_email,
+                    status=TenantFileStatus.NEW,
+                )
+                db.add(tf)
+                db.commit()
+                db.refresh(tf)
+
+            # Lier l’email au dossier
+            if not db.query(TenantEmailLink).filter(
+                TenantEmailLink.tenant_file_id == tf.id,
+                TenantEmailLink.email_analysis_id == new_email.id,
+            ).first():
+                db.add(
+                    TenantEmailLink(
+                        tenant_file_id=tf.id,
+                        email_analysis_id=new_email.id,
+                    )
+                )
+                db.commit()
+
+            # Lier les pièces jointes au dossier
+            for fid in attachment_file_ids:
+                if not db.query(TenantDocumentLink).filter(
+                    TenantDocumentLink.tenant_file_id == tf.id,
+                    TenantDocumentLink.file_analysis_id == fid,
+                ).first():
+                    fa = (
+                        db.query(FileAnalysis)
+                        .filter(FileAnalysis.id == fid)
+                        .first()
+                    )
+                    dt = map_doc_type(
+                        getattr(fa, "file_type", "") if fa else ""
+                    )
+                    db.add(
+                        TenantDocumentLink(
+                            tenant_file_id=tf.id,
+                            file_analysis_id=fid,
+                            doc_type=dt,
+                            quality=DocQuality.OK,
+                        )
+                    )
+            db.commit()
+
+            # Recalcul checklist + statut
+            links = (
+                db.query(TenantDocumentLink)
+                .filter(TenantDocumentLink.tenant_file_id == tf.id)
+                .all()
+            )
+            doc_types = [l.doc_type for l in links]
+            checklist = compute_checklist(doc_types)
+
+            tf.checklist_json = json.dumps(checklist)
+            tf.status = (
+                TenantFileStatus.TO_VALIDATE
+                if len(checklist["missing"]) == 0
+                else TenantFileStatus.INCOMPLETE
+            )
+            db.commit()
+    except Exception as e:
+        print(f"⚠️ Auto dossier locataire (manual): {e}")
+
+    # 6) ENVOI EMAIL SI DEMANDÉ
     sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-    
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent, email_id=new_email.id)
+
+    return EmailProcessResponse(
+        analyse=analyse,
+        reponse=reponse,
+        send_status=sent,
+        email_id=new_email.id,
+    )
+
 
 @app.post("/api/analyze-file")
 async def analyze_file(
