@@ -646,28 +646,29 @@ export default function EmailHistory() {
                       </span>
                     </div>
 
-                    <div className="eh-subject">
-                      {e.subject || "(Sans sujet)"}
-                    </div>
-
-                    <div className="eh-meta">
+                                        <div className="eh-meta">
                       <span className="eh-from">
-                        {e.from ||
-                          e.from_email ||
-                          e.sender_email ||
-                          "—"}
+                        {e.from || e.from_email || e.sender_email || "—"}
                       </span>
                       <span className="eh-dot">•</span>
                       <span className="eh-cat">
                         <span
                           className="eh-cat-dot"
-                          style={{
-                            backgroundColor: getCategoryColor(e.category),
-                          }}
+                          style={{ backgroundColor: getCategoryColor(e.category) }}
                         />
                         {e.category || "—"}
                       </span>
+
+                      {e.tenant_file_id && (
+                        <>
+                          <span className="eh-dot">•</span>
+                          <span className="eh-tenant-link">
+                            Dossier #{e.tenant_file_id}
+                          </span>
+                        </>
+                      )}
                     </div>
+
                   </button>
                 );
               })}

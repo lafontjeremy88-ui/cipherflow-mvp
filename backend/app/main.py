@@ -697,8 +697,12 @@ class EmailHistoryItem(BaseModel):
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
 
+    # 🔹 nouveau champ : premier dossier locataire lié (si existe)
+    tenant_file_id: Optional[int] = None
+
     class Config:
         from_attributes = True
+
 
 
 class EmailDetailResponse(BaseModel):
@@ -1388,13 +1392,42 @@ async def get_stats(db: Session = Depends(get_db), current_user: User = Depends(
     return {"kpis": {"total_emails": total, "high_urgency": high, "invoices": inv}, "charts": {"distribution": dist}, "recents": rec_act}
 
 @app.get("/email/history", response_model=List[EmailHistoryItem])
-async def get_history(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
-    return (
+async def get_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    # 1) On récupère les emails de l'agence
+    emails = (
         db.query(EmailAnalysis)
         .filter(EmailAnalysis.agency_id == current_user.agency_id)
         .order_by(EmailAnalysis.id.desc())
         .all()
     )
+
+    if not emails:
+        return []
+
+    email_ids = [e.id for e in emails]
+
+    # 2) On regarde s'ils ont un lien avec un dossier locataire
+    links = (
+        db.query(TenantEmailLink)
+        .filter(TenantEmailLink.email_analysis_id.in_(email_ids))
+        .all()
+    )
+
+    # on garde le "premier" dossier lié pour chaque email
+    email_to_tenant = {}
+    for link in links:
+        if link.email_analysis_id not in email_to_tenant:
+            email_to_tenant[link.email_analysis_id] = link.tenant_file_id
+
+    # 3) On ajoute un attribut dynamique sur chaque EmailAnalysis
+    for e in emails:
+        setattr(e, "tenant_file_id", email_to_tenant.get(e.id))
+
+    return emails
+
 @app.get("/email/{email_id}", response_model=EmailDetailResponse)
 async def get_email_detail(
     email_id: int,
