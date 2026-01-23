@@ -1566,37 +1566,45 @@ async def delete_tenant_file(
 
 
 @app.post("/tenant-files/from-email/{email_id}", response_model=TenantFileDetail)
-async def create_or_link_tenant_from_email(email_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_db)):
+async def create_or_link_tenant_from_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
     aid = current_user.agency_id
-    email = db.query(EmailAnalysis).filter(EmailAnalysis.id == email_id, EmailAnalysis.agency_id == aid).first()
+
+    # 1) On récupère l'email
+    email = (
+        db.query(EmailAnalysis)
+        .filter(
+            EmailAnalysis.id == email_id,
+            EmailAnalysis.agency_id == aid,
+        )
+        .first()
+    )
     if not email:
         raise HTTPException(status_code=404, detail="Email introuvable")
 
-    candidate_email = (email.sender_email or "").lower().strip()
-
-    tf = None
-    if candidate_email:
-        tf = (
-            db.query(TenantFile)
-            .filter(TenantFile.agency_id == aid, TenantFile.candidate_email == candidate_email)
-            .order_by(TenantFile.id.desc())
-            .first()
+    # 2) On passe OBLIGATOIREMENT par ensure_tenant_file_for_email (anti-doublon)
+    tf = ensure_tenant_file_for_email(
+        db=db,
+        agency_id=aid,
+        email_address=email.sender_email,
+    )
+    if not tf:
+        raise HTTPException(
+            status_code=400,
+            detail="Impossible de créer/associer un dossier pour cet email.",
         )
 
-    if not tf:
-        tf = TenantFile(agency_id=aid, candidate_email=candidate_email, status=TenantFileStatus.NEW)
-        db.add(tf)
-        db.commit()
-        db.refresh(tf)
+    # 3) Lien email ↔ dossier (sans doublon)
+    ensure_email_link(
+        db=db,
+        tenant_file_id=tf.id,
+        email_analysis_id=email.id,
+    )
 
-    # Lier l'email si pas déjà lié
-    if not db.query(TenantEmailLink).filter(
-        TenantEmailLink.tenant_file_id == tf.id,
-        TenantEmailLink.email_analysis_id == email.id
-    ).first():
-        db.add(TenantEmailLink(tenant_file_id=tf.id, email_analysis_id=email.id))
-        db.commit()
-
+    # 4) On recharge le dossier pour avoir les relations à jour
     tf = db.query(TenantFile).filter(TenantFile.id == tf.id).first()
     email_ids = [l.email_analysis_id for l in tf.email_links]
     file_ids = [l.file_analysis_id for l in tf.document_links]
@@ -1611,8 +1619,9 @@ async def create_or_link_tenant_from_email(email_id: int, db: Session = Depends(
         created_at=tf.created_at,
         updated_at=tf.updated_at,
         email_ids=email_ids,
-        file_ids=file_ids
+        file_ids=file_ids,
     )
+
 
 
 @app.post("/tenant-files/{tenant_id}/attach-document/{file_id}")
