@@ -175,6 +175,7 @@ export default function EmailHistory() {
 
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [linkingTenant, setLinkingTenant] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
 
@@ -452,6 +453,46 @@ export default function EmailHistory() {
     }
   }
 
+    async function handleOpenTenantFile() {
+    if (!selectedId) return;
+
+    setLinkingTenant(true);
+    setActionError("");
+    setActionSuccess("");
+
+    try {
+      const res = await authFetch(`/tenant-files/from-email/${selectedId}`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(
+          `POST /tenant-files/from-email/${selectedId} -> ${res.status}${
+            txt ? " - " + txt : ""
+          }`
+        );
+      }
+
+      const data = await res.json().catch(() => null);
+      const tfId = data?.id;
+
+      setActionSuccess(
+        tfId
+          ? `Dossier locataire #${tfId} créé / mis à jour pour cet email.`
+          : "Dossier locataire créé / mis à jour pour cet email."
+      );
+      setActionError("");
+    } catch (e) {
+      console.error(e);
+      setActionError("Impossible de créer / ouvrir le dossier locataire.");
+      setActionSuccess("");
+    } finally {
+      setLinkingTenant(false);
+    }
+  }
+
+
   return (
     <div className="page email-history">
       <div className="page-header">
@@ -592,11 +633,7 @@ export default function EmailHistory() {
           </div>
 
           {/* PREVIEW */}
-          <div className="card eh-panel">
-            <div className="card-header">
-              <h2 className="card-title">Prévisualisation</h2>
-
-              {!!selectedId && (
+                        {!!selectedId && (
                 <div className="row">
                   <button
                     className="btn btn-ghost"
@@ -604,6 +641,16 @@ export default function EmailHistory() {
                     title="Afficher/Masquer l'email brut"
                   >
                     {showRaw ? "Masquer le brut" : "Afficher le brut"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleOpenTenantFile}
+                    disabled={linkingTenant || deleting || sending}
+                    title="Créer / ouvrir le dossier locataire pour cet email"
+                  >
+                    {linkingTenant ? "Lien dossier…" : "Dossier locataire"}
                   </button>
 
                   <button
@@ -620,7 +667,7 @@ export default function EmailHistory() {
                   </button>
                 </div>
               )}
-            </div>
+
 
             {/* Alertes */}
             {actionSuccess && (
