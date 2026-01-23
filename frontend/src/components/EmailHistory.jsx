@@ -298,15 +298,27 @@ export default function EmailHistory() {
     }
 
     // Priorité : haute/moyenne/basse (comportement "filtre")
-    if (sortMode === "prio_high" || sortMode === "prio_medium" || sortMode === "prio_low") {
+    if (
+      sortMode === "prio_high" ||
+      sortMode === "prio_medium" ||
+      sortMode === "prio_low"
+    ) {
       const wanted =
-        sortMode === "prio_high" ? "high" : sortMode === "prio_medium" ? "medium" : "low";
+        sortMode === "prio_high"
+          ? "high"
+          : sortMode === "prio_medium"
+          ? "medium"
+          : "low";
       arr = arr.filter((e) => getUrgencyLevel(e.urgency) === wanted);
 
       // tri "plus récents" dans ce mode
       arr.sort((a, b) => {
-        const da = new Date(a.received_at || a.date || a.created_at || 0).getTime();
-        const db = new Date(b.received_at || b.date || b.created_at || 0).getTime();
+        const da = new Date(
+          a.received_at || a.date || a.created_at || 0
+        ).getTime();
+        const db = new Date(
+          b.received_at || b.date || b.created_at || 0
+        ).getTime();
         return db - da;
       });
 
@@ -315,8 +327,12 @@ export default function EmailHistory() {
 
     // Tri chrono global
     arr.sort((a, b) => {
-      const da = new Date(a.received_at || a.date || a.created_at || 0).getTime();
-      const db = new Date(b.received_at || b.date || b.created_at || 0).getTime();
+      const da = new Date(
+        a.received_at || a.date || a.created_at || 0
+      ).getTime();
+      const db = new Date(
+        b.received_at || b.date || b.created_at || 0
+      ).getTime();
       return sortMode === "oldest" ? da - db : db - da; // recent par défaut
     });
 
@@ -325,13 +341,17 @@ export default function EmailHistory() {
 
   const selectedFromList = useMemo(() => {
     if (!selectedId) return null;
-    return filtered.find((x) => String(x.id) === String(selectedId)) || null;
+    return (
+      filtered.find((x) => String(x.id) === String(selectedId)) || null
+    );
   }, [filtered, selectedId]);
 
   // Champs IA / méta
   const summary = safeStr(selected?.summary || selectedFromList?.summary);
   const suggestedResponse = safeStr(selected?.suggested_response_text);
-  const hasReplied = !!(selected?.reply_sent || selectedFromList?.reply_sent);
+  const hasReplied = !!(
+    selected?.reply_sent || selectedFromList?.reply_sent
+  );
 
   const fromLabel = safeStr(
     selected?.from ||
@@ -341,16 +361,20 @@ export default function EmailHistory() {
       selectedFromList?.sender_email
   );
 
-  const categoryLabel = safeStr(selected?.category || selectedFromList?.category || "—");
+  const categoryLabel = safeStr(
+    selected?.category || selectedFromList?.category || "—"
+  );
 
   const receivedLabel = selected?.received_at
     ? safeStr(selected.received_at)
     : formatDateShort(selectedFromList);
 
-  const titleLabel = safeStr(selected?.subject || selectedFromList?.subject || "Email");
+  const titleLabel = safeStr(
+    selected?.subject || selectedFromList?.subject || "Email"
+  );
 
   /* ==========================
-     Actions : envoyer / supprimer
+     Actions : envoyer / supprimer / dossier locataire
      ========================== */
 
   async function handleSendSuggestedResponse() {
@@ -359,7 +383,8 @@ export default function EmailHistory() {
     const target = selected || selectedFromList;
     if (!target) return;
 
-    const toEmail = target.sender_email || target.from_email || target.from || "";
+    const toEmail =
+      target.sender_email || target.from_email || target.from || "";
     const subject = `Re: ${target.subject || titleLabel}`;
 
     setSending(true);
@@ -417,7 +442,9 @@ export default function EmailHistory() {
 
   async function handleDeleteEmail() {
     if (!selectedId) return;
-    const confirmDelete = window.confirm("Supprimer cet email de la liste ?");
+    const confirmDelete = window.confirm(
+      "Supprimer cet email de la liste ?"
+    );
     if (!confirmDelete) return;
 
     setDeleting(true);
@@ -425,7 +452,9 @@ export default function EmailHistory() {
     setActionSuccess("");
 
     try {
-      const res = await authFetch(`/email/history/${selectedId}`, { method: "DELETE" });
+      const res = await authFetch(`/email/history/${selectedId}`, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
@@ -435,7 +464,9 @@ export default function EmailHistory() {
         );
       }
 
-      setItems((prev) => prev.filter((e) => String(e.id) !== String(selectedId)));
+      setItems((prev) =>
+        prev.filter((e) => String(e.id) !== String(selectedId))
+      );
       setSelectedId(null);
       setSelected(null);
       setEmailIdInUrl(null);
@@ -453,7 +484,7 @@ export default function EmailHistory() {
     }
   }
 
-    async function handleOpenTenantFile() {
+  async function handleOpenTenantFile() {
     if (!selectedId) return;
 
     setLinkingTenant(true);
@@ -461,16 +492,19 @@ export default function EmailHistory() {
     setActionSuccess("");
 
     try {
-      const res = await authFetch(`/tenant-files/from-email/${selectedId}`, {
-        method: "POST",
-      });
+      const res = await authFetch(
+        `/tenant-files/from-email/${selectedId}`,
+        {
+          method: "POST",
+        }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          `POST /tenant-files/from-email/${selectedId} -> ${res.status}${
-            txt ? " - " + txt : ""
-          }`
+          `POST /tenant-files/from-email/${selectedId} -> ${
+            res.status
+          }${txt ? " - " + txt : ""}`
         );
       }
 
@@ -485,13 +519,14 @@ export default function EmailHistory() {
       setActionError("");
     } catch (e) {
       console.error(e);
-      setActionError("Impossible de créer / ouvrir le dossier locataire.");
+      setActionError(
+        "Impossible de créer / ouvrir le dossier locataire."
+      );
       setActionSuccess("");
     } finally {
       setLinkingTenant(false);
     }
   }
-
 
   return (
     <div className="page email-history">
@@ -606,7 +641,9 @@ export default function EmailHistory() {
                       <span className={pill}>
                         {safeStr(e.urgency).toUpperCase() || "—"}
                       </span>
-                      <span className="eh-date">{formatDateShort(e)}</span>
+                      <span className="eh-date">
+                        {formatDateShort(e)}
+                      </span>
                     </div>
 
                     <div className="eh-subject">
@@ -615,13 +652,18 @@ export default function EmailHistory() {
 
                     <div className="eh-meta">
                       <span className="eh-from">
-                        {e.from || e.from_email || e.sender_email || "—"}
+                        {e.from ||
+                          e.from_email ||
+                          e.sender_email ||
+                          "—"}
                       </span>
                       <span className="eh-dot">•</span>
                       <span className="eh-cat">
                         <span
                           className="eh-cat-dot"
-                          style={{ backgroundColor: getCategoryColor(e.category) }}
+                          style={{
+                            backgroundColor: getCategoryColor(e.category),
+                          }}
                         />
                         {e.category || "—"}
                       </span>
@@ -633,7 +675,11 @@ export default function EmailHistory() {
           </div>
 
           {/* PREVIEW */}
-                        {!!selectedId && (
+          <div className="card eh-panel">
+            <div className="card-header">
+              <h2 className="card-title">Prévisualisation</h2>
+
+              {!!selectedId && (
                 <div className="row">
                   <button
                     className="btn btn-ghost"
@@ -667,7 +713,7 @@ export default function EmailHistory() {
                   </button>
                 </div>
               )}
-
+            </div>
 
             {/* Alertes */}
             {actionSuccess && (
@@ -691,7 +737,9 @@ export default function EmailHistory() {
             ) : (
               <>
                 <div className="eh-preview-header">
-                  <div className="eh-preview-title">{titleLabel}</div>
+                  <div className="eh-preview-title">
+                    {titleLabel}
+                  </div>
 
                   <div className="eh-preview-sub muted">
                     <span>{fromLabel}</span>
@@ -700,7 +748,9 @@ export default function EmailHistory() {
                       <span
                         className="eh-cat-dot"
                         style={{
-                          backgroundColor: getCategoryColor(categoryLabel),
+                          backgroundColor: getCategoryColor(
+                            categoryLabel
+                          ),
                         }}
                       />
                       {categoryLabel}
@@ -710,7 +760,10 @@ export default function EmailHistory() {
                   </div>
 
                   {hasReplied && (
-                    <span className="badge badge-success" style={{ marginTop: 8 }}>
+                    <span
+                      className="badge badge-success"
+                      style={{ marginTop: 8 }}
+                    >
                       Réponse envoyée
                     </span>
                   )}
@@ -747,7 +800,9 @@ export default function EmailHistory() {
                           type="button"
                           className="btn btn-primary"
                           onClick={handleSendSuggestedResponse}
-                          disabled={sending || deleting || hasReplied}
+                          disabled={
+                            sending || deleting || hasReplied
+                          }
                         >
                           {hasReplied
                             ? "Réponse déjà envoyée"
@@ -762,12 +817,17 @@ export default function EmailHistory() {
                           onClick={handleDeleteEmail}
                           disabled={sending || deleting}
                         >
-                          {deleting ? "Suppression…" : "Supprimer de la liste"}
+                          {deleting
+                            ? "Suppression…"
+                            : "Supprimer de la liste"}
                         </button>
                       </div>
                     </div>
 
-                    <pre className="email-body" style={{ maxHeight: 220 }}>
+                    <pre
+                      className="email-body"
+                      style={{ maxHeight: 220 }}
+                    >
                       {suggestedResponse}
                     </pre>
                   </div>
@@ -777,9 +837,13 @@ export default function EmailHistory() {
                 {showRaw && (
                   <div className="eh-preview-body">
                     {selected?.bodyText ? (
-                      <pre className="email-body">{selected.bodyText}</pre>
+                      <pre className="email-body">
+                        {selected.bodyText}
+                      </pre>
                     ) : (
-                      <div className="muted">Pas de contenu texte</div>
+                      <div className="muted">
+                        Pas de contenu texte
+                      </div>
                     )}
                   </div>
                 )}
