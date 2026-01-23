@@ -520,7 +520,21 @@ async def analyze_document_logic(file_path: str, filename: str):
         return {"summary": "Analyse indisponible (erreur IA)",
         "type": "Autre"}
 
-async def analyze_email_logic(req, company_name, db: Session, agency_id: int, attachment_summary=""):
+async def analyze_email_logic(
+    req,
+    company_name: str,
+    db: Session,
+    agency_id: int,
+    attachment_summary: str = "",
+):
+    """
+    Analyse IA d'un email pour une agence immobilière :
+    - prend en compte le texte de l'email
+    - + le contexte des dernières pièces analysées
+    - + les pièces jointes spécifiques à cet email (attachment_summary)
+    """
+
+    # 1) On récupère quelques documents récents de l'agence
     last_files = (
         db.query(FileAnalysis)
         .filter(FileAnalysis.agency_id == agency_id)
@@ -531,26 +545,69 @@ async def analyze_email_logic(req, company_name, db: Session, agency_id: int, at
 
     files_context = ""
     if last_files:
-        files_context = "CONTEXTE DOCUMENTS (Dossiers récents de l'agence) :\n"
+        files_context += "CONTEXTE DOCUMENTS (exemples récents de l'agence) :\n"
         for f in last_files:
-            files_context += f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount}\n"
+            files_context += (
+                f"- Fichier: {f.filename} | Type: {f.file_type} | Montant: {f.amount}\n"
+            )
 
+    # 2) Contexte spécifique à cet email : pièces jointes
     if attachment_summary:
-        files_context += f"\nNOUVELLES PIÈCES JOINTES : {attachment_summary}\n"
+        files_context += (
+            "\nPIÈCES JOINTES REÇUES AVEC CET EMAIL :\n"
+            f"{attachment_summary}\n"
+        )
 
+    # 3) Prompt orienté immobilier + exploitation des PJ
     prompt = (
-        f"Tu es l'assistant de l'agence immobilière {company_name}. "
+        f"Tu es l'assistant spécialisé en gestion locative de l'agence immobilière {company_name}.\n"
+        f"Tu dois classifier les emails entrants de façon fiable, en t'appuyant à la fois sur le TEXTE "
+        f"de l'email et sur le CONTENU DES PIÈCES JOINTES.\n\n"
         f"{files_context}\n"
-        f"Analyse cet email :\n"
-        f"De: {req.from_email}\n"
-        f"Sujet: {req.subject}\n"
-        f"Contenu: {req.content}\n\n"
-        f"Retourne un JSON strict :\n"
-        f"- is_devis: 'true' si opportunité commerciale/location.\n"
-        f"- category: 'Candidature', 'Incident', 'Paiement', 'Administratif', 'Autre'.\n"
-        f"- urgency: 'Haute', 'Moyenne', 'Faible'.\n"
-        f"- summary: Résumé court.\n"
-        f"- suggested_title: Titre court."
+        f"EMAIL À ANALYSER :\n"
+        f"- De: {req.from_email}\n"
+        f"- Sujet: {req.subject}\n"
+        f"- Contenu:\n{req.content}\n\n"
+        f"RÔLE DES PIÈCES JOINTES (très important) :\n"
+        f"- Si tu vois des documents de type 'fiche de paie', 'bulletin de salaire', 'avis d'impôt', "
+        f"  'pièce d'identité', etc., il s'agit très probablement d'une Candidature ou d'un dossier locataire.\n"
+        f"- Si tu vois des factures, devis, contrats de travaux, photos de dégâts : c'est plutôt un Incident "
+        f"ou un sujet Administratif / Travaux.\n"
+        f"- Si tu ne vois aucune pièce jointe significative, base-toi sur le texte.\n\n"
+        f"Tu dois retourner un JSON STRICT avec les champs suivants :\n"
+        f"- is_devis: booléen (true/false) -> true si l'email représente une opportunité commerciale "
+        f"  (prospect, demande de visite, demande d'estimation, devis, etc.).\n"
+        f"- category: une des valeurs SUIVANTES uniquement :\n"
+        f"  'Candidature', 'Incident', 'Paiement', 'Administratif', 'Autre'.\n"
+        f"    * 'Candidature' : dossier locataire, envoi de pièces du dossier, compléments de dossier,\n"
+        f"      demande de location, candidature à un bien, etc.\n"
+        f"    * 'Incident' : panne, dégâts, fuite, problème dans le logement, travaux urgents, etc.\n"
+        f"    * 'Paiement' : loyer, régularisation, retard de paiement, quittance, virement, etc.\n"
+        f"    * 'Administratif' : changement d'adresse, attestation, questions générales, résiliation,\n"
+        f"      signature de bail, documents administratifs divers.\n"
+        f"    * 'Autre' : tout ce qui ne rentre pas clairement dans les autres catégories.\n"
+        f"- urgency: une des valeurs SUIVANTES uniquement : 'Haute', 'Moyenne', 'Faible'.\n"
+        f"    * 'Haute' : problème bloquant (fuite d'eau, coupure de chauffage en hiver, urgence juridique,\n"
+        f"      échéance très proche, risque de perte d'opportunité, etc.).\n"
+        f"    * 'Moyenne' : sujet important mais pas critique dans les heures (complément de dossier,\n"
+        f"      question sur un contrat, document manquant, demande de visite, etc.).\n"
+        f"    * 'Faible' : simple information, remerciement, spam probable, newsletter, etc.\n"
+        f"- summary: un résumé court (2-3 phrases maximum) qui décrit la situation en tenant compte\n"
+        f"  du texte de l'email ET des pièces jointes.\n"
+        f"- suggested_title: un titre très court, réutilisable comme étiquette ou sujet amélioré.\n\n"
+        f"Réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après."
+    )
+
+    raw = await call_gemini(prompt)
+    data = extract_json_from_text(raw) or {}
+
+    return EmailAnalyseResponse(
+        is_devis=bool(data.get("is_devis", False)),
+        category=str(data.get("category", "Autre")),
+        urgency=str(data.get("urgency", "Moyenne")),
+        summary=str(data.get("summary", "Analyse non disponible")),
+        suggested_title=str(data.get("suggested_title", "Nouvel Email")),
+        raw_ai_text=raw,
     )
 
     raw = await call_gemini(prompt)
