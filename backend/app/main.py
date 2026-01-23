@@ -346,6 +346,148 @@ def compute_checklist(doc_types: List[TenantDocType]) -> dict:
         "missing": missing,
     }
 
+# ============================================================
+# 🟦 HELPERS DOSSIER LOCATAIRE / EMAIL
+# ============================================================
+
+def normalize_email_str(raw: Optional[str]) -> Optional[str]:
+    """
+    Normalise un email :
+    - strip
+    - lower
+    - retourne None si vide
+    """
+    if not raw:
+        return None
+    cleaned = raw.strip().lower()
+    return cleaned or None
+
+
+def ensure_tenant_file_for_email(
+    db: Session,
+    agency_id: int,
+    email_address: Optional[str],
+    candidate_name: Optional[str] = None,
+) -> Optional[TenantFile]:
+    """
+    Retourne un TenantFile pour (agency_id + email) en évitant les doublons :
+    - si un dossier existe déjà pour cet email → on le réutilise
+    - sinon on en crée un
+    """
+    email_norm = normalize_email_str(email_address)
+    if not email_norm:
+        # pas d'email => pas de dossier auto
+        return None
+
+    # On cherche en mode case-insensitive
+    tf = (
+        db.query(TenantFile)
+        .filter(
+            TenantFile.agency_id == agency_id,
+            func.lower(TenantFile.candidate_email) == email_norm,
+        )
+        .order_by(TenantFile.id.asc())
+        .first()
+    )
+
+    if tf:
+        # Petit bonus : si on reçoit un nom et que le dossier n'en a pas encore
+        if candidate_name and not tf.candidate_name:
+            tf.candidate_name = candidate_name.strip()
+            db.commit()
+            db.refresh(tf)
+        return tf
+
+    # Aucun dossier : on en crée un seul
+    tf = TenantFile(
+        agency_id=agency_id,
+        candidate_email=email_norm,
+        candidate_name=candidate_name.strip() if candidate_name else None,
+        status=TenantFileStatus.NEW,
+        checklist_json=None,
+        risk_level=None,
+    )
+    db.add(tf)
+    db.commit()
+    db.refresh(tf)
+    return tf
+
+
+def ensure_email_link(
+    db: Session,
+    tenant_file_id: int,
+    email_analysis_id: int,
+) -> None:
+    """
+    Crée un TenantEmailLink si inexistant.
+    """
+    exists = (
+        db.query(TenantEmailLink)
+        .filter(
+            TenantEmailLink.tenant_file_id == tenant_file_id,
+            TenantEmailLink.email_analysis_id == email_analysis_id,
+        )
+        .first()
+    )
+    if not exists:
+        db.add(
+            TenantEmailLink(
+                tenant_file_id=tenant_file_id,
+                email_analysis_id=email_analysis_id,
+            )
+        )
+        db.commit()
+
+
+def attach_files_to_tenant_file(
+    db: Session,
+    tenant_file: TenantFile,
+    file_ids: List[int],
+) -> None:
+    """
+    Attache une liste de FileAnalysis à un TenantFile (sans doublons)
+    et recalcule la checklist + status.
+    """
+    if not tenant_file or not file_ids:
+        return
+
+    tf_id = tenant_file.id
+
+    # Attache les fichiers
+    for fid in file_ids:
+        if not db.query(TenantDocumentLink).filter(
+            TenantDocumentLink.tenant_file_id == tf_id,
+            TenantDocumentLink.file_analysis_id == fid,
+        ).first():
+            fa = db.query(FileAnalysis).filter(FileAnalysis.id == fid).first()
+            dt = map_doc_type(getattr(fa, "file_type", "") if fa else "")
+            db.add(
+                TenantDocumentLink(
+                    tenant_file_id=tf_id,
+                    file_analysis_id=fid,
+                    doc_type=dt,
+                    quality=DocQuality.OK,
+                )
+            )
+    db.commit()
+
+    # Recalcul checklist
+    links = (
+        db.query(TenantDocumentLink)
+        .filter(TenantDocumentLink.tenant_file_id == tf_id)
+        .all()
+    )
+    doc_types = [l.doc_type for l in links]
+    checklist = compute_checklist(doc_types)
+
+    tenant_file.checklist_json = json.dumps(checklist)
+    tenant_file.status = (
+        TenantFileStatus.TO_VALIDATE
+        if len(checklist["missing"]) == 0
+        else TenantFileStatus.INCOMPLETE
+    )
+    db.commit()
+
 
 # --- IA LOGIQUE ---
 async def analyze_document_logic(file_path: str, filename: str):
@@ -1940,61 +2082,33 @@ async def delete_my_account(
 
 def auto_link_email_to_tenant_file(db: Session, email):
     """
-    V1 très simple :
-    - si un dossier locataire existe déjà pour cet email -> on crée juste le lien
-    - sinon on crée un nouveau dossier + le lien
+    Liaison email → dossier locataire (ANTI-DOUBLON).
+    Passe obligatoirement par ensure_tenant_file_for_email.
     """
     try:
-        sender = (email.sender_email or "").strip().lower()
-        if not sender or not email.agency_id:
+        if not email or not email.agency_id:
             return
 
-        tf = (
-            db.query(TenantFile)
-            .filter(
-                TenantFile.agency_id == email.agency_id,
-                func.lower(TenantFile.candidate_email) == sender,
-            )
-            .order_by(TenantFile.id.desc())
-            .first()
+        tf = ensure_tenant_file_for_email(
+            db=db,
+            agency_id=email.agency_id,
+            email_address=email.sender_email,
         )
 
-        created = False
-        if tf is None:
-            tf = TenantFile(
-                agency_id=email.agency_id,
-                candidate_email=sender,
-                status=TenantFileStatus.NEW,
-            )
-            db.add(tf)
-            db.commit()
-            db.refresh(tf)
-            created = True
+        if not tf:
+            return
 
-        existing_link = (
-            db.query(TenantEmailLink)
-            .filter(
-                TenantEmailLink.tenant_file_id == tf.id,
-                TenantEmailLink.email_analysis_id == email.id,
-            )
-            .first()
+        ensure_email_link(
+            db=db,
+            tenant_file_id=tf.id,
+            email_analysis_id=email.id,
         )
 
-        if not existing_link:
-            db.add(
-                TenantEmailLink(
-                    tenant_file_id=tf.id,
-                    email_analysis_id=email.id,
-                )
-            )
-            db.commit()
-
-        print(
-            f"[auto_link] email #{email.id} → dossier #{tf.id} (created={created})"
-        )
+        print(f"[auto_link] email #{email.id} → dossier #{tf.id}")
 
     except Exception as e:
         print("[auto_link_email_to_tenant_file] ERROR:", e)
+
 
 
 # --- PROCESS MANUEL / UPLOAD ---
