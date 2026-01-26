@@ -131,15 +131,36 @@ export default function EmailProcessor({ authFetch }) {
       <div className="card">
         <form onSubmit={handleProcess} style={{ display: "grid", gap: 12 }}>
           <div>
-            <label className="label">Email expéditeur</label>
-            <input
-              className="input"
-              value={fromEmail}
-              onChange={(e) => setFromEmail(e.target.value)}
-              placeholder="ex: client@gmail.com"
-              required
-            />
-          </div>
+          <label className="label">
+            Pièces jointes (optionnel, prises en compte par l’IA)
+          </label>
+
+          {/* Input fichier caché */}
+          <input
+            id="email-attachments-input"
+            type="file"
+            multiple
+            onChange={handleFileChange}
+            style={{ display: "none" }}
+          />
+
+          {/* Bouton custom qui ouvre le sélecteur */}
+          <label
+            htmlFor="email-attachments-input"
+            className="btn btn-secondary"
+            style={{ cursor: "pointer" }}
+          >
+            Sélectionner des fichiers
+          </label>
+
+          {/* Petit résumé des fichiers sélectionnés */}
+          {files.length > 0 && (
+            <div className="muted" style={{ marginTop: 6 }}>
+              {files.length} fichier(s) sélectionné(s) :{" "}
+              {files.map((f) => f.name).join(", ")}
+            </div>
+          )}
+        </div>
 
           <div>
             <label className="label">Sujet</label>
