@@ -1337,7 +1337,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     db.refresh(new_email)
 
 
-    # ✅ GESTION LOCATIVE AUTO
+       # ✅ GESTION LOCATIVE AUTO
     try:
         # Catégorie IA (si dispo) + fallback sur new_email.category
         cat = (
@@ -1370,7 +1370,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                     .first()
                 )
 
-            # Crée le dossier si inexistant
+            # Créer le dossier si inexistant
             if not tf:
                 tf = TenantFile(
                     agency_id=agency_id,
@@ -1394,7 +1394,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                 )
                 db.commit()
 
-            # ✅ Lier les PJ + recalcul checklist via la fonction utilitaire
+            # ✅ Lier les PJ + recalcul checklist via le helper commun
             attach_files_to_tenant_file(db, tf, attachment_file_ids)
 
     except Exception as e:
@@ -2332,15 +2332,14 @@ async def process_manual(
     auto_link_email_to_tenant_file(db, new_email)
 
 
-       # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
+           # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
     try:
         cat = (
             (getattr(analyse, "category", "") or "").lower().strip()
             or (new_email.category or "").lower().strip()
         )
 
-        # ✅ Nouveau : déclencher aussi si on a des PJ,
-        # même si l’IA n’a pas réussi à classifier
+        # ✅ Nouveau : déclencher aussi si on a des PJ, même sans classification IA
         should_auto_loc = (
             ("candid" in cat)
             or ("locat" in cat)
