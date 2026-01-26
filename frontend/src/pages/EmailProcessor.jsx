@@ -130,38 +130,20 @@ export default function EmailProcessor({ authFetch }) {
 
       <div className="card">
         <form onSubmit={handleProcess} style={{ display: "grid", gap: 12 }}>
+          {/* Email expéditeur */}
           <div>
-          <label className="label">
-            Pièces jointes (optionnel, prises en compte par l’IA)
-          </label>
+            <label className="label">Email expéditeur</label>
+            <input
+              className="input"
+              type="email"
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
+              placeholder="ex: client@gmail.com"
+              required
+            />
+          </div>
 
-          {/* Input fichier caché */}
-          <input
-            id="email-attachments-input"
-            type="file"
-            multiple
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-          />
-
-          {/* Bouton custom qui ouvre le sélecteur */}
-          <label
-            htmlFor="email-attachments-input"
-            className="btn btn-secondary"
-            style={{ cursor: "pointer" }}
-          >
-            Sélectionner des fichiers
-          </label>
-
-          {/* Petit résumé des fichiers sélectionnés */}
-          {files.length > 0 && (
-            <div className="muted" style={{ marginTop: 6 }}>
-              {files.length} fichier(s) sélectionné(s) :{" "}
-              {files.map((f) => f.name).join(", ")}
-            </div>
-          )}
-        </div>
-
+          {/* Sujet */}
           <div>
             <label className="label">Sujet</label>
             <input
@@ -173,6 +155,7 @@ export default function EmailProcessor({ authFetch }) {
             />
           </div>
 
+          {/* Contenu */}
           <div>
             <label className="label">Contenu</label>
             <textarea
@@ -185,24 +168,40 @@ export default function EmailProcessor({ authFetch }) {
             />
           </div>
 
+          {/* Pièces jointes – version bouton custom (UNE SEULE FOIS) */}
           <div>
             <label className="label">
               Pièces jointes (optionnel, prises en compte par l’IA)
             </label>
+
+            {/* Input fichier caché */}
             <input
+              id="email-attachments-input"
               type="file"
               multiple
               onChange={handleFileChange}
-              className="input"
+              style={{ display: "none" }}
             />
+
+            {/* Bouton custom qui ouvre le sélecteur */}
+            <label
+              htmlFor="email-attachments-input"
+              className="btn btn-secondary"
+              style={{ cursor: "pointer" }}
+            >
+              {files.length ? "Modifier les fichiers" : "Sélectionner des fichiers"}
+            </label>
+
+            {/* Petit résumé des fichiers sélectionnés */}
             {files.length > 0 && (
-              <div className="muted" style={{ marginTop: 4 }}>
+              <div className="muted" style={{ marginTop: 6 }}>
                 {files.length} fichier(s) sélectionné(s) :{" "}
                 {files.map((f) => f.name).join(", ")}
               </div>
             )}
           </div>
 
+          {/* Boutons */}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button className="btn btn-primary" disabled={loading}>
               {loading ? "Analyse..." : "Analyser"}
@@ -245,9 +244,7 @@ export default function EmailProcessor({ authFetch }) {
               <div className="muted">
                 <b>Sujet :</b> {reponse?.subject || "(sans sujet)"}
               </div>
-              <pre
-                style={{ whiteSpace: "pre-wrap", marginTop: 10 }}
-              >
+              <pre style={{ whiteSpace: "pre-wrap", marginTop: 10 }}>
                 {reponse?.reply || "—"}
               </pre>
             </div>
