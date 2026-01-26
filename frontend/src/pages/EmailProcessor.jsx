@@ -33,6 +33,7 @@ export default function EmailProcessor({ authFetch }) {
       (file) =>
         new Promise((resolve, reject) => {
           const reader = new FileReader();
+
           reader.onload = () => {
             try {
               const result = reader.result;
@@ -49,6 +50,7 @@ export default function EmailProcessor({ authFetch }) {
               reject(e);
             }
           };
+
           reader.onerror = reject;
           reader.readAsDataURL(file);
         })
