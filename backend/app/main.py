@@ -1803,7 +1803,7 @@ async def upload_document_for_tenant(
         TenantDocumentLink(
             tenant_file_id=tf.id,
             file_analysis_id=new_file.id,
-            doc_type=map_doc_type(new_file.file_type),
+            doc_type=map_doc_type(f"{new_file.file_type} {new_file.filename}"),
             quality=DocQuality.OK,
         )
     )
