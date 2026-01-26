@@ -1336,58 +1336,66 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     db.commit()
     db.refresh(new_email)
 
+
     # ✅ GESTION LOCATIVE AUTO
     try:
-        cat = (analyse.category or "").lower().strip() if hasattr(analyse, "category") else (new_email.category or "").lower().strip()
-        if ("candid" in cat) or ("locat" in cat) or ("dossier" in cat):
+        # Catégorie IA (si dispo) + fallback sur new_email.category
+        cat = (
+            (getattr(analyse, "category", "") or "").lower().strip()
+            or (new_email.category or "").lower().strip()
+        )
+
+        # ✅ Nouveau : on déclenche si
+        #  - ça ressemble à une candidature/locataire/dossier
+        #  - OU il y a au moins une pièce jointe analysée
+        should_auto_loc = (
+            ("candid" in cat)
+            or ("locat" in cat)
+            or ("dossier" in cat)
+            or len(attachment_file_ids) > 0
+        )
+
+        if should_auto_loc:
             candidate_email = (req.from_email or "").lower().strip()
 
             tf = None
             if candidate_email:
                 tf = (
                     db.query(TenantFile)
-                    .filter(TenantFile.agency_id == agency_id, TenantFile.candidate_email == candidate_email)
+                    .filter(
+                        TenantFile.agency_id == agency_id,
+                        TenantFile.candidate_email == candidate_email,
+                    )
                     .order_by(TenantFile.id.desc())
                     .first()
                 )
 
+            # Crée le dossier si inexistant
             if not tf:
-                tf = TenantFile(agency_id=agency_id, candidate_email=candidate_email, status=TenantFileStatus.NEW)
+                tf = TenantFile(
+                    agency_id=agency_id,
+                    candidate_email=candidate_email,
+                    status=TenantFileStatus.NEW,
+                )
                 db.add(tf)
                 db.commit()
                 db.refresh(tf)
 
+            # Lier l’email au dossier (si pas déjà fait)
             if not db.query(TenantEmailLink).filter(
                 TenantEmailLink.tenant_file_id == tf.id,
                 TenantEmailLink.email_analysis_id == new_email.id,
             ).first():
-                db.add(TenantEmailLink(tenant_file_id=tf.id, email_analysis_id=new_email.id))
+                db.add(
+                    TenantEmailLink(
+                        tenant_file_id=tf.id,
+                        email_analysis_id=new_email.id,
+                    )
+                )
                 db.commit()
 
-            for fid in attachment_file_ids:
-                if not db.query(TenantDocumentLink).filter(
-                    TenantDocumentLink.tenant_file_id == tf.id,
-                    TenantDocumentLink.file_analysis_id == fid,
-                ).first():
-                    fa = db.query(FileAnalysis).filter(FileAnalysis.id == fid).first()
-                    dt = map_doc_type(getattr(fa, "file_type", "") if fa else "")
-                    db.add(
-                        TenantDocumentLink(
-                            tenant_file_id=tf.id,
-                            file_analysis_id=fid,
-                            doc_type=dt,
-                            quality=DocQuality.OK,
-                        )
-                    )
-            db.commit()
-
-            links = db.query(TenantDocumentLink).filter(TenantDocumentLink.tenant_file_id == tf.id).all()
-            doc_types = [l.doc_type for l in links]
-            checklist = compute_checklist(doc_types)
-
-            tf.checklist_json = json.dumps(checklist)
-            tf.status = TenantFileStatus.TO_VALIDATE if len(checklist["missing"]) == 0 else TenantFileStatus.INCOMPLETE
-            db.commit()
+            # ✅ Lier les PJ + recalcul checklist via la fonction utilitaire
+            attach_files_to_tenant_file(db, tf, attachment_file_ids)
 
     except Exception as e:
         print(f"⚠️ Auto dossier locataire: {e}")
@@ -2324,16 +2332,23 @@ async def process_manual(
     auto_link_email_to_tenant_file(db, new_email)
 
 
-    # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
+       # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
     try:
         cat = (
-            (analyse.category or "").lower().strip()
-            if hasattr(analyse, "category")
-            else (new_email.category or "").lower().strip()
+            (getattr(analyse, "category", "") or "").lower().strip()
+            or (new_email.category or "").lower().strip()
         )
 
-        # On ne déclenche l’auto-dossier que si ça ressemble à une candidature / locataire
-        if ("candid" in cat) or ("locat" in cat) or ("dossier" in cat):
+        # ✅ Nouveau : déclencher aussi si on a des PJ,
+        # même si l’IA n’a pas réussi à classifier
+        should_auto_loc = (
+            ("candid" in cat)
+            or ("locat" in cat)
+            or ("dossier" in cat)
+            or len(attachment_file_ids) > 0
+        )
+
+        if should_auto_loc:
             candidate_email = (req.from_email or "").lower().strip()
 
             tf = None
@@ -2372,46 +2387,9 @@ async def process_manual(
                 )
                 db.commit()
 
-            # Lier les pièces jointes au dossier
-            for fid in attachment_file_ids:
-                if not db.query(TenantDocumentLink).filter(
-                    TenantDocumentLink.tenant_file_id == tf.id,
-                    TenantDocumentLink.file_analysis_id == fid,
-                ).first():
-                    fa = (
-                        db.query(FileAnalysis)
-                        .filter(FileAnalysis.id == fid)
-                        .first()
-                    )
-                    dt = map_doc_type(
-                        getattr(fa, "file_type", "") if fa else ""
-                    )
-                    db.add(
-                        TenantDocumentLink(
-                            tenant_file_id=tf.id,
-                            file_analysis_id=fid,
-                            doc_type=dt,
-                            quality=DocQuality.OK,
-                        )
-                    )
-            db.commit()
+            # ✅ Lier les pièces + recalcul checklist via la fonction utilitaire
+            attach_files_to_tenant_file(db, tf, attachment_file_ids)
 
-            # Recalcul checklist + statut
-            links = (
-                db.query(TenantDocumentLink)
-                .filter(TenantDocumentLink.tenant_file_id == tf.id)
-                .all()
-            )
-            doc_types = [l.doc_type for l in links]
-            checklist = compute_checklist(doc_types)
-
-            tf.checklist_json = json.dumps(checklist)
-            tf.status = (
-                TenantFileStatus.TO_VALIDATE
-                if len(checklist["missing"]) == 0
-                else TenantFileStatus.INCOMPLETE
-            )
-            db.commit()
     except Exception as e:
         print(f"⚠️ Auto dossier locataire (manual): {e}")
 
