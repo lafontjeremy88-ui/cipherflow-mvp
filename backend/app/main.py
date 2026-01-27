@@ -533,7 +533,7 @@ async def analyze_document_logic(file_path: str, filename: str):
         res = client.models.generate_content(model=MODEL_NAME, contents=[uploaded_file, prompt])
         return extract_json_from_text(res.text)
 
-        except Exception as e:
+    except Exception as e:
         print(f"Erreur analyse doc: {e}")
         # ✅ Fallback : on se base sur le nom du fichier
         guessed_type_label = guess_label_from_filename(filename)
