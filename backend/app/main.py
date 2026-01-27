@@ -264,10 +264,6 @@ class DocType(str, Enum):
 
 
 def map_doc_type(raw: str) -> str:
-    """
-    Transforme une description libre ('Fiche de paie', 'Pièce d'identité', etc.)
-    en un type normalisé: 'payslip' | 'tax' | 'id' | 'other'.
-    """
     if not raw:
         return DocType.OTHER.value
 
@@ -280,22 +276,24 @@ def map_doc_type(raw: str) -> str:
         or "fiche de paye" in txt
         or "bulletin de paie" in txt
         or "bulletin de paye" in txt
-        or "bulletin" in txt and "paie" in txt
+        or ("bulletin" in txt and "paie" in txt)
         or "paye" in txt
     ):
         return DocType.PAYSLIP.value
 
-    # --- Avis d'impôt / impots ---
+    # --- Avis d'impôt / avis d'imposition ---
     if (
-        "avis d'impot" in txt
+        "avis d'imposition" in txt
+        or "avis d imposition" in txt
+        or "avis d'impot" in txt
         or "avis d impôt" in txt
         or "avis d impot" in txt
         or "avis d’impôt" in txt
-        or ("avis" in txt and ("impot" in txt or "impôt" in txt))
+        or ("avis" in txt and ("impot" in txt or "impôt" in txt or "imposition" in txt))
     ):
         return DocType.TAX.value
 
-    # --- Pièce d'identité / carte d'identité / CNI / passeport ---
+    # --- Pièce d'identité / CNI / passeport ---
     if (
         "pièce d'identité" in txt
         or "piece d'identite" in txt
