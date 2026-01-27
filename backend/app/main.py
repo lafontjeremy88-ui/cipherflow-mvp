@@ -311,6 +311,24 @@ def map_doc_type(raw: str) -> str:
 
     return DocType.OTHER.value
 
+def guess_label_from_filename(filename: str) -> str:
+    """
+    Fallback quand l'IA doc plante :
+    On regarde le nom du fichier et on renvoie un libellé propre pour file_type.
+    """
+    if not filename:
+        return "Autre"
+
+    normalized = map_doc_type(filename)
+
+    if normalized == DocType.PAYSLIP.value:
+        return "Bulletin de paie"
+    if normalized == DocType.TAX.value:
+        return "Avis d'imposition"
+    if normalized == DocType.ID.value:
+        return "Pièce d'identité"
+    return "Autre"
+
 
 def compute_checklist(doc_types: List[TenantDocType]) -> dict:
     """
@@ -515,10 +533,18 @@ async def analyze_document_logic(file_path: str, filename: str):
         res = client.models.generate_content(model=MODEL_NAME, contents=[uploaded_file, prompt])
         return extract_json_from_text(res.text)
 
-    except Exception as e:
+        except Exception as e:
         print(f"Erreur analyse doc: {e}")
-        return {"summary": "Analyse indisponible (erreur IA)",
-        "type": "Autre"}
+        # ✅ Fallback : on se base sur le nom du fichier
+        guessed_type_label = guess_label_from_filename(filename)
+
+        return {
+            "summary": "Analyse indisponible (erreur IA)",
+            "type": guessed_type_label,
+            "sender": "",
+            "date": "",
+            "amount": "0",
+        }
 
 async def analyze_email_logic(
     req,
@@ -630,6 +656,22 @@ async def generate_reply_logic(req, company_name, tone, signature):
     )
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
+
+    # ✅ Fallback si l'IA n'a rien répondu d'exploitable
+    if not data:
+        fallback_reply = (
+            "Bonjour,\n\n"
+            "Nous avons bien reçu votre email et les pièces jointes associées à votre dossier. "
+            "Nous allons les vérifier et revenir vers vous si des éléments complémentaires sont nécessaires.\n\n"
+            "Cordialement,\n"
+            f"{company_name}"
+        )
+        return EmailReplyResponse(
+            reply=fallback_reply,
+            subject=f"Re: {req.subject}",
+            raw_ai_text=raw,
+        )
+
     return EmailReplyResponse(
         reply=data.get("reply", raw),
         subject=data.get("subject", f"Re: {req.subject}"),
