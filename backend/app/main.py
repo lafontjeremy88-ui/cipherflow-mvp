@@ -1377,7 +1377,9 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     db.refresh(new_email)
 
 
-       # ✅ GESTION LOCATIVE AUTO
+        # ✅ GESTION LOCATIVE AUTO
+    dossier_comment = ""  # <- texte qu'on ajoutera à la réponse mail
+
     try:
         # Catégorie IA (si dispo) + fallback sur new_email.category
         cat = (
@@ -1385,7 +1387,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             or (new_email.category or "").lower().strip()
         )
 
-        # ✅ Nouveau : on déclenche si
+        # ✅ On déclenche si :
         #  - ça ressemble à une candidature/locataire/dossier
         #  - OU il y a au moins une pièce jointe analysée
         should_auto_loc = (
@@ -1437,8 +1439,52 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             # ✅ Lier les PJ + recalcul checklist via le helper commun
             attach_files_to_tenant_file(db, tf, attachment_file_ids)
 
+            # 🔍 À partir d'ici : on lit la checklist pour savoir si le dossier est complet
+            db.refresh(tf)
+
+            raw_checklist = getattr(tf, "checklist_json", None) or getattr(tf, "checklist", None)
+            checklist_data = None
+
+            if isinstance(raw_checklist, dict):
+                checklist_data = raw_checklist
+            elif isinstance(raw_checklist, str):
+                try:
+                    checklist_data = json.loads(raw_checklist)
+                except Exception:
+                    checklist_data = None
+
+            if checklist_data:
+                missing_codes = checklist_data.get("missing", []) or []
+
+                # mapping "code" -> phrase lisible
+                label_map = {
+                    "id": "une pièce d'identité",
+                    "payslip": "un bulletin de paie",
+                    "tax": "un avis d'imposition",
+                }
+
+                if not missing_codes:
+                    dossier_comment = (
+                        "À ce jour, votre dossier locataire est complet ✅. "
+                        "Nous avons bien reçu l'ensemble des pièces demandées."
+                    )
+                else:
+                    missing_labels = [label_map.get(code, code) for code in missing_codes]
+                    dossier_comment = (
+                        "À ce jour, votre dossier locataire est incomplet. "
+                        "Il manque encore : " + ", ".join(missing_labels) + "."
+                    )
+
     except Exception as e:
         print(f"⚠️ Auto dossier locataire: {e}")
+
+    # 📨 On enrichit la réponse mail AVANT envoi
+    if dossier_comment:
+        reponse.reply = (
+            f"{reponse.reply}\n\n---\n"
+            f"État de votre dossier locataire :\n"
+            f"{dossier_comment}"
+        )
 
     sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
