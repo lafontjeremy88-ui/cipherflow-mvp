@@ -634,33 +634,68 @@ async def analyze_email_logic(
         raw_ai_text=raw,
     )
 
-    raw = await call_gemini(prompt)
-    data = extract_json_from_text(raw) or {}
+    
+async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: str, signature: str):
+    """
+    Génère la réponse email en tenant compte :
+    - du contenu de l'email
+    - du résumé IA / catégorie / urgence
+    - du statut du dossier locataire + pièces manquantes
+    """
 
-    return EmailAnalyseResponse(
-        is_devis=bool(data.get("is_devis", False)),
-        category=str(data.get("category", "Autre")),
-        urgency=str(data.get("urgency", "Moyenne")),
-        summary=str(data.get("summary", "Analyse non disponible")),
-        suggested_title=str(data.get("suggested_title", "Nouvel Email")),
-        raw_ai_text=raw,
-    )
+    # 👉 On construit un petit bloc de contexte dossier si dispo
+    dossier_context = ""
+    if req.tenant_status or req.missing_docs:
+        dossier_context += "\n\nINFORMATIONS DOSSIER LOCATAIRE :\n"
+        if req.tenant_status:
+            dossier_context += f"- Statut actuel du dossier : {req.tenant_status}.\n"
+        if req.missing_docs:
+            dossier_context += "- Pièces manquantes :\n"
+            for doc in req.missing_docs:
+                dossier_context += f"  • {doc}\n"
 
-async def generate_reply_logic(req, company_name, tone, signature):
     prompt = (
-        f"Tu es l'assistant de {company_name}. Ton: {tone}. Signature: {signature}.\n"
-        f"Sujet:{req.subject}\nCat:{req.category}\nRésumé:{req.summary}\nMsg:{req.content}\n"
-        f"Retourne JSON strict: reply, subject."
+        f"Tu es l'assistant de l'agence immobilière {company_name}.\n"
+        f"Ton d'écriture : {tone} (professionnel, clair, bienveillant).\n"
+        f"Signature à utiliser en bas de mail :\n{signature}\n\n"
+        f"Sujet de l'email : {req.subject}\n"
+        f"Catégorie détectée : {req.category}\n"
+        f"Niveau d'urgence : {req.urgency}\n"
+        f"Résumé IA : {req.summary}\n"
+        f"Contenu brut du message :\n{req.content}\n"
+        f"{dossier_context}\n\n"
+        f"OBJECTIF :\n"
+        f"- Tu dois ABSOLUMENT dire au candidat si son dossier est complet ou non.\n"
+        f"- Si des pièces sont manquantes, liste-les clairement dans la réponse.\n"
+        f"- Reste poli, concis et professionnel.\n"
+        f"- Ne ré-explique pas tout le contexte interne, parle simplement au candidat.\n\n"
+        f"FORMAT DE SORTIE :\n"
+        f"Retourne UNIQUEMENT un JSON VALIDE avec exactement ces clés :\n"
+        f'{{ "reply": "...", "subject": "..." }}\n'
+        f"Pas de texte avant ni après le JSON."
     )
+
     raw = await call_gemini(prompt)
     data = extract_json_from_text(raw) or {}
 
     # ✅ Fallback si l'IA n'a rien répondu d'exploitable
     if not data:
+        # On enrichit déjà un peu en dur avec le statut / pièces manquantes
+        missing_txt = ""
+        if req.missing_docs:
+            missing_txt = (
+                "\n\nD'après les éléments dont nous disposons, il manque encore les pièces suivantes :\n"
+                + "\n".join(f"- {d}" for d in req.missing_docs)
+            )
+        else:
+            missing_txt = (
+                "\n\nÀ ce stade, votre dossier semble complet. Nous reviendrons vers vous après vérification."
+            )
+
         fallback_reply = (
             "Bonjour,\n\n"
-            "Nous avons bien reçu votre email et les pièces jointes associées à votre dossier. "
-            "Nous allons les vérifier et revenir vers vous si des éléments complémentaires sont nécessaires.\n\n"
+            "Nous avons bien reçu votre email et les pièces jointes associées à votre dossier locataire."
+            f"{missing_txt}\n\n"
             "Cordialement,\n"
             f"{company_name}"
         )
@@ -738,6 +773,10 @@ class EmailReplyRequest(BaseModel):
     summary: Optional[str] = None
     category: Optional[str] = None
     urgency: Optional[str] = None
+
+    # 👉 nouveau : contexte dossier locataire
+    tenant_status: Optional[str] = None
+    missing_docs: Optional[List[str]] = None
 
 class EmailReplyResponse(BaseModel):
     reply: str
@@ -1336,7 +1375,7 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             except Exception as e:
                 print(f"Erreur PJ: {e}")
 
-    # 3. ANALYSE EMAIL
+        # 3. ANALYSE EMAIL
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content),
         comp_name,
@@ -1345,6 +1384,75 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
         attachment_summary=attachment_summary_text,
     )
 
+    # 3.bis – Préparation du contexte dossier locataire pour la réponse
+    tenant_status_for_reply: Optional[str] = None
+    missing_docs_for_reply: List[str] = []
+
+    try:
+        # Catégorie IA (si dispo)
+        cat = (analyse.category or "").lower().strip()
+
+        # On déclenche la logique "dossier locataire" si :
+        #  - ça ressemble à une candidature / dossier locataire
+        #  - OU il y a des PJ
+        should_auto_loc = (
+            ("candid" in cat)
+            or ("locat" in cat)
+            or ("dossier" in cat)
+            or len(attachment_file_ids) > 0
+        )
+
+        if should_auto_loc:
+            candidate_email = (req.from_email or "").strip().lower()
+
+            # On utilise la fonction anti-doublon
+            tf = ensure_tenant_file_for_email(
+                db=db,
+                agency_id=agency_id,
+                email_address=candidate_email,
+            )
+
+            if tf:
+                # On attache les PJ au dossier + recalcul checklist + status
+                attach_files_to_tenant_file(db, tf, attachment_file_ids)
+
+                # On relit le dossier à jour
+                db.refresh(tf)
+
+                checklist = {}
+                if tf.checklist_json:
+                    try:
+                        checklist = json.loads(tf.checklist_json)
+                    except Exception:
+                        checklist = {}
+
+                # mapping code -> libellé humain
+                DOC_LABELS = {
+                    "id": "Pièce d'identité",
+                    "payslip": "Bulletin de paie",
+                    "tax": "Avis d'imposition",
+                }
+
+                missing_codes = checklist.get("missing", []) or []
+                missing_docs_for_reply = [DOC_LABELS.get(code, code) for code in missing_codes]
+
+                # Texte lisible pour le statut
+                raw_status = (tf.status.value if hasattr(tf.status, "value") else str(tf.status)).lower()
+                if "new" in raw_status:
+                    tenant_status_for_reply = "Nouveau dossier (aucun document enregistré)."
+                elif "incomplete" in raw_status:
+                    tenant_status_for_reply = "Dossier incomplet."
+                elif "to_validate" in raw_status:
+                    tenant_status_for_reply = "Dossier complet, en attente de validation."
+                elif "complete" in raw_status:
+                    tenant_status_for_reply = "Dossier complet et validé."
+                else:
+                    tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+
+    except Exception as e:
+        print(f"⚠️ Contexte dossier pour la réponse: {e}")
+
+    # 4. Génération de la réponse en incluant le contexte dossier
     reponse = await generate_reply_logic(
         EmailReplyRequest(
             from_email=req.from_email,
@@ -1353,12 +1461,16 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             summary=analyse.summary,
             category=analyse.category,
             urgency=analyse.urgency,
+            tenant_status=tenant_status_for_reply,
+            missing_docs=missing_docs_for_reply,
         ),
         comp_name,
         s.tone if s else "pro",
         s.signature if s else "Team",
     )
 
+    # 5. Enregistrement de l'email en base avec la réponse suggérée
+    
     new_email = EmailAnalysis(
         agency_id=agency_id,
         sender_email=req.from_email,
