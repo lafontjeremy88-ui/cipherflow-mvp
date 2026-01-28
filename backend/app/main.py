@@ -635,7 +635,7 @@ async def analyze_email_logic(
     )
 
     
-async def generate_reply_logic(req: EmailReplyRequest, company_name: str, tone: str, signature: str):
+async def generate_reply_logic(req, company_name: str, tone: str, signature: str):
     """
     Génère la réponse email en tenant compte :
     - du contenu de l'email
