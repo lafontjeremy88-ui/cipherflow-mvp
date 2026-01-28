@@ -641,9 +641,49 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     - du contenu de l'email
     - du résumé IA / catégorie / urgence
     - du statut du dossier locataire + pièces manquantes
+
+    ⚠️ RÈGLE MÉTIER :
+    - si on connaît l'état du dossier (missing_docs fourni),
+      la réponse est 100% déterminée par le métier (pas par l'IA).
     """
 
-    # 👉 On construit un petit bloc de contexte dossier si dispo
+    # 0️⃣ LOGIQUE MÉTIER PRIORITAIRE (sans IA)
+    if req.missing_docs is not None:
+        # On a une info fiable sur le dossier
+        missing = [d for d in (req.missing_docs or []) if d]
+
+        if not missing:
+            # ✅ Dossier complet -> réponse standard "dossier complet"
+            reply_text = (
+                "Bonjour,\n\n"
+                "Nous vous confirmons la bonne réception de vos documents. "
+                "Votre dossier est désormais complet et va être étudié par notre équipe. "
+                "Vous serez recontacté(e) dès qu'une décision sera prise.\n\n"
+                "Cordialement,\n"
+                f"{company_name}"
+            )
+        else:
+            # ⚠️ Dossier encore incomplet -> on liste précisément les pièces manquantes
+            missing_lines = "\n".join(f"- {d}" for d in missing)
+            reply_text = (
+                "Bonjour,\n\n"
+                "Nous vous confirmons la bonne réception de vos documents. "
+                "Cependant, votre dossier est encore incomplet.\n\n"
+                "Il nous manque encore les pièces suivantes :\n"
+                f"{missing_lines}\n\n"
+                "Merci de nous transmettre ces éléments afin de finaliser votre dossier.\n\n"
+                "Cordialement,\n"
+                f"{company_name}"
+            )
+
+        return EmailReplyResponse(
+            reply=reply_text,
+            subject=f"Re: {req.subject}",
+            raw_ai_text=None,
+        )
+
+    # 1️⃣ Si on n'a PAS d'info dossier -> on garde la logique IA actuelle
+
     dossier_context = ""
     if req.tenant_status or req.missing_docs:
         dossier_context += "\n\nINFORMATIONS DOSSIER LOCATAIRE :\n"
@@ -680,7 +720,6 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
 
     # ✅ Fallback si l'IA n'a rien répondu d'exploitable
     if not data:
-        # On enrichit déjà un peu en dur avec le statut / pièces manquantes
         missing_txt = ""
         if req.missing_docs:
             missing_txt = (
