@@ -66,6 +66,18 @@ function normalizeIds(ids) {
   return [];
 }
 
+// ✅ Statut UI dérivé de la checklist (ne dépend pas du backend)
+function deriveStatusFromChecklist(checklist) {
+  const received = Array.isArray(checklist?.received) ? checklist.received : [];
+  const missing = Array.isArray(checklist?.missing) ? checklist.missing : [];
+
+  if (missing.length === 0 && received.length > 0) return "complete";
+  if (received.length > 0 && missing.length > 0) return "incomplete";
+  // si pas de reçues mais des manquantes => plutôt "new"
+  if (received.length === 0 && missing.length > 0) return "new";
+  return null;
+}
+
 export default function TenantFilesPanel({ authFetch }) {
   const [tenants, setTenants] = useState([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
@@ -100,11 +112,11 @@ export default function TenantFilesPanel({ authFetch }) {
 
   const [newTenantEmail, setNewTenantEmail] = useState("");
   const [creatingTenant, setCreatingTenant] = useState(false);
-    // Édition / renommage du dossier
+
+  // Édition / renommage du dossier
   const [editingEmail, setEditingEmail] = useState("");
   const [editingName, setEditingName] = useState("");
   const [savingMeta, setSavingMeta] = useState(false);
-
 
   const authFetchOk = typeof authFetch === "function";
 
@@ -245,14 +257,13 @@ export default function TenantFilesPanel({ authFetch }) {
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(
-          txt || "Impossible de mettre à jour les informations du dossier locataire."
+          txt ||
+            "Impossible de mettre à jour les informations du dossier locataire."
         );
       }
 
       const data = await res.json().catch(() => null);
-      if (data) {
-        setTenantDetail(data);
-      }
+      if (data) setTenantDetail(data);
 
       // On rafraîchit la liste de gauche pour voir le nouveau nom/email
       await fetchTenants();
@@ -263,7 +274,6 @@ export default function TenantFilesPanel({ authFetch }) {
       setSavingMeta(false);
     }
   };
-
 
   const fetchTenantDetail = async (tenantId) => {
     if (!authFetchOk || !tenantId) return;
@@ -366,7 +376,10 @@ export default function TenantFilesPanel({ authFetch }) {
         throw new Error(txt || "Erreur attach-document");
       }
 
-      await Promise.all([fetchTenantDetail(selectedTenantId), fetchFilesHistory()]);
+      await Promise.all([
+        fetchTenantDetail(selectedTenantId),
+        fetchFilesHistory(),
+      ]);
       setSelectedFileIdToAttach("");
     } catch (e) {
       console.error(e);
@@ -391,15 +404,20 @@ export default function TenantFilesPanel({ authFetch }) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await authFetch(`/tenant-files/${selectedTenantId}/upload-document`, {
-        method: "POST",
-        body: formData,
-      });
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/upload-document`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         console.error("upload-document error:", txt);
-        throw new Error(txt || "Erreur lors de l'upload du fichier pour ce dossier locataire.");
+        throw new Error(
+          txt || "Erreur lors de l'upload du fichier pour ce dossier locataire."
+        );
       }
 
       const payload = await res.json().catch(() => null);
@@ -562,9 +580,10 @@ export default function TenantFilesPanel({ authFetch }) {
 
     setError("");
     try {
-      const res = await authFetch(`/tenant-files/${selectedTenantId}/documents/${fileId}`, {
-        method: "DELETE",
-      });
+      const res = await authFetch(
+        `/tenant-files/${selectedTenantId}/documents/${fileId}`,
+        { method: "DELETE" }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -579,7 +598,9 @@ export default function TenantFilesPanel({ authFetch }) {
       );
       setTenantDetail((prev) => {
         if (!prev) return prev;
-        const ids = normalizeIds(prev.file_ids).filter((id) => id !== String(fileId));
+        const ids = normalizeIds(prev.file_ids).filter(
+          (id) => id !== String(fileId)
+        );
         return { ...prev, file_ids: ids };
       });
 
@@ -629,7 +650,7 @@ export default function TenantFilesPanel({ authFetch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
-    // Quand on change de dossier ou qu'on recharge son détail,
+  // Quand on change de dossier ou qu'on recharge son détail,
   // on met à jour les champs d'édition (email + nom de dossier)
   useEffect(() => {
     if (tenantDetail) {
@@ -640,7 +661,6 @@ export default function TenantFilesPanel({ authFetch }) {
       setEditingName("");
     }
   }, [tenantDetail]);
-
 
   const linkedFileIds = useMemo(() => {
     return normalizeIds(tenantDetail?.file_ids);
@@ -662,8 +682,16 @@ export default function TenantFilesPanel({ authFetch }) {
     return null;
   }, [tenantDetail]);
 
-  const receivedDocs = Array.isArray(checklist?.received) ? checklist.received : [];
+  const receivedDocs = Array.isArray(checklist?.received)
+    ? checklist.received
+    : [];
   const missingDocs = Array.isArray(checklist?.missing) ? checklist.missing : [];
+
+  // ✅ Statut UI calculé pour le dossier sélectionné
+  const uiTenantStatus = useMemo(() => {
+    const derived = deriveStatusFromChecklist(checklist);
+    return derived || tenantDetail?.status || null;
+  }, [checklist, tenantDetail?.status]);
 
   const linkedFiles = tenantDocuments;
 
@@ -678,9 +706,12 @@ export default function TenantFilesPanel({ authFetch }) {
     return (
       <div className="tf-page">
         <div className="tf-warn">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur de configuration</div>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>
+            Erreur de configuration
+          </div>
           <div>
-            <code>authFetch</code> n’a pas été passé à <code>&lt;TenantFilesPanel /&gt;</code>.
+            <code>authFetch</code> n’a pas été passé à{" "}
+            <code>&lt;TenantFilesPanel /&gt;</code>.
           </div>
         </div>
       </div>
@@ -756,7 +787,10 @@ export default function TenantFilesPanel({ authFetch }) {
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
 
-                                return (
+                // ✅ si c’est le dossier sélectionné, on affiche le statut UI calculé
+                const statusToShow = active ? uiTenantStatus || t.status : t.status;
+
+                return (
                   <button
                     key={t.id}
                     className={`tf-item ${active ? "is-active" : ""}`}
@@ -768,23 +802,22 @@ export default function TenantFilesPanel({ authFetch }) {
                     </div>
                     <div className="tf-item-sub">
                       <span>{t.candidate_email || "-"}</span>
-                      {t.status && (
+                      {statusToShow && (
                         <span
                           className={`tf-status ${
-                            t.status === "complete"
+                            statusToShow === "complete"
                               ? "complete"
-                              : t.status === "new"
+                              : statusToShow === "new"
                               ? "new"
                               : "incomplete"
                           }`}
                         >
-                          {t.status}
+                          {statusToShow}
                         </span>
                       )}
                     </div>
                   </button>
                 );
-
               })}
             </div>
           )}
@@ -814,7 +847,7 @@ export default function TenantFilesPanel({ authFetch }) {
               <div className="tf-muted">Sélectionne un locataire à gauche.</div>
             ) : (
               <>
-                                <div className="tf-kv">
+                <div className="tf-kv">
                   <div>
                     <div className="tf-k">Email candidat</div>
                     <div className="tf-v">
@@ -831,17 +864,22 @@ export default function TenantFilesPanel({ authFetch }) {
                   <div>
                     <div className="tf-k">Statut</div>
                     <div className="tf-v">
-                      {tenantDetail.status ? (
+                      {uiTenantStatus ? (
                         <span
                           className={`tf-status ${
-                            tenantDetail.status === "complete"
+                            uiTenantStatus === "complete"
                               ? "complete"
-                              : tenantDetail.status === "new"
+                              : uiTenantStatus === "new"
                               ? "new"
                               : "incomplete"
                           }`}
+                          title={
+                            uiTenantStatus !== tenantDetail.status
+                              ? "Statut calculé depuis la checklist (UI)"
+                              : "Statut backend"
+                          }
                         >
-                          {tenantDetail.status}
+                          {uiTenantStatus}
                         </span>
                       ) : (
                         "-"
@@ -885,7 +923,6 @@ export default function TenantFilesPanel({ authFetch }) {
 
                   <div />
                 </div>
-
 
                 {checklist && (
                   <div className="tf-checklist">
@@ -995,10 +1032,10 @@ export default function TenantFilesPanel({ authFetch }) {
             ) : linkedFileIds.length === 0 ? (
               <div className="tf-muted">Aucun document attaché.</div>
             ) : linkedFiles.length === 0 ? (
-              // État transitoire : on ne montre plus le message de debug, juste un texte propre
               <div className="tf-muted">Chargement des documents du dossier...</div>
             ) : (
-              <div className="tf-files">
+              // ✅ plus de scroll interne : on ajoute une classe
+              <div className="tf-files tf-files-no-scroll">
                 {linkedFiles.map((f) => (
                   <div className="tf-file" key={f.id}>
                     <div className="tf-file-main">

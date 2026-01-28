@@ -513,6 +513,11 @@
   max-height: 380px;
   overflow-y: auto;
 }
+/* Désactive le scroll interne dans "Pièces du dossier" */
+.tf-files-no-scroll {
+  max-height: none;
+  overflow-y: visible;
+}
 
 .tf-file {
   display: flex;
