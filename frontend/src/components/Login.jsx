@@ -122,3 +122,13 @@ export default function Login({ onLogin }) {
     </div>
   );
 }
+<div style={{ marginTop: "20px", textAlign: "center" }}>
+  <a
+    href="/privacy"
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{ fontSize: "13px", opacity: 0.8 }}
+  >
+    Politique de confidentialité
+  </a>
+</div>

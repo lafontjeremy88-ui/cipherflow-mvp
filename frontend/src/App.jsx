@@ -12,6 +12,7 @@ import {
 import Dashboard from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
 import AccountPage from "./pages/AccountPage";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 
 // Components / Modules
 import Login from "./components/Login";
@@ -327,7 +328,10 @@ function AppInner() {
       />
 
       <Route path="/verify-email" element={<VerifyEmail />} />
+      
+      <Route path="/privacy" element={<PrivacyPolicy />} />
 
+      
       {/* Protected shell */}
       <Route
         path="/*"
