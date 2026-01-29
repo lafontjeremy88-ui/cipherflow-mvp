@@ -8,6 +8,7 @@ import secrets
 import time
 import re  # ✅ Ajout pour nettoyer l'alias
 import hashlib
+from cryptography.fernet import Fernet, InvalidToken
 from typing import Optional, List
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -70,6 +71,34 @@ from app.pdf_service import generate_pdf_bytes
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
+
+TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "").strip()
+
+FERNET = Fernet(TOKEN_ENCRYPTION_KEY.encode()) if TOKEN_ENCRYPTION_KEY else None
+
+
+def encrypt_bytes(data: bytes) -> bytes:
+    """
+    Chiffre des bytes pour stockage sur disque.
+    Si pas de clé configurée, on renvoie les données telles quelles.
+    """
+    if not FERNET:
+        return data
+    return FERNET.encrypt(data)
+
+
+def decrypt_bytes(data: bytes) -> bytes:
+    """
+    Déchiffre des bytes lues depuis le disque.
+    Si pas de clé ou erreur, on renvoie les données telles quelles
+    (pour ne pas tout casser en prod).
+    """
+    if not FERNET:
+        return data
+    try:
+        return FERNET.decrypt(data)
+    except InvalidToken:
+        return data
 
 # --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -1496,20 +1525,41 @@ async def webhook_process_email(
     attachment_file_ids: List[int] = []
 
     if req.attachments:
+        uploads_dir = Path("uploads")
+        uploads_dir.mkdir(exist_ok=True)
+
         for att in req.attachments:
             try:
+                # 1) bytes brutes décodées du webhook
                 file_data = base64.b64decode(att.content_base64)
-                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
-                file_path = os.path.join("uploads", safe_filename)
 
-                with open(file_path, "wb") as f:
+                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
+
+                # 2) chemin temporaire EN CLAIR pour l'analyse IA
+                tmp_path = uploads_dir / f"tmp_{safe_filename}"
+
+                with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                doc_analysis = await analyze_document_logic(file_path, safe_filename)
+                # 3) analyse IA sur le fichier clair
+                doc_analysis = await analyze_document_logic(str(tmp_path), safe_filename)
+
+                # 4) on chiffre le contenu pour stockage long terme
+                encrypted_bytes = encrypt_bytes(file_data)
+                final_path = uploads_dir / safe_filename
+
+                with open(final_path, "wb") as f:
+                    f.write(encrypted_bytes)
+
+                # 5) on supprime le temporaire en clair
+                try:
+                    os.remove(tmp_path)
+                except FileNotFoundError:
+                    pass
 
                 if doc_analysis:
                     new_file = FileAnalysis(
-                        filename=safe_filename,
+                        filename=safe_filename,            # le nom reste le même
                         file_type=str(doc_analysis.get("type", "Autre")),
                         sender=str(doc_analysis.get("sender", req.from_email)),
                         extracted_date=str(doc_analysis.get("date", "")),
@@ -1528,6 +1578,7 @@ async def webhook_process_email(
                 print(f"Erreur PJ: {e}")
 
     # 3) ANALYSE IA DE L'EMAIL
+
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(
             from_email=req.from_email,
@@ -1602,6 +1653,7 @@ async def webhook_process_email(
 
     except Exception as e:
         print(f"⚠️ Contexte dossier pour la réponse: {e}")
+    
 
     # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
     reponse = await generate_reply_logic(
@@ -2035,74 +2087,84 @@ async def upload_document_for_tenant(
     if not tf:
         raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
 
-    # 1️⃣ Sauvegarde disque (COMME PARTOUT AILLEURS)
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
 
     safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
-    file_path = uploads_dir / safe_name
 
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # 1) on lit le fichier uploadé
+    file_bytes = await file.read()
 
-    # 2️⃣ Analyse IA (optionnelle mais cohérente)
-    data = await analyze_document_logic(str(file_path), safe_name) or {}
+    # 2) temporaire clair pour l'IA
+    tmp_path = uploads_dir / f"tmp_{safe_name}"
+    with open(tmp_path, "wb") as f:
+        f.write(file_bytes)
+
+    # 3) analyse IA
+    data = await analyze_document_logic(str(tmp_path), safe_name) or {}
 
     raw_type = str(data.get("type", "Document") or "").strip()
     if not raw_type or raw_type.lower().startswith("erreur"):
-      raw_type = "Document"
+        raw_type = "Document"
 
-    # 3️⃣ Création FileAnalysis (CHAMPS VALIDES UNIQUEMENT)
+    # 4) on chiffre et on stocke la version persistée
+    encrypted_bytes = encrypt_bytes(file_bytes)
+    final_path = uploads_dir / safe_name
+    with open(final_path, "wb") as f:
+        f.write(encrypted_bytes)
+
+    # 5) suppression du temporaire clair
+    try:
+        os.remove(tmp_path)
+    except FileNotFoundError:
+        pass
+
+    # 6) création FileAnalysis comme avant
     new_file = FileAnalysis(
         filename=safe_name,
         file_type=raw_type,
-        sender="Upload manuel",
+        sender=tf.candidate_email or "",
         extracted_date=str(data.get("date", "")),
         amount=str(data.get("amount", "0")),
-        summary=str(data.get("summary", "Document uploadé")),
-        owner_id=current_user.id,
+        summary=str(data.get("summary", "Reçu via l'espace locataire")),
+        owner_id=None,
         agency_id=aid,
     )
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
-
-    # 4️⃣ Lien dossier ↔ document
-    db.add(
-        TenantDocumentLink(
-            tenant_file_id=tf.id,
-            file_analysis_id=new_file.id,
-            doc_type=map_doc_type(f"{new_file.file_type} {new_file.filename}"),
-            quality=DocQuality.OK,
-        )
+    # 7) Lier le document au dossier locataire (anti-doublon + checklist)
+    attach_result = attach_files_to_tenant_file(
+        db=db,
+        tenant_file=tf,
+        file_ids=[new_file.id],
     )
-    db.commit()
 
-    # 5️⃣ Recalcul checklist
-    links = db.query(TenantDocumentLink).filter(
-        TenantDocumentLink.tenant_file_id == tf.id
-    ).all()
-
-    doc_types = [l.doc_type for l in links]
-    checklist = compute_checklist(doc_types)
-
-    tf.checklist_json = json.dumps(checklist)
-    tf.status = (
-        TenantFileStatus.TO_VALIDATE
-        if not checklist["missing"]
-        else TenantFileStatus.INCOMPLETE
-    )
-    db.commit()
-
-    return {
-        "file_id": new_file.id,
-        "filename": new_file.filename,
-        "doc_type": new_file.file_type,
-        "checklist": checklist,
+    # Mapping codes -> labels lisibles
+    DOC_LABELS = {
+        "id": "Pièce d'identité",
+        "payslip": "Bulletin de paie",
+        "tax": "Avis d'imposition",
     }
 
+    checklist = attach_result.get("checklist") or {}
+    missing_codes = checklist.get("missing") or []
+    duplicate_codes = attach_result.get("duplicate_doc_types") or []
 
+    missing_docs = [DOC_LABELS.get(c, c) for c in missing_codes]
+    duplicate_docs = [DOC_LABELS.get(c, c) for c in duplicate_codes]
 
+    return {
+        "status": "uploaded",
+        "file_id": new_file.id,
+        "tenant_id": tf.id,
+        "tenant_status": (
+            tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+        ),
+        "missing_docs": missing_docs,
+        "duplicate_docs": duplicate_docs,
+        "checklist": checklist,
+    }
 
 
 @app.delete("/tenant-files/{tenant_id}/documents/{file_id}")
@@ -2397,6 +2459,22 @@ async def delete_my_account(
         }
 
     # --- purge totale : dernier user de l'agence ---
+
+    # 🧹 RGPD — suppression des fichiers physiques chiffrés de l'agence
+    files = (
+        db.query(FileAnalysis.filename)
+        .filter(FileAnalysis.agency_id == agency_id)
+        .all()
+    )
+    for (filename,) in files:
+        path = os.path.join("uploads", filename)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                # On ne bloque pas la purge si un fichier disque pose problème
+                pass
+
     db.query(AppSettings).filter(
         AppSettings.agency_id == agency_id
     ).delete(synchronize_session=False)
@@ -2419,10 +2497,10 @@ async def delete_my_account(
     db.query(TenantEmailLink).filter(
         TenantEmailLink.tenant_file_id.in_(tenant_file_ids_q)
     ).delete(synchronize_session=False)
-    db.query(TenantDocumentLink).filter(
-    TenantDocumentLink.tenant_file_id.in_(tenant_file_ids_q)
-    ).delete(synchronize_session=False)
 
+    db.query(TenantDocumentLink).filter(
+        TenantDocumentLink.tenant_file_id.in_(tenant_file_ids_q)
+    ).delete(synchronize_session=False)
 
     db.query(TenantFile).filter(
         TenantFile.agency_id == agency_id
@@ -2443,7 +2521,6 @@ async def delete_my_account(
 
     db.commit()
     return {"success": True, "deleted": "user+agency"}
-
 # ===============================
 # AUTO-LINK EMAIL → DOSSIER LOCATAIRE
 # ===============================
@@ -2504,44 +2581,64 @@ async def process_manual(
     )
     comp_name = s.company_name if s else "Mon Agence"
 
-    # 1) TRAITEMENT DES PIÈCES JOINTES (même logique que le webhook)
+    # 1) TRAITEMENT DES PIÈCES JOINTES (ALIGNÉ WEBHOOK)
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
 
     if req.attachments:
+        uploads_dir = Path("uploads")
+        uploads_dir.mkdir(exist_ok=True)
+
         for att in req.attachments:
             try:
+                # bytes brutes
                 file_data = base64.b64decode(att.content_base64)
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
-                file_path = os.path.join("uploads", safe_filename)
 
-                os.makedirs("uploads", exist_ok=True)
-                with open(file_path, "wb") as f:
+                # temporaire clair pour IA
+                tmp_path = uploads_dir / f"tmp_{safe_filename}"
+                with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                doc_analysis = await analyze_document_logic(file_path, safe_filename)
+                # analyse IA
+                doc_analysis = await analyze_document_logic(str(tmp_path), safe_filename) or {}
 
-                if doc_analysis:
-                    new_file = FileAnalysis(
-                        filename=safe_filename,
-                        file_type=str(doc_analysis.get("type", "Autre")),
-                        sender=str(doc_analysis.get("sender", req.from_email)),
-                        extracted_date=str(doc_analysis.get("date", "")),
-                        amount=str(doc_analysis.get("amount", "0")),
-                        summary=str(doc_analysis.get("summary", "Reçu (analyse manuelle)")),
-                        owner_id=current_user.id,
-                        agency_id=agency_id,
-                    )
-                    db.add(new_file)
-                    db.commit()
-                    db.refresh(new_file)
+                # stockage chiffré
+                encrypted_bytes = encrypt_bytes(file_data)
+                final_path = uploads_dir / safe_filename
+                with open(final_path, "wb") as f:
+                    f.write(encrypted_bytes)
 
-                    attachment_file_ids.append(new_file.id)
-                    attachment_summary_text += (
-                        f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
-                    )
+                # nettoyage clair
+                try:
+                    os.remove(tmp_path)
+                except FileNotFoundError:
+                    pass
+
+                # création FileAnalysis
+                raw_type = str(doc_analysis.get("type", "Document") or "").strip()
+                if not raw_type or raw_type.lower().startswith("erreur"):
+                    raw_type = "Document"
+
+                new_file = FileAnalysis(
+                    filename=safe_filename,
+                    file_type=raw_type,
+                    sender=req.from_email,
+                    extracted_date=str(doc_analysis.get("date", "")),
+                    amount=str(doc_analysis.get("amount", "0")),
+                    summary=str(doc_analysis.get("summary", "Reçu manuellement")),
+                    owner_id=current_user.id,
+                    agency_id=agency_id,
+                )
+                db.add(new_file)
+                db.commit()
+                db.refresh(new_file)
+
+                attachment_file_ids.append(new_file.id)
+                attachment_summary_text += f"- PJ: {att.filename} ({raw_type})\n"
+
             except Exception as e:
-                print(f"Erreur PJ (manual): {e}")
+                print(f"Erreur PJ manual: {e}")
 
     # 2) ANALYSE EMAIL (avec contexte PJ)
     analyse = await analyze_email_logic(
@@ -2556,7 +2653,68 @@ async def process_manual(
         attachment_summary=attachment_summary_text,
     )
 
-    # 3) GÉNÉRATION DE LA RÉPONSE
+    # 3) CONTEXTE DOSSIER LOCATAIRE (COMME WEBHOOK)
+    tenant_status_for_reply: Optional[str] = None
+    missing_docs_for_reply: List[str] = []
+    duplicate_docs_for_reply: List[str] = []
+
+    try:
+        candidate_email = (req.from_email or "").strip().lower()
+
+        tf = ensure_tenant_file_for_email(
+            db=db,
+            agency_id=agency_id,
+            email_address=candidate_email,
+        )
+
+        checklist: Optional[dict] = None
+        duplicate_codes: List[str] = []
+
+        if tf:
+            if attachment_file_ids:
+                attach_result = attach_files_to_tenant_file(
+                    db=db,
+                    tenant_file=tf,
+                    file_ids=attachment_file_ids,
+                )
+                checklist = attach_result.get("checklist") or {}
+                duplicate_codes = attach_result.get("duplicate_doc_types") or []
+            else:
+                checklist = recompute_tenant_file_status(db, tf)
+                duplicate_codes = []
+
+            DOC_LABELS = {
+                "id": "Pièce d'identité",
+                "payslip": "Bulletin de paie",
+                "tax": "Avis d'imposition",
+            }
+
+            missing_codes = checklist.get("missing") if checklist else []
+            missing_docs_for_reply = [
+                DOC_LABELS.get(code, code) for code in missing_codes
+            ]
+
+            duplicate_docs_for_reply = [
+                DOC_LABELS.get(code, code) for code in duplicate_codes
+            ]
+
+            # Statut lisible pour l'email
+            raw_status = (tf.status.value if hasattr(tf.status, "value") else str(tf.status)).lower()
+            if "new" in raw_status:
+                tenant_status_for_reply = "Nouveau dossier (aucun document enregistré)."
+            elif "incomplete" in raw_status:
+                tenant_status_for_reply = "Dossier incomplet."
+            elif "to_validate" in raw_status:
+                tenant_status_for_reply = "Dossier complet, en attente de validation."
+            elif "complete" in raw_status:
+                tenant_status_for_reply = "Dossier complet et validé."
+            else:
+                tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+
+    except Exception as e:
+        print(f"⚠️ Contexte dossier locataire manual: {e}")
+
+    # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
     reponse = await generate_reply_logic(
         EmailReplyRequest(
             from_email=req.from_email,
@@ -2565,13 +2723,16 @@ async def process_manual(
             summary=analyse.summary,
             category=analyse.category,
             urgency=analyse.urgency,
+            tenant_status=tenant_status_for_reply,
+            missing_docs=missing_docs_for_reply,
+            duplicate_docs=duplicate_docs_for_reply,
         ),
         comp_name,
         s.tone if s else "pro",
         s.signature if s else "Team",
     )
 
-    # 4) ENREGISTRER L’EMAIL EN BDD
+    # 5) ENREGISTRER L’EMAIL EN BDD
     new_email = EmailAnalysis(
         agency_id=agency_id,
         sender_email=req.from_email,
@@ -2589,10 +2750,22 @@ async def process_manual(
     db.commit()
     db.refresh(new_email)
 
-    # 🔥 AUTO-LIAISON EMAIL → DOSSIER LOCATAIRE
+    # 6) AUTO-LIAISON EMAIL → DOSSIER LOCATAIRE
     auto_link_email_to_tenant_file(db, new_email)
 
+    # 7) ENVOI EFFECTIF (optionnel)
+    sent = "sent" if req.send_email else "not_sent"
+    if req.send_email:
+        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
 
+    # 8) RÉPONSE API
+    return EmailProcessResponse(
+        analyse=analyse,
+        reponse=reponse,
+        send_status=sent,
+        email_id=new_email.id,
+        error=None,
+    )
      
 
 
@@ -2605,20 +2778,31 @@ async def analyze_file(
     safe_name = f"{current_user.agency_id}_{int(time.time())}_{Path(file.filename).name}"
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    file_path = uploads_dir / safe_name
+
+    # 🔐 Fichier chiffré final + fichier temporaire en clair (pour l’IA)
+    encrypted_path = uploads_dir / safe_name
+    tmp_plain_path = uploads_dir / f"tmp_plain_{safe_name}"
 
     try:
-        # 1) Sauvegarder le fichier sur le disque
-        with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        # 1) Lire tout le contenu envoyé par l’utilisateur
+        raw_bytes = await file.read()
 
-        # 2) Analyse IA du document
-        data = await analyze_document_logic(str(file_path), safe_name)
+        # 2) Sauvegarder une copie TEMPORAIRE en clair pour l’IA
+        with open(tmp_plain_path, "wb") as f:
+            f.write(raw_bytes)
+
+        # 3) Sauvegarder la version CHIFFRÉE sur le disque
+        encrypted = encrypt_bytes(raw_bytes)
+        with open(encrypted_path, "wb") as f:
+            f.write(encrypted)
+
+        # 4) Analyse IA du document (avec le chemin du fichier temporaire en clair)
+        data = await analyze_document_logic(str(tmp_plain_path), safe_name)
 
         if not data:
             return {"extracted": False, "summary": "Erreur lecture JSON"}
 
-        # 3) Enregistrer l’analyse en base
+        # 5) Enregistrer l’analyse en base
         new_analysis = FileAnalysis(
             filename=safe_name,
             file_type=str(data.get("type", "Inconnu")),
@@ -2633,7 +2817,7 @@ async def analyze_file(
         db.commit()
         db.refresh(new_analysis)  # ✅ pour avoir new_analysis.id
 
-        # 4) Injecter l'id dans la réponse JSON
+        # 6) Injecter l'id dans la réponse JSON
         if isinstance(data, dict):
             data["file_analysis_id"] = new_analysis.id
 
@@ -2641,8 +2825,18 @@ async def analyze_file(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
+        # Toujours fermer le fichier UploadFile
         await file.close()
+
+        # 🧹 Nettoyage : supprimer le fichier temporaire en clair s’il existe
+        try:
+            if tmp_plain_path.exists():
+                tmp_plain_path.unlink()
+        except Exception:
+            # On ne casse pas la requête juste pour un problème de nettoyage
+            pass
 
 @app.get("/api/files/history")
 async def get_file_history(
@@ -2808,7 +3002,16 @@ async def view_file(
     if not os.path.exists(path):
         raise HTTPException(404, detail="Fichier introuvable")
 
-    return FileResponse(path=path, filename=f.filename, content_disposition_type="inline")
+    with open(path, "rb") as f:
+        encrypted = f.read()
+
+    decrypted = decrypt_bytes(encrypted)
+
+    return Response(
+        content=decrypted,
+        media_type="application/pdf",  # ou image/*
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 @app.get("/api/files/download/{file_id}")
@@ -2833,7 +3036,16 @@ async def download_file(
     if not os.path.exists(path):
         raise HTTPException(404, detail="Fichier introuvable")
 
-    return FileResponse(path=path, filename=f.filename, content_disposition_type="attachment")
+    with open(path, "rb") as f:
+        encrypted = f.read()
+
+    decrypted = decrypt_bytes(encrypted)
+
+    return Response(
+        content=decrypted,
+        media_type="application/pdf",  # ou image/*
+        headers={"Content-Disposition": "inline"},
+)   
 
 
 @app.post("/email/send")
