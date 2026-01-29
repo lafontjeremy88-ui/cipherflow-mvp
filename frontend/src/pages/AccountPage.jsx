@@ -227,7 +227,16 @@ export default function AccountPage({ authFetch }) {
         <div className="muted" style={{ marginBottom: 10 }}>
           Supprimer ton compte te déconnecte immédiatement. Cette action est irréversible.
         </div>
-
+            <div style={{ marginTop: 20, textAlign: "center" }}>
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 13, opacity: 0.7 }}
+              >
+                Politique de confidentialité
+              </a>
+            </div>
         <button className="btn" onClick={onDeleteAccount} disabled={saving}>
           Supprimer mon compte
         </button>

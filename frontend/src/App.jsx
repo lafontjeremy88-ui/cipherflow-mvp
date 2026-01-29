@@ -273,6 +273,7 @@ function AppInner() {
       "/verify-email",
       "/forgot-password",
       "/reset-password",
+      "/privacy",
     ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
@@ -331,7 +332,7 @@ function AppInner() {
       
       <Route path="/privacy" element={<PrivacyPolicy />} />
 
-      
+
       {/* Protected shell */}
       <Route
         path="/*"
