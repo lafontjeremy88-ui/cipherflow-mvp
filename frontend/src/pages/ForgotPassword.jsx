@@ -67,6 +67,16 @@ export default function ForgotPassword() {
           <div className="auth-links" style={{ justifyContent: "center", marginTop: 14 }}>
             <Link to="/login">Retour connexion</Link>
           </div>
+          <div style={{ marginTop: "20px", textAlign: "center" }}>
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: "13px", opacity: 0.8 }}
+            >
+              Politique de confidentialité
+            </a>
+          </div>
         </form>
       </div>
     </div>
