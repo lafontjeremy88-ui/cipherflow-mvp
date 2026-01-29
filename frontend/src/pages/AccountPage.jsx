@@ -221,26 +221,47 @@ export default function AccountPage({ authFetch }) {
         </button>
       </div>
 
-      {/* ✅ NEW: Danger zone */}
+            {/* ✅ Bloc RGPD / infos légales */}
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Zone dangereuse</h3>
+        <h3 style={{ marginTop: 0 }}>Protection des données</h3>
+
+        <p className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+          CipherFlow traite tes données conformément à sa{" "}
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: "underline" }}
+          >
+            Politique de confidentialité
+          </a>.
+        </p>
+
+        <p className="muted" style={{ fontSize: 12, opacity: 0.8 }}>
+          Tu peux consulter cette page à tout moment pour connaître le détail
+          des traitements et de tes droits (accès, suppression, portabilité…).
+        </p>
+      </div>
+
+      {/* ✅ Zone dangereuse */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3 style={{ marginTop: 0, color: "#f97373" }}>Zone dangereuse</h3>
+
         <div className="muted" style={{ marginBottom: 10 }}>
-          Supprimer ton compte te déconnecte immédiatement. Cette action est irréversible.
+          Supprimer ton compte te déconnecte immédiatement.
+          <br />
+          Cette action est <strong>irréversible</strong>.
         </div>
-            <div style={{ marginTop: 20, textAlign: "center" }}>
-              <a
-                href="/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 13, opacity: 0.7 }}
-              >
-                Politique de confidentialité
-              </a>
-            </div>
-        <button className="btn" onClick={onDeleteAccount} disabled={saving}>
+
+        <button
+          className="btn"
+          onClick={onDeleteAccount}
+          disabled={saving}
+        >
           Supprimer mon compte
         </button>
       </div>
+
     </div>
   );
 }
