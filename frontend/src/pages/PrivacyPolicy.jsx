@@ -17,7 +17,7 @@ export default function PrivacyPolicy() {
       <p>
         CipherFlow agit en tant que <strong>sous-traitant</strong> au sens du Règlement Général
         sur la Protection des Données (RGPD).
-        Les clients (syndics, agences immobilières) sont les <strong>responsables du traitement</strong>
+        Les clients (syndics, agences immobilières) sont les <strong>responsables du traitement</strong> 
         des données qu’ils utilisent dans la plateforme.
       </p>
 

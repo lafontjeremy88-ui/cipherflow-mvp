@@ -92,7 +92,6 @@ function AppShell({ authFetch, onLogout }) {
             Historique Emails
           </NavLink>
 
-          {/* ✅ AJOUT : Analyse Email */}
           <NavLink to="/emails/analyze" className={navItemClass}>
             Analyse Email
           </NavLink>
@@ -117,6 +116,7 @@ function AppShell({ authFetch, onLogout }) {
             Paramètres
           </NavLink>
 
+          {/* pousse le bloc de déconnexion + infos vers le bas */}
           <div className="nav-spacer" />
 
           <button className="btn btn-ghost" onClick={onLogout}>
@@ -124,11 +124,34 @@ function AppShell({ authFetch, onLogout }) {
           </button>
 
           {localStorage.getItem(LS_EMAIL) ? (
-            <div className="muted small" style={{ marginTop: 10 }}>
+            <div className="muted small" style={{ marginTop: 8 }}>
               {localStorage.getItem(LS_EMAIL)}
             </div>
           ) : null}
+
+          {/* 🔐 Bandeau RGPD global dans la sidebar */}
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: "11px",
+              lineHeight: 1.4,
+              opacity: 0.7,
+            }}
+            className="muted"
+          >
+            CipherFlow traite les données conformément à sa{" "}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "underline" }}
+            >
+              politique de confidentialité
+            </a>
+            .
+          </div>
         </nav>
+
       </aside>
 
       {/* 🔥 ICI : on utilise main-content qui a le layout plein écran */}
