@@ -129,27 +129,29 @@ function AppShell({ authFetch, onLogout }) {
             </div>
           ) : null}
 
-          {/* 🔐 Bandeau RGPD global dans la sidebar */}
-          <div
-            style={{
-              marginTop: 12,
-              fontSize: "11px",
-              lineHeight: 1.4,
-              opacity: 0.7,
-            }}
-            className="muted"
-          >
-            CipherFlow traite les données conformément à sa{" "}
-            <a
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ textDecoration: "underline" }}
+            {/* 🔐 Bandeau RGPD global dans la sidebar */}
+            <div
+              className="muted"
+              style={{
+                marginTop: 14,
+                paddingTop: 10,
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                fontSize: "11px",
+                lineHeight: 1.4,
+                opacity: 0.75,
+              }}
             >
-              politique de confidentialité
-            </a>
-            .
-          </div>
+              🔐 Données protégées —{" "}
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                Politique de confidentialité
+              </a>
+            </div>
+
         </nav>
 
       </aside>
