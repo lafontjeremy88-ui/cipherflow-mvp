@@ -362,6 +362,50 @@ def compute_checklist(doc_types: List[TenantDocType]) -> dict:
         "missing": missing,
     }
 
+def is_doc_type_in_tenant_file(
+    db: Session, tenant_file_id: int, doc_type: str
+) -> bool:
+    """
+    Retourne True si ce type de document est déjà présent
+    dans le dossier locataire donné.
+    """
+    if not doc_type:
+        return False
+
+    exists = (
+        db.query(TenantDocumentLink)
+        .filter(
+            TenantDocumentLink.tenant_file_id == tenant_file_id,
+            TenantDocumentLink.doc_type == doc_type,
+        )
+        .first()
+    )
+    return exists is not None
+
+
+def recompute_tenant_file_status(db: Session, tf: TenantFile) -> dict:
+    """
+    Recalcule checklist + statut pour un TenantFile,
+    et renvoie la checklist (pour le front / la réponse email).
+    """
+    links = (
+        db.query(TenantDocumentLink)
+        .filter(TenantDocumentLink.tenant_file_id == tf.id)
+        .all()
+    )
+    doc_types = [l.doc_type for l in links]
+    checklist = compute_checklist(doc_types)
+
+    tf.checklist_json = json.dumps(checklist)
+    tf.status = (
+        TenantFileStatus.TO_VALIDATE
+        if not checklist["missing"]
+        else TenantFileStatus.INCOMPLETE
+    )
+    db.commit()
+
+    return checklist
+
 # ============================================================
 # 🟦 HELPERS DOSSIER LOCATAIRE / EMAIL
 # ============================================================
@@ -459,51 +503,74 @@ def attach_files_to_tenant_file(
     db: Session,
     tenant_file: TenantFile,
     file_ids: List[int],
-) -> None:
+) -> dict:
     """
-    Attache une liste de FileAnalysis à un TenantFile (sans doublons)
-    et recalcule la checklist + status.
+    Attache une liste de FileAnalysis à un TenantFile en évitant les doublons.
+    
+    - Pas de doublon par (tenant_file_id, file_id)
+    - Pas de doublon de type de document (doc_type) dans un même dossier
+    - Recalcule la checklist + status
+
+    Retourne :
+    {
+        "added_doc_types": [...],
+        "duplicate_doc_types": [...],
+        "checklist": { ... }
+    }
     """
     if not tenant_file or not file_ids:
-        return
+        return {"added_doc_types": [], "duplicate_doc_types": [], "checklist": {}}
 
     tf_id = tenant_file.id
+    added_types: List[str] = []
+    duplicate_types: List[str] = []
 
-    # Attache les fichiers
     for fid in file_ids:
-        if not db.query(TenantDocumentLink).filter(
-            TenantDocumentLink.tenant_file_id == tf_id,
-            TenantDocumentLink.file_analysis_id == fid,
-        ).first():
-            fa = db.query(FileAnalysis).filter(FileAnalysis.id == fid).first()
-            dt = map_doc_type(getattr(fa, "file_type", "") if fa else "")
-            db.add(
-                TenantDocumentLink(
-                    tenant_file_id=tf_id,
-                    file_analysis_id=fid,
-                    doc_type=dt,
-                    quality=DocQuality.OK,
-                )
+        # déjà lié à ce dossier → on ignore (sécurité)
+        already_linked = (
+            db.query(TenantDocumentLink)
+            .filter(
+                TenantDocumentLink.tenant_file_id == tf_id,
+                TenantDocumentLink.file_analysis_id == fid,
             )
+            .first()
+        )
+        if already_linked:
+            continue
+
+        fa = db.query(FileAnalysis).filter(FileAnalysis.id == fid).first()
+        if not fa:
+            continue
+
+        # type fonctionnel (payslip / tax / id / other)
+        doc_type_code = map_doc_type(getattr(fa, "file_type", "") or "")
+
+        # 🔍 anti-doublon de type de document
+        if is_doc_type_in_tenant_file(db, tf_id, doc_type_code):
+            duplicate_types.append(doc_type_code)
+            continue
+
+        # lien OK
+        db.add(
+            TenantDocumentLink(
+                tenant_file_id=tf_id,
+                file_analysis_id=fid,
+                doc_type=doc_type_code,
+                quality=DocQuality.OK,
+            )
+        )
+        added_types.append(doc_type_code)
+
     db.commit()
 
-    # Recalcul checklist
-    links = (
-        db.query(TenantDocumentLink)
-        .filter(TenantDocumentLink.tenant_file_id == tf_id)
-        .all()
-    )
-    doc_types = [l.doc_type for l in links]
-    checklist = compute_checklist(doc_types)
+    # Recalcule checklist + statut avec le helper commun
+    checklist = recompute_tenant_file_status(db, tenant_file)
 
-    tenant_file.checklist_json = json.dumps(checklist)
-    tenant_file.status = (
-        TenantFileStatus.TO_VALIDATE
-        if len(checklist["missing"]) == 0
-        else TenantFileStatus.INCOMPLETE
-    )
-    db.commit()
-
+    return {
+        "added_doc_types": added_types,
+        "duplicate_doc_types": duplicate_types,
+        "checklist": checklist,
+    }
 
 # --- IA LOGIQUE ---
 async def analyze_document_logic(file_path: str, filename: str):
@@ -641,40 +708,66 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     - du contenu de l'email
     - du résumé IA / catégorie / urgence
     - du statut du dossier locataire + pièces manquantes
-
-    ⚠️ RÈGLE MÉTIER :
-    - si on connaît l'état du dossier (missing_docs fourni),
-      la réponse est 100% déterminée par le métier (pas par l'IA).
+    - des pièces déjà présentes dans le dossier (doublons)
     """
 
-    # 0️⃣ LOGIQUE MÉTIER PRIORITAIRE (sans IA)
-    if req.missing_docs is not None:
-        # On a une info fiable sur le dossier
+    # 0️⃣ LOGIQUE MÉTIER PRIORITAIRE (sans IA si on a l'info dossier)
+    if req.missing_docs is not None or req.duplicate_docs:
         missing = [d for d in (req.missing_docs or []) if d]
+        duplicates = [d for d in (req.duplicate_docs or []) if d]
 
+        # Cas 1 : le dossier est complet (pas de missing) et on a éventuellement des doublons
         if not missing:
-            # ✅ Dossier complet -> réponse standard "dossier complet"
+            # On précise les doublons si présents
+            dup_block = ""
+            if duplicates:
+                dup_list = "\n".join(f"- {d}" for d in duplicates)
+                dup_block = (
+                    "\n\nLes documents suivants que vous venez d'envoyer "
+                    "étaient déjà présents dans votre dossier :\n"
+                    f"{dup_list}\n"
+                    "Ils ont bien été reçus, mais ne modifient pas l'état de votre dossier."
+                )
+
             reply_text = (
                 "Bonjour,\n\n"
                 "Nous vous confirmons la bonne réception de vos documents. "
-                "Votre dossier est désormais complet et va être étudié par notre équipe. "
+                "Votre dossier est à ce jour complet et va être étudié par notre équipe."
+                f"{dup_block}\n\n"
                 "Vous serez recontacté(e) dès qu'une décision sera prise.\n\n"
                 "Cordialement,\n"
                 f"{company_name}"
             )
-        else:
-            # ⚠️ Dossier encore incomplet -> on liste précisément les pièces manquantes
-            missing_lines = "\n".join(f"- {d}" for d in missing)
-            reply_text = (
-                "Bonjour,\n\n"
-                "Nous vous confirmons la bonne réception de vos documents. "
-                "Cependant, votre dossier est encore incomplet.\n\n"
-                "Il nous manque encore les pièces suivantes :\n"
-                f"{missing_lines}\n\n"
-                "Merci de nous transmettre ces éléments afin de finaliser votre dossier.\n\n"
-                "Cordialement,\n"
-                f"{company_name}"
+
+            return EmailReplyResponse(
+                reply=reply_text,
+                subject=f"Re: {req.subject}",
+                raw_ai_text=None,
             )
+
+        # Cas 2 : dossier encore incomplet (il reste des pièces manquantes)
+        missing_lines = "\n".join(f"- {d}" for d in missing)
+        dup_block = ""
+        if duplicates:
+            dup_list = "\n".join(f"- {d}" for d in duplicates)
+            dup_block = (
+                "\n\nLes documents suivants que vous venez d'envoyer "
+                "étaient déjà présents dans votre dossier :\n"
+                f"{dup_list}\n"
+                "Ils ont bien été reçus, mais ne complètent pas les pièces manquantes."
+            )
+
+        reply_text = (
+            "Bonjour,\n\n"
+            "Nous vous confirmons la bonne réception de vos documents. "
+            "Cependant, votre dossier est encore incomplet.\n\n"
+            "Il nous manque encore les pièces suivantes :\n"
+            f"{missing_lines}"
+            f"{dup_block}\n\n"
+            "Merci de nous transmettre ces éléments afin de finaliser votre dossier.\n\n"
+            "Cordialement,\n"
+            f"{company_name}"
+        )
 
         return EmailReplyResponse(
             reply=reply_text,
@@ -682,10 +775,10 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             raw_ai_text=None,
         )
 
-    # 1️⃣ Si on n'a PAS d'info dossier -> on garde la logique IA actuelle
+    # 1️⃣ Si on n'a PAS d'info dossier exploitable -> on garde la logique IA actuelle
 
     dossier_context = ""
-    if req.tenant_status or req.missing_docs:
+    if req.tenant_status or req.missing_docs or req.duplicate_docs:
         dossier_context += "\n\nINFORMATIONS DOSSIER LOCATAIRE :\n"
         if req.tenant_status:
             dossier_context += f"- Statut actuel du dossier : {req.tenant_status}.\n"
@@ -693,10 +786,14 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             dossier_context += "- Pièces manquantes :\n"
             for doc in req.missing_docs:
                 dossier_context += f"  • {doc}\n"
+        if req.duplicate_docs:
+            dossier_context += "- Pièces déjà présentes dans le dossier (doublons envoyés) :\n"
+            for doc in req.duplicate_docs:
+                dossier_context += f"  • {doc}\n"
 
     prompt = (
         f"Tu es l'assistant de l'agence immobilière {company_name}.\n"
-        f"Ton d'écriture : {tone} (professionnel, clair, bienveillant).\n"
+        f"Ton ton d'écriture : {tone} (professionnel, clair, bienveillant).\n"
         f"Signature à utiliser en bas de mail :\n{signature}\n\n"
         f"Sujet de l'email : {req.subject}\n"
         f"Catégorie détectée : {req.category}\n"
@@ -707,6 +804,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
         f"OBJECTIF :\n"
         f"- Tu dois ABSOLUMENT dire au candidat si son dossier est complet ou non.\n"
         f"- Si des pièces sont manquantes, liste-les clairement dans la réponse.\n"
+        f"- Si certaines pièces envoyées étaient déjà présentes dans le dossier, précise-le clairement.\n"
         f"- Reste poli, concis et professionnel.\n"
         f"- Ne ré-explique pas tout le contexte interne, parle simplement au candidat.\n\n"
         f"FORMAT DE SORTIE :\n"
@@ -725,6 +823,13 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             missing_txt = (
                 "\n\nD'après les éléments dont nous disposons, il manque encore les pièces suivantes :\n"
                 + "\n".join(f"- {d}" for d in req.missing_docs)
+            )
+        elif req.duplicate_docs:
+            duplist = "\n".join(f"- {d}" for d in req.duplicate_docs)
+            missing_txt = (
+                "\n\nLes documents que vous venez d'envoyer sont déjà présents dans votre dossier :\n"
+                f"{duplist}\n"
+                "Ils ne modifient pas l'état de votre dossier."
             )
         else:
             missing_txt = (
@@ -749,7 +854,6 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
         subject=data.get("subject", f"Re: {req.subject}"),
         raw_ai_text=raw,
     )
-
 # --- CONFIG FASTAPI ---
 app = FastAPI(title="CipherFlow SaaS Multi-Agence")
 
@@ -813,9 +917,11 @@ class EmailReplyRequest(BaseModel):
     category: Optional[str] = None
     urgency: Optional[str] = None
 
-    # 👉 nouveau : contexte dossier locataire
     tenant_status: Optional[str] = None
     missing_docs: Optional[List[str]] = None
+
+    # 👇 NOUVEAU : pièces envoyées mais déjà présentes dans le dossier
+    duplicate_docs: Optional[List[str]] = None
 
 class EmailReplyResponse(BaseModel):
     reply: str
@@ -1350,11 +1456,16 @@ async def logout(
 # ============================================================
 
 @app.post("/webhook/email", response_model=EmailProcessResponse)
-async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(get_db), x_watcher_secret: str = Header(None)):
+async def webhook_process_email(
+    req: EmailProcessRequest,
+    db: Session = Depends(get_db),
+    x_watcher_secret: str = Header(None),
+):
+    # 0) Sécurité watcher
     if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    # 1. IDENTIFIER L'AGENCE DESTINATAIRE (ROUTAGE INTELLIGENT)
+    # 1) IDENTIFIER L'AGENCE DESTINATAIRE (ROUTAGE MULTI-AGENCE)
     target_agency = None
 
     recipient = req.to_email.lower().strip() if req.to_email else ""
@@ -1365,8 +1476,8 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             alias_part = recipient.split("+")[1].split("@")[0]
             print(f"🔎 Recherche de l'alias : {alias_part}")
             target_agency = db.query(Agency).filter(Agency.email_alias == alias_part).first()
-        except:
-            pass
+        except Exception as e:
+            print(f"Alias error: {e}")
 
     if not target_agency:
         print("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
@@ -1380,9 +1491,10 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
     comp_name = s.company_name if s else target_agency.name
 
-    # 2. TRAITEMENT PJ
+    # 2) TRAITEMENT DES PIÈCES JOINTES (analyse + FileAnalysis)
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
+
     if req.attachments:
         for att in req.attachments:
             try:
@@ -1409,89 +1521,89 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
                     db.add(new_file)
                     db.commit()
                     db.refresh(new_file)
+
                     attachment_file_ids.append(new_file.id)
                     attachment_summary_text += f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
             except Exception as e:
                 print(f"Erreur PJ: {e}")
 
-        # 3. ANALYSE EMAIL
+    # 3) ANALYSE IA DE L'EMAIL
     analyse = await analyze_email_logic(
-        EmailAnalyseRequest(from_email=req.from_email, subject=req.subject, content=req.content),
+        EmailAnalyseRequest(
+            from_email=req.from_email,
+            subject=req.subject,
+            content=req.content,
+        ),
         comp_name,
         db,
         agency_id,
         attachment_summary=attachment_summary_text,
     )
 
-    # 3.bis – Préparation du contexte dossier locataire pour la réponse
+    # 3.bis – CONTEXTE DOSSIER LOCATAIRE POUR LA RÉPONSE
     tenant_status_for_reply: Optional[str] = None
     missing_docs_for_reply: List[str] = []
+    duplicate_docs_for_reply: List[str] = []
 
     try:
-        # Catégorie IA (si dispo)
-        cat = (analyse.category or "").lower().strip()
-
-        # On déclenche la logique "dossier locataire" si :
-        #  - ça ressemble à une candidature / dossier locataire
-        #  - OU il y a des PJ
-        should_auto_loc = (
-            ("candid" in cat)
-            or ("locat" in cat)
-            or ("dossier" in cat)
-            or len(attachment_file_ids) > 0
+        # On cherche OU crée le dossier en fonction de l'email candidat
+        candidate_email = (req.from_email or "").strip().lower()
+        tf = ensure_tenant_file_for_email(
+            db=db,
+            agency_id=agency_id,
+            email_address=candidate_email,
         )
 
-        if should_auto_loc:
-            candidate_email = (req.from_email or "").strip().lower()
+        checklist: Optional[dict] = None
+        duplicate_codes: List[str] = []
 
-            # On utilise la fonction anti-doublon
-            tf = ensure_tenant_file_for_email(
-                db=db,
-                agency_id=agency_id,
-                email_address=candidate_email,
-            )
+        if tf:
+            # On attache les PJ au dossier (anti-doublons inclus)
+            if attachment_file_ids:
+                attach_result = attach_files_to_tenant_file(db, tf, attachment_file_ids)
 
-            if tf:
-                # On attache les PJ au dossier + recalcul checklist + status
-                attach_files_to_tenant_file(db, tf, attachment_file_ids)
+                # 🟢 ICI ON ALIMENTE CE QUI PARTIRA DANS req.missing_docs / req.duplicate_docs
+                checklist = attach_result.get("checklist") or {}
+                duplicate_codes = attach_result.get("duplicate_doc_types") or []
+            else:
+                # Pas de nouvelles PJ : on recalcule l'état du dossier existant
+                checklist = recompute_tenant_file_status(db, tf)
+                duplicate_codes = []
 
-                # On relit le dossier à jour
-                db.refresh(tf)
+            # Mapping codes -> labels lisibles pour l'email
+            DOC_LABELS = {
+                "id": "Pièce d'identité",
+                "payslip": "Bulletin de paie",
+                "tax": "Avis d'imposition",
+            }
 
-                checklist = {}
-                if tf.checklist_json:
-                    try:
-                        checklist = json.loads(tf.checklist_json)
-                    except Exception:
-                        checklist = {}
+            missing_codes = (checklist.get("missing") or []) if checklist else []
+            missing_docs_for_reply = [DOC_LABELS.get(code, code) for code in missing_codes]
+            duplicate_docs_for_reply = [DOC_LABELS.get(code, code) for code in duplicate_codes]
 
-                # mapping code -> libellé humain
-                DOC_LABELS = {
-                    "id": "Pièce d'identité",
-                    "payslip": "Bulletin de paie",
-                    "tax": "Avis d'imposition",
-                }
+            # Statut dossier lisible
+            raw_status = (tf.status.value if hasattr(tf.status, "value") else str(tf.status)).lower()
+            if "new" in raw_status:
+                tenant_status_for_reply = "Nouveau dossier (aucun document enregistré)."
+            elif "incomplete" in raw_status:
+                tenant_status_for_reply = "Dossier incomplet."
+            elif "to_validate" in raw_status:
+                tenant_status_for_reply = "Dossier complet, en attente de validation."
+            elif "complete" in raw_status:
+                tenant_status_for_reply = "Dossier complet et validé."
+            else:
+                tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
 
-                missing_codes = checklist.get("missing", []) or []
-                missing_docs_for_reply = [DOC_LABELS.get(code, code) for code in missing_codes]
-
-                # Texte lisible pour le statut
-                raw_status = (tf.status.value if hasattr(tf.status, "value") else str(tf.status)).lower()
-                if "new" in raw_status:
-                    tenant_status_for_reply = "Nouveau dossier (aucun document enregistré)."
-                elif "incomplete" in raw_status:
-                    tenant_status_for_reply = "Dossier incomplet."
-                elif "to_validate" in raw_status:
-                    tenant_status_for_reply = "Dossier complet, en attente de validation."
-                elif "complete" in raw_status:
-                    tenant_status_for_reply = "Dossier complet et validé."
-                else:
-                    tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+        else:
+            # Pas de dossier exploitable
+            checklist = None
+            duplicate_codes = []
+            tenant_status_for_reply = None
 
     except Exception as e:
         print(f"⚠️ Contexte dossier pour la réponse: {e}")
 
-    # 4. Génération de la réponse en incluant le contexte dossier
+    # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
     reponse = await generate_reply_logic(
         EmailReplyRequest(
             from_email=req.from_email,
@@ -1502,14 +1614,14 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
             urgency=analyse.urgency,
             tenant_status=tenant_status_for_reply,
             missing_docs=missing_docs_for_reply,
+            duplicate_docs=duplicate_docs_for_reply,  # 🟢 ICI → arrive dans req.duplicate_docs
         ),
         comp_name,
         s.tone if s else "pro",
         s.signature if s else "Team",
     )
 
-    # 5. Enregistrement de l'email en base avec la réponse suggérée
-    
+    # 5) ENREGISTREMENT DE L'EMAIL EN BASE
     new_email = EmailAnalysis(
         agency_id=agency_id,
         sender_email=req.from_email,
@@ -1527,122 +1639,34 @@ async def webhook_process_email(req: EmailProcessRequest, db: Session = Depends(
     db.commit()
     db.refresh(new_email)
 
-
-        # ✅ GESTION LOCATIVE AUTO
-    dossier_comment = ""  # <- texte qu'on ajoutera à la réponse mail
-
+    # 6) LIEN EMAIL ↔ DOSSIER LOCATAIRE SI tf EXISTE
     try:
-        # Catégorie IA (si dispo) + fallback sur new_email.category
-        cat = (
-            (getattr(analyse, "category", "") or "").lower().strip()
-            or (new_email.category or "").lower().strip()
+        candidate_email = (req.from_email or "").strip().lower()
+        tf = ensure_tenant_file_for_email(
+            db=db,
+            agency_id=agency_id,
+            email_address=candidate_email,
         )
-
-        # ✅ On déclenche si :
-        #  - ça ressemble à une candidature/locataire/dossier
-        #  - OU il y a au moins une pièce jointe analysée
-        should_auto_loc = (
-            ("candid" in cat)
-            or ("locat" in cat)
-            or ("dossier" in cat)
-            or len(attachment_file_ids) > 0
-        )
-
-        if should_auto_loc:
-            candidate_email = (req.from_email or "").lower().strip()
-
-            tf = None
-            if candidate_email:
-                tf = (
-                    db.query(TenantFile)
-                    .filter(
-                        TenantFile.agency_id == agency_id,
-                        TenantFile.candidate_email == candidate_email,
-                    )
-                    .order_by(TenantFile.id.desc())
-                    .first()
-                )
-
-            # Créer le dossier si inexistant
-            if not tf:
-                tf = TenantFile(
-                    agency_id=agency_id,
-                    candidate_email=candidate_email,
-                    status=TenantFileStatus.NEW,
-                )
-                db.add(tf)
-                db.commit()
-                db.refresh(tf)
-
-            # Lier l’email au dossier (si pas déjà fait)
-            if not db.query(TenantEmailLink).filter(
-                TenantEmailLink.tenant_file_id == tf.id,
-                TenantEmailLink.email_analysis_id == new_email.id,
-            ).first():
-                db.add(
-                    TenantEmailLink(
-                        tenant_file_id=tf.id,
-                        email_analysis_id=new_email.id,
-                    )
-                )
-                db.commit()
-
-            # ✅ Lier les PJ + recalcul checklist via le helper commun
-            attach_files_to_tenant_file(db, tf, attachment_file_ids)
-
-            # 🔍 À partir d'ici : on lit la checklist pour savoir si le dossier est complet
-            db.refresh(tf)
-
-            raw_checklist = getattr(tf, "checklist_json", None) or getattr(tf, "checklist", None)
-            checklist_data = None
-
-            if isinstance(raw_checklist, dict):
-                checklist_data = raw_checklist
-            elif isinstance(raw_checklist, str):
-                try:
-                    checklist_data = json.loads(raw_checklist)
-                except Exception:
-                    checklist_data = None
-
-            if checklist_data:
-                missing_codes = checklist_data.get("missing", []) or []
-
-                # mapping "code" -> phrase lisible
-                label_map = {
-                    "id": "une pièce d'identité",
-                    "payslip": "un bulletin de paie",
-                    "tax": "un avis d'imposition",
-                }
-
-                if not missing_codes:
-                    dossier_comment = (
-                        "À ce jour, votre dossier locataire est complet ✅. "
-                        "Nous avons bien reçu l'ensemble des pièces demandées."
-                    )
-                else:
-                    missing_labels = [label_map.get(code, code) for code in missing_codes]
-                    dossier_comment = (
-                        "À ce jour, votre dossier locataire est incomplet. "
-                        "Il manque encore : " + ", ".join(missing_labels) + "."
-                    )
-
+        if tf:
+            ensure_email_link(
+                db=db,
+                tenant_file_id=tf.id,
+                email_analysis_id=new_email.id,
+            )
     except Exception as e:
-        print(f"⚠️ Auto dossier locataire: {e}")
+        print(f"⚠️ Lien email ↔ dossier locataire: {e}")
 
-    # 📨 On enrichit la réponse mail AVANT envoi
-    if dossier_comment:
-        reponse.reply = (
-            f"{reponse.reply}\n\n---\n"
-            f"État de votre dossier locataire :\n"
-            f"{dossier_comment}"
-        )
-
+    # 7) ENVOI EFFECTIF DE L'EMAIL (si demandé)
     sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
 
-    return EmailProcessResponse(analyse=analyse, reponse=reponse, send_status=sent)
-
+    return EmailProcessResponse(
+        analyse=analyse,
+        reponse=reponse,
+        send_status=sent,
+        email_id=new_email.id,
+    )
 # ============================================================
 # --- ROUTES DASHBOARD & DATA (PROTEGEES PAR AGENCE) ---
 # (reste inchangé)
@@ -2569,77 +2593,7 @@ async def process_manual(
     auto_link_email_to_tenant_file(db, new_email)
 
 
-           # 5) PIPELINE AUTO LOCATIVE (copie de la logique du webhook)
-    try:
-        cat = (
-            (getattr(analyse, "category", "") or "").lower().strip()
-            or (new_email.category or "").lower().strip()
-        )
-
-        # ✅ Nouveau : déclencher aussi si on a des PJ, même sans classification IA
-        should_auto_loc = (
-            ("candid" in cat)
-            or ("locat" in cat)
-            or ("dossier" in cat)
-            or len(attachment_file_ids) > 0
-        )
-
-        if should_auto_loc:
-            candidate_email = (req.from_email or "").lower().strip()
-
-            tf = None
-            if candidate_email:
-                tf = (
-                    db.query(TenantFile)
-                    .filter(
-                        TenantFile.agency_id == agency_id,
-                        TenantFile.candidate_email == candidate_email,
-                    )
-                    .order_by(TenantFile.id.desc())
-                    .first()
-                )
-
-            # Créer le dossier si inexistant
-            if not tf:
-                tf = TenantFile(
-                    agency_id=agency_id,
-                    candidate_email=candidate_email,
-                    status=TenantFileStatus.NEW,
-                )
-                db.add(tf)
-                db.commit()
-                db.refresh(tf)
-
-            # Lier l’email au dossier
-            if not db.query(TenantEmailLink).filter(
-                TenantEmailLink.tenant_file_id == tf.id,
-                TenantEmailLink.email_analysis_id == new_email.id,
-            ).first():
-                db.add(
-                    TenantEmailLink(
-                        tenant_file_id=tf.id,
-                        email_analysis_id=new_email.id,
-                    )
-                )
-                db.commit()
-
-            # ✅ Lier les pièces + recalcul checklist via la fonction utilitaire
-            attach_files_to_tenant_file(db, tf, attachment_file_ids)
-
-    except Exception as e:
-        print(f"⚠️ Auto dossier locataire (manual): {e}")
-
-    # 6) ENVOI EMAIL SI DEMANDÉ
-    sent = "sent" if req.send_email else "not_sent"
-    if req.send_email:
-        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-
-    return EmailProcessResponse(
-        analyse=analyse,
-        reponse=reponse,
-        send_status=sent,
-        email_id=new_email.id,
-    )
+     
 
 
 @app.post("/api/analyze-file")
