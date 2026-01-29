@@ -165,17 +165,17 @@ export default function Register() {
             Déjà un compte ? <Link to="/login">Se connecter</Link>
           </span>
         </div>
+        <div style={{ marginTop: "20px", textAlign: "center" }}>
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: "13px", opacity: 0.8 }}
+          >
+            Politique de confidentialité
+          </a>
+        </div>
       </div>
     </div>
   );
 }
-<div style={{ marginTop: "20px", textAlign: "center" }}>
-  <a
-    href="/privacy"
-    target="_blank"
-    rel="noopener noreferrer"
-    style={{ fontSize: "13px", opacity: 0.8 }}
-  >
-    Politique de confidentialité
-  </a>
-</div>
