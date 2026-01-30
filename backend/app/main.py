@@ -47,6 +47,8 @@ from app.security import get_current_user as get_current_user_token
 from app.google_oauth import router as google_oauth_router
 from app.database.database import get_db, engine, Base
 from app.database import models
+import asyncio
+from app.database.database import SessionLocal
 
 # On importe les nouveaux modèles SaaS
 from app.database.models import (
@@ -124,6 +126,132 @@ def create_default_settings_for_agency(db: Session, agency: Agency) -> AppSettin
     db.refresh(settings)
     return settings
 
+def get_retention_config(db: Session, agency_id: Optional[int] = None) -> dict:
+    """
+    Récupère la config de rétention pour une agence.
+    Si rien n'est configuré → applique DEFAULT_RETENTION_CONFIG.
+    """
+    cfg = DEFAULT_RETENTION_CONFIG.copy()
+
+    if agency_id is None:
+        return cfg
+
+    s = (
+        db.query(AppSettings)
+        .filter(AppSettings.agency_id == agency_id)
+        .first()
+    )
+    if not s or not getattr(s, "retention_config_json", None):
+        return cfg
+
+    try:
+        stored = s.retention_config_json
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        if isinstance(stored, dict):
+            cfg.update(stored)
+    except Exception as e:
+        print("⚠️ retention_config_json invalide:", e)
+
+    return cfg
+
+def run_retention_cleanup(db: Session):
+    """
+    Nettoyage périodique RGPD :
+    - supprime les vieux emails
+    - supprime les vieilles analyses de fichiers
+    - anonymise les dossiers locataires fermés depuis longtemps
+    """
+    now = datetime.utcnow()
+
+    # On parcourt les agences, car la rétention peut être différente par agence
+    agencies = db.query(Agency).all()
+    for ag in agencies:
+        cfg = get_retention_config(db, ag.id)
+
+        # 1) Emails
+        emails_days = int(cfg.get("emails_days", DEFAULT_RETENTION_CONFIG["emails_days"]))
+        cutoff_emails = now - timedelta(days=emails_days)
+
+        db.query(EmailAnalysis).filter(
+            EmailAnalysis.agency_id == ag.id,
+            EmailAnalysis.created_at != None,
+            EmailAnalysis.created_at < cutoff_emails,
+        ).delete(synchronize_session=False)
+
+        # 2) Analyses de fichiers
+        fa_days = int(cfg.get("file_analyses_days", DEFAULT_RETENTION_CONFIG["file_analyses_days"]))
+        cutoff_files = now - timedelta(days=fa_days)
+
+        old_files = (
+            db.query(FileAnalysis)
+            .filter(
+                FileAnalysis.agency_id == ag.id,
+                FileAnalysis.created_at != None,
+                FileAnalysis.created_at < cutoff_files,
+            )
+            .all()
+        )
+
+        for f in old_files:
+            # tentative de suppression fichier disque (silencieuse si erreur)
+            file_path = os.path.join("uploads", f.filename)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            db.delete(f)
+
+        # 3) Dossiers locataires fermés → anonymisation
+        tf_days = int(
+            cfg.get(
+                "tenant_files_days_after_closure",
+                DEFAULT_RETENTION_CONFIG["tenant_files_days_after_closure"],
+            )
+        )
+        cutoff_tf = now - timedelta(days=tf_days)
+
+        closed_old = (
+            db.query(TenantFile)
+            .filter(
+                TenantFile.agency_id == ag.id,
+                TenantFile.is_closed == True,
+                TenantFile.closed_at != None,
+                TenantFile.closed_at < cutoff_tf,
+            )
+            .all()
+        )
+
+        for tf in closed_old:
+            tf.candidate_email = None
+            tf.candidate_name = None
+            tf.risk_level = None
+            # on peut aussi vider la checklist si tu veux :
+            # tf.checklist_json = None
+
+    db.commit()
+
+
+async def retention_worker():
+    """
+    Worker asynchrone qui lance run_retention_cleanup toutes les 6 heures.
+    """
+    while True:
+        try:
+            db = SessionLocal()
+            print("[RGPD] Lancement du cleanup de rétention…")
+            run_retention_cleanup(db)
+            print("[RGPD] Cleanup terminé.")
+        except Exception as e:
+            print("[RGPD] Erreur dans le cleanup:", e)
+        finally:
+            db.close()
+
+        # Attente 6h avant le prochain passage
+        await asyncio.sleep(6 * 60 * 60)
+
+
 # --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
@@ -148,9 +276,15 @@ RESET_PASSWORD_EXPIRE_MINUTES = int(os.getenv("RESET_PASSWORD_EXPIRE_MINUTES", "
 
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
 ENV = os.getenv("ENV", "dev").lower()
+
+def _is_prod() -> bool:
+    return ENV in ("prod", "production")
+
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 ADMIN_BYPASS_EMAIL = os.getenv("ADMIN_BYPASS_EMAIL", "").strip().lower()
-print("[ADMIN_BYPASS_EMAIL]", repr(ADMIN_BYPASS_EMAIL))
+if not _is_prod():
+    print("[ADMIN_BYPASS_EMAIL]", repr(ADMIN_BYPASS_EMAIL))
+
 
 # ============================================================
 # ✅ AUTH PRO (ACCESS + REFRESH)
@@ -1139,29 +1273,43 @@ class TenantFileDetail(BaseModel):
         from_attributes = True
 
 # --- STARTUP ---
+# --- STARTUP ---
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
+
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
 
     # Création Super Admin par défaut
     db = next(get_db())
-    if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
-        # Créer Agence par défaut (Admin)
-        default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
-        db.add(default_agency)
-        db.commit()
+    try:
+        if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
+            # Créer Agence par défaut (Admin)
+            default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
+            db.add(default_agency)
+            db.commit()
+            db.refresh(default_agency)
 
-        hashed = get_password_hash("admin123")
-        admin = User(
-            email="admin@cipherflow.com",
-            hashed_password=hashed,
-            role=UserRole.SUPER_ADMIN,
-            agency_id=default_agency.id,
-        )
-        db.add(admin)
-        db.commit()
+            hashed = get_password_hash("admin123")
+            admin = User(
+                email="admin@cipherflow.com",
+                hashed_password=hashed,
+                role=UserRole.SUPER_ADMIN,
+                agency_id=default_agency.id,
+            )
+            db.add(admin)
+            db.commit()
+    finally:
+        db.close()   # ✅ LIGNE LA PLUS IMPORTANTE
+
+@app.on_event("startup")
+async def start_retention_worker():
+    if not ENABLE_RETENTION_WORKER:
+        return
+    asyncio.create_task(retention_worker())
+
+
 
 # ============================================================
 # ✅ ROUTES AUTH PRO
@@ -1377,13 +1525,12 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
     if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Identifiants incorrects")
     
-    print("LOGIN DEBUG",
-      "db_email=", repr(user.email),
-      "db_email_norm=", repr(user.email.strip().lower()),
-      "verified=", user.email_verified,
-      "ADMIN_BYPASS_EMAIL=", repr(ADMIN_BYPASS_EMAIL),
-      "ADMIN_BYPASS_EMAIL_norm=", repr((ADMIN_BYPASS_EMAIL or "").strip().lower()))
-
+    if not _is_prod():
+        print(
+            "LOGIN DEBUG",
+            "verified=", user.email_verified,
+            "user_id=", user.id
+        )
     if not user.email_verified:
       if ADMIN_BYPASS_EMAIL and user.email.strip().lower() == ADMIN_BYPASS_EMAIL.strip().lower():
         # ✅ Bypass dev uniquement pour le super admin
@@ -1524,7 +1671,8 @@ async def webhook_process_email(
     target_agency = None
 
     recipient = req.to_email.lower().strip() if req.to_email else ""
-    print(f"📨 Routage pour le destinataire : {recipient}")
+    if not _is_prod():
+     print(f"📨 Routage pour le destinataire : {recipient}")
 
     if "+" in recipient:
         try:
