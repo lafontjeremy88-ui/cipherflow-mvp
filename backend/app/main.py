@@ -100,6 +100,30 @@ def decrypt_bytes(data: bytes) -> bytes:
     except InvalidToken:
         return data
 
+DEFAULT_RETENTION_CONFIG = {
+    "emails_days": 365,  # 1 an
+    "tenant_files_days_after_closure": 365 * 5,  # 5 ans après clôture
+    "file_analyses_days": 365,  # 1 an pour les analyses de fichiers
+}
+
+
+def create_default_settings_for_agency(db: Session, agency: Agency) -> AppSettings:
+    """
+    Crée les AppSettings par défaut pour une agence,
+    avec une config de rétention RGPD par défaut.
+    """
+    settings = AppSettings(
+        agency_id=agency.id,
+        company_name=agency.name or "Ma Société",
+        agent_name="Assistant IA",
+        tone="pro",
+        retention_config_json=json.dumps(DEFAULT_RETENTION_CONFIG),
+    )
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
 # --- CONFIGURATION IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = None
@@ -1144,33 +1168,39 @@ def on_startup():
 # ============================================================
 
 @app.post("/auth/register", response_model=RegisterResponse)
-async def register(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
-
+async def register(
+    req: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db)
+):
     # 1️⃣ Email unique
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
 
-    # 2️⃣ Mot de passe fort ✅ ICI
+    # 2️⃣ Mot de passe fort ✅
     check_password_policy(req.password)
 
     # 3️⃣ SAAS AUTO-ONBOARDING
     agency_name = f"Agence de {req.email.split('@')[0]}"
 
-
     # ✅ GÉNÉRATION ALIAS AUTOMATIQUE
     clean_alias = re.sub(r"[^a-zA-Z0-9]", "", req.email.split("@")[0]).lower()
 
+    # éviter collisions sur l'alias email
     if db.query(Agency).filter(Agency.email_alias == clean_alias).first():
         clean_alias = f"{clean_alias}{int(time.time())}"
 
+    # éviter collisions sur le nom d'agence
     if db.query(Agency).filter(Agency.name == agency_name).first():
         agency_name = f"{agency_name} ({int(time.time())})"
 
+    # ✅ Création de l'agence
     new_agency = Agency(name=agency_name, email_alias=clean_alias)
     db.add(new_agency)
     db.commit()
     db.refresh(new_agency)
 
+    # ✅ Création de l'utilisateur admin agence
     new_user = User(
         email=req.email,
         hashed_password=get_password_hash(req.password),
@@ -1181,16 +1211,9 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
     db.commit()
     db.refresh(new_user)
 
-    default_settings = AppSettings(
-        agency_id=new_agency.id,
-        company_name=agency_name,
-        agent_name="Assistant IA",
-        tone="pro",
-    )
-    db.add(default_settings)
-    db.commit()
+    # ✅ RGPD : AppSettings avec config de rétention par défaut
+    create_default_settings_for_agency(db, new_agency)
 
-    # ✅ Access token (court)
     # ✅ Email verification (standard) - PAS de login tant que non vérifié
     raw_token = create_email_verify_token()
 
@@ -1204,8 +1227,11 @@ async def register(req: LoginRequest, response: Response, db: Session = Depends(
         send_verification_email(new_user.email, raw_token)
     except Exception as e:
         print("EMAIL VERIFICATION FAILED:", e)
-    return {"message": "Inscription enregistrée. Vérifie ton email pour activer ton compte."}
-   
+
+    return {
+        "message": "Inscription enregistrée. Vérifie ton email pour activer ton compte."
+    }
+
 
 @app.get("/auth/verify-email")
 def verify_email(token: str, db: Session = Depends(get_db)):
