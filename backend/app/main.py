@@ -73,10 +73,18 @@ from app.pdf_service import generate_pdf_bytes
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
+ENV = os.getenv("ENV", "dev").lower()
+
+def _is_prod() -> bool:
+    return ENV in ("prod", "production")
+
 
 TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "").strip()
 
 FERNET = Fernet(TOKEN_ENCRYPTION_KEY.encode()) if TOKEN_ENCRYPTION_KEY else None
+
+if _is_prod() and not TOKEN_ENCRYPTION_KEY:
+    raise RuntimeError("TOKEN_ENCRYPTION_KEY manquante en production")
 
 
 def encrypt_bytes(data: bytes) -> bytes:
@@ -161,10 +169,25 @@ def run_retention_cleanup(db: Session):
     - supprime les vieux emails
     - supprime les vieilles analyses de fichiers
     - anonymise les dossiers locataires fermés depuis longtemps
+    - supprime les fichiers temporaires en clair (tmp_*) trop anciens
     """
     now = datetime.utcnow()
 
-    # On parcourt les agences, car la rétention peut être différente par agence
+    # 🔹 0) Nettoyage des fichiers temporaires en clair (sécurité ++)
+    uploads_dir = Path("uploads")
+    if uploads_dir.exists():
+        for p in uploads_dir.glob("tmp_*"):
+            try:
+                # âge du fichier
+                age = now - datetime.utcfromtimestamp(p.stat().st_mtime)
+                # ici : on supprime les tmp_ plus vieux d'1 heure
+                if age > timedelta(hours=1):
+                    p.unlink()
+            except Exception:
+                # on ne bloque pas le cleanup pour ça
+                pass
+
+    # 🔹 1) On parcourt les agences, car la rétention peut être différente par agence
     agencies = db.query(Agency).all()
     for ag in agencies:
         cfg = get_retention_config(db, ag.id)
@@ -194,7 +217,6 @@ def run_retention_cleanup(db: Session):
         )
 
         for f in old_files:
-            # tentative de suppression fichier disque (silencieuse si erreur)
             file_path = os.path.join("uploads", f.filename)
             if os.path.exists(file_path):
                 try:
@@ -227,10 +249,10 @@ def run_retention_cleanup(db: Session):
             tf.candidate_email = None
             tf.candidate_name = None
             tf.risk_level = None
-            # on peut aussi vider la checklist si tu veux :
-            # tf.checklist_json = None
+            # tf.checklist_json = None  # si tu veux anonymiser à 100 %
 
     db.commit()
+
 
 
 async def retention_worker():
@@ -240,16 +262,17 @@ async def retention_worker():
     while True:
         try:
             db = SessionLocal()
-            print("[RGPD] Lancement du cleanup de rétention…")
+            logger.info("[RGPD] Lancement du cleanup de rétention…")
             run_retention_cleanup(db)
-            print("[RGPD] Cleanup terminé.")
+            logger.info("[RGPD] Cleanup terminé.")
         except Exception as e:
-            print("[RGPD] Erreur dans le cleanup:", e)
+            logger.error(f"[RGPD] Erreur dans le cleanup: {e}")
         finally:
             db.close()
 
         # Attente 6h avant le prochain passage
         await asyncio.sleep(6 * 60 * 60)
+
 
 
 # --- CONFIGURATION IA ---
@@ -274,14 +297,30 @@ EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
 RESET_PASSWORD_EXPIRE_MINUTES = int(os.getenv("RESET_PASSWORD_EXPIRE_MINUTES", "30"))
 
 
+# --- ENV & MODE RUNTIME ---
+# --- LOGGING CENTRALISÉ ---
+logger = logging.getLogger("cipherflow")
+logger.setLevel(logging.INFO)
+
+# En dev, on log dans la console
+if not _is_prod():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s"
+    )
+    handler.setFormatter(formatter)
+
+    # Pour éviter de doubler les logs si FastAPI configure déjà le logging
+    if not logger.handlers:
+        logger.addHandler(handler)
+
+# Flag pour activer/désactiver le worker de rétention RGPD
+ENABLE_RETENTION_WORKER = os.getenv("ENABLE_RETENTION_WORKER", "false").lower() == "true"
+
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "").strip()
-ENV = os.getenv("ENV", "dev").lower()
-
-def _is_prod() -> bool:
-    return ENV in ("prod", "production")
-
 OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "secret_dev_key").strip()
 ADMIN_BYPASS_EMAIL = os.getenv("ADMIN_BYPASS_EMAIL", "").strip().lower()
+
 if not _is_prod():
     print("[ADMIN_BYPASS_EMAIL]", repr(ADMIN_BYPASS_EMAIL))
 
@@ -291,9 +330,6 @@ if not _is_prod():
 # ============================================================
 ACCESS_TOKEN_MINUTES = 15
 REFRESH_TOKEN_DAYS = 30
-
-def _is_prod() -> bool:
-    return ENV in ("prod", "production")
 
 def create_refresh_token() -> str:
     # token opaque (random, long)
@@ -409,7 +445,7 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
             }
         )
     except Exception as e:
-        print(f"Erreur envoi email: {e}")
+        logger.error(f"Erreur envoi email: {e}")
 
 async def call_gemini(prompt: str) -> str:
     if not client:
@@ -418,8 +454,9 @@ async def call_gemini(prompt: str) -> str:
         response = client.models.generate_content(model=MODEL_NAME, contents=[prompt])
         return response.text
     except Exception as e:
-        print(f"Erreur IA: {e}")
+        logger.error(f"Erreur IA: {e}")
         return "{}"
+
 
 def extract_json_from_text(text: str):
     if not text:
@@ -1672,19 +1709,21 @@ async def webhook_process_email(
 
     recipient = req.to_email.lower().strip() if req.to_email else ""
     if not _is_prod():
-     print(f"📨 Routage pour le destinataire : {recipient}")
+        logger.info(f"📨 Routage pour le destinataire : {recipient}")
+
 
     if "+" in recipient:
         try:
             alias_part = recipient.split("+")[1].split("@")[0]
-            print(f"🔎 Recherche de l'alias : {alias_part}")
+            logger.info(f"🔎 Recherche de l'alias : {alias_part}")
             target_agency = db.query(Agency).filter(Agency.email_alias == alias_part).first()
         except Exception as e:
-            print(f"Alias error: {e}")
+            logger.error(f"Alias error: {e}")
 
     if not target_agency:
-        print("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
+        logger.warning("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
         target_agency = db.query(Agency).order_by(Agency.id.asc()).first()
+
 
     if not target_agency:
         raise HTTPException(500, "Aucune agence configurée.")
@@ -1749,7 +1788,8 @@ async def webhook_process_email(
                     attachment_file_ids.append(new_file.id)
                     attachment_summary_text += f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
             except Exception as e:
-                print(f"Erreur PJ: {e}")
+                logger.error(f"Erreur PJ: {e}")
+
 
     # 3) ANALYSE IA DE L'EMAIL
 
@@ -1826,7 +1866,7 @@ async def webhook_process_email(
             tenant_status_for_reply = None
 
     except Exception as e:
-        print(f"⚠️ Contexte dossier pour la réponse: {e}")
+        logger.error(f"⚠️ Contexte dossier pour la réponse: {e}")
     
 
     # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
@@ -2723,10 +2763,10 @@ def auto_link_email_to_tenant_file(db: Session, email):
             email_analysis_id=email.id,
         )
 
-        print(f"[auto_link] email #{email.id} → dossier #{tf.id}")
+        logger.info(f"[auto_link] email #{email.id} → dossier #{tf.id}")
 
     except Exception as e:
-        print("[auto_link_email_to_tenant_file] ERROR:", e)
+        logger.error(f"[auto_link_email_to_tenant_file] ERROR: {e}")
 
 
 
@@ -2812,7 +2852,7 @@ async def process_manual(
                 attachment_summary_text += f"- PJ: {att.filename} ({raw_type})\n"
 
             except Exception as e:
-                print(f"Erreur PJ manual: {e}")
+                logger.error(f"Erreur PJ manual: {e}")
 
     # 2) ANALYSE EMAIL (avec contexte PJ)
     analyse = await analyze_email_logic(
@@ -2886,7 +2926,7 @@ async def process_manual(
                 tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
 
     except Exception as e:
-        print(f"⚠️ Contexte dossier locataire manual: {e}")
+        logger.error(f"⚠️ Contexte dossier locataire manual: {e}")
 
     # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
     reponse = await generate_reply_logic(
@@ -3185,7 +3225,7 @@ async def view_file(
         content=decrypted,
         media_type="application/pdf",  # ou image/*
         headers={"Content-Disposition": "inline"},
-    )
+    )    
 
 
 @app.get("/api/files/download/{file_id}")
@@ -3219,7 +3259,7 @@ async def download_file(
         content=decrypted,
         media_type="application/pdf",  # ou image/*
         headers={"Content-Disposition": "inline"},
-)   
+    )   
 
 
 @app.post("/email/send")
