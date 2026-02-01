@@ -13,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import OAuthCallback from "./pages/OAuthCallback";
 import AccountPage from "./pages/AccountPage";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
+import LegalNotice from "./pages/LegalNotice";
 
 // Components / Modules
 import Login from "./components/Login";
@@ -69,8 +70,7 @@ function ProtectedRoute({ isAuthed, children }) {
 function AppShell({ authFetch, onLogout }) {
   const location = useLocation();
 
-  const navItemClass = ({ isActive }) =>
-    cx("nav-item", isActive && "active");
+  const navItemClass = ({ isActive }) => cx("nav-item", isActive && "active");
 
   return (
     <div className="app-shell">
@@ -129,31 +129,38 @@ function AppShell({ authFetch, onLogout }) {
             </div>
           ) : null}
 
-            {/* 🔐 Bandeau RGPD global dans la sidebar */}
-            <div
-              className="muted"
-              style={{
-                marginTop: 14,
-                paddingTop: 10,
-                borderTop: "1px solid rgba(255,255,255,0.08)",
-                fontSize: "11px",
-                lineHeight: 1.4,
-                opacity: 0.75,
-              }}
+          {/* 🔐 Bandeau RGPD global dans la sidebar */}
+          <div
+            className="muted"
+            style={{
+              marginTop: 14,
+              paddingTop: 10,
+              borderTop: "1px solid rgba(255,255,255,0.08)",
+              fontSize: "11px",
+              lineHeight: 1.4,
+              opacity: 0.75,
+            }}
+          >
+            🔐 Données protégées —{" "}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "underline" }}
             >
-              🔐 Données protégées —{" "}
-              <a
-                href="/privacy"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ textDecoration: "underline" }}
-              >
-                Politique de confidentialité
-              </a>
-            </div>
-
+              Politique de confidentialité
+            </a>{" "}
+            ·{" "}
+            <a
+              href="/mentions-legales"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "underline" }}
+            >
+              Mentions légales
+            </a>
+          </div>
         </nav>
-
       </aside>
 
       {/* 🔥 ICI : on utilise main-content qui a le layout plein écran */}
@@ -299,6 +306,7 @@ function AppInner() {
       "/forgot-password",
       "/reset-password",
       "/privacy",
+      "/mentions-legales", // ✅ page accessible sans être connecté
     ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
@@ -354,9 +362,11 @@ function AppInner() {
       />
 
       <Route path="/verify-email" element={<VerifyEmail />} />
-      
+
       <Route path="/privacy" element={<PrivacyPolicy />} />
 
+      {/* ✅ Nouvelle route publique : Mentions légales */}
+      <Route path="/mentions-legales" element={<LegalNotice />} />
 
       {/* Protected shell */}
       <Route
