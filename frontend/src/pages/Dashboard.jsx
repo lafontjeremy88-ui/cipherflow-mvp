@@ -198,13 +198,6 @@ const goToCategory = (name) => {
           onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
 
-        <StatCard
-          title="QUITTANCES GÉNÉRÉES"
-          value={loading ? "…" : stats.invoices}
-          icon={FileText}
-          color="#44C2A8"
-          onClick={() => navigate("/invoices")}
-        />
       </div>
 
       <div className="dashboard-grid">
