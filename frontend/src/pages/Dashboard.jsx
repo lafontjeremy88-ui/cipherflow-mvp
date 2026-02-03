@@ -47,7 +47,17 @@ function normalizeStats(payload) {
   return {
     total_emails: Number(kpis?.total_emails || kpis?.emails || 0),
     high_urgency: Number(kpis?.high_urgency || kpis?.urgent || 0),
-    invoices: Number(kpis?.invoices || kpis?.quittances || 0),
+
+    // 🧱 Nouveau KPI : dossiers locataires
+    tenant_files: Number(
+      kpis?.tenant_files ||      // futur champ côté backend
+      kpis?.tenantfiles ||       // au cas où tu l'appelles autrement
+      kpis?.dossiers ||          // alias possible
+      kpis?.invoices ||          // fallback sur l'ancien champ "invoices"
+      kpis?.quittances ||
+      0
+    ),
+
     distribution,
     recents: Array.isArray(payload?.recents)
       ? payload.recents
@@ -58,6 +68,7 @@ function normalizeStats(payload) {
       : [],
   };
 }
+
 
 function truncate(s, n = 70) {
   if (!s) return "";
@@ -125,12 +136,12 @@ const goToCategory = (name) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [stats, setStats] = useState({
-    total_emails: 0,
-    high_urgency: 0,
-    invoices: 0,
-    distribution: [],
-    recents: [],
-  });
+  total_emails: 0,
+  high_urgency: 0,
+  tenant_files: 0,
+  distribution: [],
+  recents: [],
+});
 
   const donut = useMemo(() => buildDonut(stats.distribution), [stats.distribution]);
   const donutData = donut.data;
@@ -196,6 +207,14 @@ const goToCategory = (name) => {
           icon={AlertTriangle}
           color="#E46C6C"
           onClick={() => navigate("/emails/history?filter=high_urgency")}
+        />
+
+        <StatCard
+          title="DOSSIERS LOCATAIRES"
+          value={loading ? "…" : stats.tenant_files}
+          icon={FileText}
+          color="#44C2A8"
+          onClick={() => navigate("/tenant-files")}   // ✅ c’est le bon path
         />
 
       </div>
