@@ -367,11 +367,14 @@ def send_verification_email(to_email: str, token: str):
     """
 
     resend.Emails.send({
-        "from": "CipherFlow <no-reply@cipherflow.company>",
-        "to": [to_email],
-        "subject": "Vérifie ton email",
-        "html": html_content,
-    })
+    "from": "CipherFlow <no-reply@cipherflow.company>",
+    "to": [to_email],
+    "subject": "Vérifie ton email",
+    "html": html_content,
+    "headers": {
+        "X-CipherFlow-Origin": "system-email",
+    },
+})
 
 def send_reset_password_email(to_email: str, token: str):
     if not RESEND_API_KEY:
@@ -388,11 +391,15 @@ def send_reset_password_email(to_email: str, token: str):
     """
 
     resend.Emails.send({
-        "from": RESEND_FROM,
-        "to": [to_email],
-        "subject": "Réinitialise ton mot de passe",
-        "html": html_content,
-    })
+    "from": RESEND_FROM,
+    "to": [to_email],
+    "subject": "Réinitialise ton mot de passe",
+    "html": html_content,
+    "headers": {
+        "X-CipherFlow-Origin": "system-email",
+    },
+})
+
 
 
 
@@ -442,10 +449,15 @@ def send_email_via_resend(to_email: str, subject: str, body: str):
                 "to": [to_email],
                 "subject": subject,
                 "html": body.replace("\n", "<br>"),
+                # 🧠 Tag spécial pour dire "email généré par CipherFlow"
+                "headers": {
+                    "X-CipherFlow-Origin": "auto-reply",
+                },
             }
         )
     except Exception as e:
         logger.error(f"Erreur envoi email: {e}")
+
 
 async def call_gemini(prompt: str) -> str:
     if not client:
