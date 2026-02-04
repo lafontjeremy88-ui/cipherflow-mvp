@@ -1758,7 +1758,27 @@ async def webhook_process_email(
                 # 1) bytes brutes décodées du webhook
                 file_data = base64.b64decode(att.content_base64)
 
+                # 🔍 Empreinte pour éviter les doublons
+                file_hash = hashlib.sha256(file_data).hexdigest()
+
+                # Si le même fichier existe déjà → on le réutilise
+                existing_file = (
+                    db.query(FileAnalysis)
+                    .filter(
+                        FileAnalysis.agency_id == agency_id,
+                        FileAnalysis.file_hash == file_hash,
+                    )
+                    .first()
+                )
+                if existing_file:
+                    attachment_file_ids.append(existing_file.id)
+                    attachment_summary_text += (
+                        f"- PJ: {att.filename} ({existing_file.file_type or 'Document'})\n"
+                    )
+                    continue
+
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
+
 
                 # 2) chemin temporaire EN CLAIR pour l'analyse IA
                 tmp_path = uploads_dir / f"tmp_{safe_filename}"
@@ -1784,7 +1804,7 @@ async def webhook_process_email(
 
                 if doc_analysis:
                     new_file = FileAnalysis(
-                        filename=safe_filename,            # le nom reste le même
+                        filename=safe_filename,
                         file_type=str(doc_analysis.get("type", "Autre")),
                         sender=str(doc_analysis.get("sender", req.from_email)),
                         extracted_date=str(doc_analysis.get("date", "")),
@@ -1792,7 +1812,9 @@ async def webhook_process_email(
                         summary=str(doc_analysis.get("summary", "Reçu par email")),
                         owner_id=None,
                         agency_id=agency_id,
+                        file_hash=file_hash,  # 👈
                     )
+
                     db.add(new_file)
                     db.commit()
                     db.refresh(new_file)
@@ -2306,10 +2328,14 @@ async def upload_document_for_tenant(
 ):
     aid = current_user.agency_id
 
-    tf = db.query(TenantFile).filter(
-        TenantFile.id == tenant_id,
-        TenantFile.agency_id == aid
-    ).first()
+    tf = (
+        db.query(TenantFile)
+        .filter(
+            TenantFile.id == tenant_id,
+            TenantFile.agency_id == aid,
+        )
+        .first()
+    )
     if not tf:
         raise HTTPException(status_code=404, detail="Dossier locataire introuvable")
 
@@ -2318,34 +2344,80 @@ async def upload_document_for_tenant(
 
     safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
 
+    # Labels pour l'UX
+    DOC_LABELS = {
+        "id": "Pièce d'identité",
+        "payslip": "Bulletin de paie",
+        "tax": "Avis d'imposition",
+    }
+
     # 1) on lit le fichier uploadé
     file_bytes = await file.read()
+
+    # 🔍 Empreinte pour éviter les doublons de fichier
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    # 🔁 Si un document identique existe déjà pour cette agence, on le réutilise
+    existing_file = (
+        db.query(FileAnalysis)
+        .filter(
+            FileAnalysis.agency_id == aid,
+            FileAnalysis.file_hash == file_hash,
+        )
+        .first()
+    )
+    if existing_file:
+        # On passe quand même par le helper pour gérer les doublons de type dans le dossier
+        attach_result = attach_files_to_tenant_file(
+            db=db,
+            tenant_file=tf,
+            file_ids=[existing_file.id],
+        )
+
+        checklist = attach_result.get("checklist") or {}
+        missing_codes = checklist.get("missing") or []
+        duplicate_codes = attach_result.get("duplicate_doc_types") or []
+
+        missing_docs = [DOC_LABELS.get(c, c) for c in missing_codes]
+        duplicate_docs = [DOC_LABELS.get(c, c) for c in duplicate_codes]
+
+        return {
+            "status": "uploaded",
+            "file_id": existing_file.id,
+            "tenant_id": tf.id,
+            "tenant_status": "complete" if not missing_docs else "incomplete",
+            "missing_docs": missing_docs,
+            "duplicate_docs": duplicate_docs,
+            "from_cache": True,
+        }
 
     # 2) temporaire clair pour l'IA
     tmp_path = uploads_dir / f"tmp_{safe_name}"
     with open(tmp_path, "wb") as f:
         f.write(file_bytes)
 
-    # 3) analyse IA
-    data = await analyze_document_logic(str(tmp_path), safe_name) or {}
-
-    raw_type = str(data.get("type", "Document") or "").strip()
-    if not raw_type or raw_type.lower().startswith("erreur"):
-        raw_type = "Document"
-
-    # 4) on chiffre et on stocke la version persistée
-    encrypted_bytes = encrypt_bytes(file_bytes)
-    final_path = uploads_dir / safe_name
-    with open(final_path, "wb") as f:
-        f.write(encrypted_bytes)
-
-    # 5) suppression du temporaire clair
     try:
-        os.remove(tmp_path)
-    except FileNotFoundError:
-        pass
+        # 3) analyse IA
+        data = await analyze_document_logic(str(tmp_path), safe_name) or {}
 
-    # 6) création FileAnalysis comme avant
+        raw_type = str(data.get("type", "Document") or "").strip()
+        if not raw_type or raw_type.lower().startswith("erreur"):
+            raw_type = "Document"
+
+        # 4) on chiffre et on stocke la version persistée
+        encrypted_bytes = encrypt_bytes(file_bytes)
+        final_path = uploads_dir / safe_name
+        with open(final_path, "wb") as f:
+            f.write(encrypted_bytes)
+
+    finally:
+        # 5) suppression du temporaire clair
+        try:
+            os.remove(tmp_path)
+        except FileNotFoundError:
+            pass
+
+    # 6) création FileAnalysis
     new_file = FileAnalysis(
         filename=safe_name,
         file_type=raw_type,
@@ -2355,16 +2427,35 @@ async def upload_document_for_tenant(
         summary=str(data.get("summary", "Reçu via l'espace locataire")),
         owner_id=None,
         agency_id=aid,
+        file_hash=file_hash,
     )
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
+
     # 7) Lier le document au dossier locataire (anti-doublon + checklist)
     attach_result = attach_files_to_tenant_file(
         db=db,
         tenant_file=tf,
         file_ids=[new_file.id],
     )
+
+    checklist = attach_result.get("checklist") or {}
+    missing_codes = checklist.get("missing") or []
+    duplicate_codes = attach_result.get("duplicate_doc_types") or []
+
+    missing_docs = [DOC_LABELS.get(c, c) for c in missing_codes]
+    duplicate_docs = [DOC_LABELS.get(c, c) for c in duplicate_codes]
+
+    return {
+        "status": "uploaded",
+        "file_id": new_file.id,
+        "tenant_id": tf.id,
+        "tenant_status": "complete" if not missing_docs else "incomplete",
+        "missing_docs": missing_docs,
+        "duplicate_docs": duplicate_docs,
+        "from_cache": False,
+    }
 
     # Mapping codes -> labels lisibles
     DOC_LABELS = {
@@ -2810,16 +2901,32 @@ async def process_manual(
     # 1) TRAITEMENT DES PIÈCES JOINTES (ALIGNÉ WEBHOOK)
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
-
     if req.attachments:
-        uploads_dir = Path("uploads")
-        uploads_dir.mkdir(exist_ok=True)
-
         for att in req.attachments:
             try:
                 # bytes brutes
                 file_data = base64.b64decode(att.content_base64)
+
+                # 🔍 Empreinte pour éviter les doublons
+                file_hash = hashlib.sha256(file_data).hexdigest()
+
+                existing_file = (
+                    db.query(FileAnalysis)
+                    .filter(
+                        FileAnalysis.agency_id == agency_id,
+                        FileAnalysis.file_hash == file_hash,
+                    )
+                    .first()
+                )
+                if existing_file:
+                    attachment_file_ids.append(existing_file.id)
+                    attachment_summary_text += (
+                        f"- PJ: {att.filename} ({existing_file.file_type or 'Document'})\n"
+                    )
+                    continue
+
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
+
 
                 # temporaire clair pour IA
                 tmp_path = uploads_dir / f"tmp_{safe_filename}"
@@ -2855,6 +2962,7 @@ async def process_manual(
                     summary=str(doc_analysis.get("summary", "Reçu manuellement")),
                     owner_id=current_user.id,
                     agency_id=agency_id,
+                    file_hash=file_hash,
                 )
                 db.add(new_file)
                 db.commit()
@@ -3010,12 +3118,37 @@ async def analyze_file(
     tmp_plain_path = uploads_dir / f"tmp_plain_{safe_name}"
 
     try:
-        # 1) Lire tout le contenu envoyé par l’utilisateur
+            # 1) Lire tout le contenu envoyé par l’utilisateur
         raw_bytes = await file.read()
+
+        # 🔍 Empreinte pour éviter les doublons (même fichier, même agence)
+        file_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+        # Si un document identique existe déjà pour cette agence, on le réutilise
+        existing = (
+            db.query(FileAnalysis)
+            .filter(
+                FileAnalysis.agency_id == current_user.agency_id,
+                FileAnalysis.file_hash == file_hash,
+            )
+            .first()
+        )
+        if existing:
+            # On renvoie un JSON cohérent avec ce que l'IA retournerait
+            return {
+                "type": existing.file_type or "Document",
+                "sender": existing.sender or "",
+                "date": existing.extracted_date or "",
+                "amount": existing.amount or "0",
+                "summary": existing.summary or "Document déjà analysé",
+                "file_analysis_id": existing.id,
+                "from_cache": True,
+            }
 
         # 2) Sauvegarder une copie TEMPORAIRE en clair pour l’IA
         with open(tmp_plain_path, "wb") as f:
             f.write(raw_bytes)
+
 
         # 3) Sauvegarder la version CHIFFRÉE sur le disque
         encrypted = encrypt_bytes(raw_bytes)
@@ -3038,6 +3171,7 @@ async def analyze_file(
             summary=str(data.get("summary", "Pas de résumé")),
             owner_id=current_user.id,
             agency_id=current_user.agency_id,
+            file_hash=file_hash,
         )
         db.add(new_analysis)
         db.commit()

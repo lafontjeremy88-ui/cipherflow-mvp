@@ -276,6 +276,10 @@ class FileAnalysis(Base):
 
     filename = Column(String)
     file_type = Column(String)
+    # Empreinte du fichier pour éviter les doublons
+    # (SHA-256 des octets du fichier en clair)
+    file_hash = Column(String, index=True, nullable=True)
+
 
     sender = Column(String)
     extracted_date = Column(String)
