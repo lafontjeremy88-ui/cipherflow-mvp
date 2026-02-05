@@ -19,35 +19,36 @@ from .database import Base
 # ============================================================
 # 🔹 ENUMS MÉTIER
 # ============================================================
-# Les enums permettent :
-# - d’éviter les strings "magiques"
-# - d’avoir des valeurs contrôlées
-# - de faciliter les évolutions futures
-# - d’être cohérent backend / frontend / IA
+# Les enums servent à :
+# - éviter les fautes de frappe (strings libres)
+# - garantir des valeurs cohérentes en base
+# - faciliter les règles métier et l’IA
+# - garder une cohérence backend / frontend / watcher / IA
+
 
 class UserRole(str, enum.Enum):
     """
-    Rôles applicatifs des utilisateurs.
+    Rôles possibles pour un utilisateur interne.
     """
-    SUPER_ADMIN = "super_admin"
-    AGENCY_ADMIN = "agency_admin"
-    AGENT = "agent"
+    SUPER_ADMIN = "super_admin"      # gestion globale (toi)
+    AGENCY_ADMIN = "agency_admin"    # admin d’agence
+    AGENT = "agent"                  # agent standard
 
 
 class TenantFileStatus(str, enum.Enum):
     """
     États possibles d’un dossier locataire.
     """
-    NEW = "new"                  # dossier créé, aucun document
+    NEW = "new"                  # dossier créé, aucun document reçu
     INCOMPLETE = "incomplete"    # documents manquants
-    TO_VALIDATE = "to_validate"  # dossier complet, attente validation humaine
-    VALIDATED = "validated"
-    REJECTED = "rejected"
+    TO_VALIDATE = "to_validate"  # complet, attente validation humaine
+    VALIDATED = "validated"      # validé
+    REJECTED = "rejected"        # rejeté
 
 
 class TenantDocType(str, enum.Enum):
     """
-    Types fonctionnels de documents locataires.
+    Typologie métier des documents locataires.
     """
     ID = "id"                    # pièce d'identité
     PAYSLIP = "payslip"          # fiche de paie
@@ -59,7 +60,7 @@ class TenantDocType(str, enum.Enum):
 
 class DocQuality(str, enum.Enum):
     """
-    Qualité estimée du document.
+    Qualité estimée d’un document après analyse.
     """
     OK = "ok"
     UNCLEAR = "unclear"
@@ -67,12 +68,12 @@ class DocQuality(str, enum.Enum):
 
 
 # ============================================================
-# 🏢 AGENCE / MULTI-TENANT SAAS
+# 🏢 AGENCE (MULTI-TENANT SAAS)
 # ============================================================
 
 class Agency(Base):
     """
-    Représente une agence / syndic cliente de CipherFlow.
+    Représente une agence ou un syndic client.
 
     RGPD :
     - Responsable de traitement
@@ -82,10 +83,11 @@ class Agency(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Nom affiché dans l’UI
+    # Nom affiché dans l’interface
     name = Column(String, unique=True, index=True, nullable=False)
 
-    # Alias email utilisé pour le routage (ex: contact+alias@cipherflow.io)
+    # Alias email pour le routage automatique
+    # ex: contact+agence123@cipherflow.io
     email_alias = Column(String, unique=True, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -113,11 +115,11 @@ class Agency(Base):
 
 class User(Base):
     """
-    Utilisateur interne d’une agence (agent, admin…).
+    Utilisateur interne d’une agence.
 
     RGPD :
     - Données minimales
-    - Pas de données client ici
+    - Pas de données locataire ici
     """
     __tablename__ = "users"
 
@@ -135,7 +137,7 @@ class User(Base):
 
     account_status = Column(String, default="active", nullable=False)
 
-    # Auth locale (hashé)
+    # Mot de passe hashé (jamais le brut)
     hashed_password = Column(String)
 
     # Vérification email
@@ -170,7 +172,7 @@ class User(Base):
 
 
 # ============================================================
-# 🔐 REFRESH TOKENS (SÉCURITÉ)
+# 🔐 REFRESH TOKENS (SÉCURITÉ SESSION)
 # ============================================================
 
 class RefreshToken(Base):
@@ -183,7 +185,7 @@ class RefreshToken(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
 
-    # Hash du token réel (jamais stocker le token brut)
+    # Hash du refresh token (jamais stocker le token brut)
     token_hash = Column(String, unique=True, index=True, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -214,7 +216,7 @@ class AppSettings(Base):
     signature = Column(String, default="Cordialement")
     logo = Column(Text, nullable=True)
 
-    # JSON des règles de conservation RGPD
+    # JSON de configuration RGPD (durées de conservation)
     retention_config_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -234,7 +236,7 @@ class AppSettings(Base):
 
 class EmailAnalysis(Base):
     """
-    Représente un email reçu + son traitement.
+    Représente un email reçu et son traitement (IA + métier).
     """
     __tablename__ = "email_analyses"
 
@@ -256,11 +258,11 @@ class EmailAnalysis(Base):
 
     raw_ai_output = Column(Text)
 
-    # Envoi
+    # Envoi de réponse
     reply_sent = Column(Boolean, default=False)
     reply_sent_at = Column(DateTime, nullable=True)
 
-    # 🔍 Filtrage watcher
+    # 🔍 Décision du watcher (avant IA)
     filter_decision = Column(String, nullable=True, index=True)
     filter_score = Column(Integer, nullable=True)
     filter_reasons = Column(Text, nullable=True)
@@ -293,7 +295,7 @@ class FileAnalysis(Base):
     filename = Column(String)
     file_type = Column(String)
 
-    # Empreinte SHA-256 pour anti-doublon
+    # Empreinte SHA-256 pour éviter les doublons
     file_hash = Column(String, index=True, nullable=True)
 
     sender = Column(String)
@@ -358,7 +360,7 @@ class TenantFile(Base):
 
 class TenantEmailLink(Base):
     """
-    Lien email ↔ dossier locataire.
+    Lien entre un email et un dossier locataire.
     """
     __tablename__ = "tenant_email_links"
 
@@ -374,7 +376,7 @@ class TenantEmailLink(Base):
 
 class TenantDocumentLink(Base):
     """
-    Lien document ↔ dossier locataire.
+    Lien entre un document et un dossier locataire.
     """
     __tablename__ = "tenant_document_links"
 
@@ -390,3 +392,24 @@ class TenantDocumentLink(Base):
 
     tenant_file = relationship("TenantFile", back_populates="document_links")
     file = relationship("FileAnalysis")
+
+
+# ============================================================
+# 💰 FACTURATION (OPTIONNEL / FUTUR)
+# ============================================================
+
+class Invoice(Base):
+    """
+    Facture liée à une agence.
+    (brique encore simple, prête à évoluer)
+    """
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=False)
+
+    reference = Column(String, nullable=True)
+    amount = Column(String, nullable=True)
+    issued_at = Column(DateTime, default=datetime.utcnow)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
