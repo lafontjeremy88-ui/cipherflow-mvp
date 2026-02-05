@@ -297,6 +297,13 @@ EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
 RESET_PASSWORD_EXPIRE_MINUTES = int(os.getenv("RESET_PASSWORD_EXPIRE_MINUTES", "30"))
 
 
+# ============================================================
+# LIMITES SÉCURITÉ (anti-abus / RGPD / infra)
+# ============================================================
+MAX_EMAIL_CONTENT_SIZE = 50_000        # ~50 KB texte
+MAX_ATTACHMENT_SIZE = 8 * 1024 * 1024  # 8 Mo par pièce jointe
+MAX_ATTACHMENTS_PER_EMAIL = 5
+
 # --- ENV & MODE RUNTIME ---
 # --- LOGGING CENTRALISÉ ---
 logger = logging.getLogger("cipherflow")
@@ -1176,6 +1183,10 @@ class EmailProcessRequest(BaseModel):
     content: str
     send_email: bool = False
     attachments: List[AttachmentModel] = []
+     # 🧠 Filtrage métier (venant du watcher)
+    filter_score: Optional[int] = None
+    filter_decision: Optional[str] = None
+    filter_reasons: Optional[List[str]] = None
 
 class EmailProcessResponse(BaseModel):
     analyse: EmailAnalyseResponse
@@ -1325,32 +1336,34 @@ class TenantFileDetail(BaseModel):
 # --- STARTUP ---
 @app.on_event("startup")
 def on_startup():
-    models.Base.metadata.create_all(bind=engine)
+    if not _is_prod():
+        # ✅ En DEV uniquement : création auto des tables
+        models.Base.metadata.create_all(bind=engine)
 
     if not os.path.exists("uploads"):
         os.makedirs("uploads")
 
-    # Création Super Admin par défaut
-    db = next(get_db())
-    try:
-        if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
-            # Créer Agence par défaut (Admin)
-            default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
-            db.add(default_agency)
-            db.commit()
-            db.refresh(default_agency)
+    # Création Super Admin par défaut (DEV / FIRST RUN)
+    if not _is_prod():
+        db = next(get_db())
+        try:
+            if not db.query(User).filter(User.email == "admin@cipherflow.com").first():
+                default_agency = Agency(name="CipherFlow HQ", email_alias="admin")
+                db.add(default_agency)
+                db.commit()
+                db.refresh(default_agency)
 
-            hashed = get_password_hash("admin123")
-            admin = User(
-                email="admin@cipherflow.com",
-                hashed_password=hashed,
-                role=UserRole.SUPER_ADMIN,
-                agency_id=default_agency.id,
-            )
-            db.add(admin)
-            db.commit()
-    finally:
-        db.close()   # ✅ LIGNE LA PLUS IMPORTANTE
+                admin = User(
+                    email="admin@cipherflow.com",
+                    hashed_password=get_password_hash("admin123"),
+                    role=UserRole.SUPER_ADMIN,
+                    agency_id=default_agency.id,
+                )
+                db.add(admin)
+                db.commit()
+        finally:
+            db.close()
+
 
 @app.on_event("startup")
 async def start_retention_worker():
@@ -1712,40 +1725,120 @@ async def webhook_process_email(
     db: Session = Depends(get_db),
     x_watcher_secret: str = Header(None),
 ):
-    # 0) Sécurité watcher
-    if (not x_watcher_secret) or (not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)):
+    # ============================================================
+    # 0) SÉCURITÉ WATCHER
+    # ============================================================
+    if (not x_watcher_secret) or (
+        not secrets.compare_digest(x_watcher_secret, WATCHER_SECRET)
+    ):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    # 1) IDENTIFIER L'AGENCE DESTINATAIRE (ROUTAGE MULTI-AGENCE)
-    target_agency = None
+    # 🔐 Sécurité : limiter taille du contenu email
+    if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
+        logger.warning("[SECURITY] Email content too large, truncated")
+        req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
 
+    # ============================================================
+    # 1) ROUTAGE MULTI-AGENCE
+    # ============================================================
+    target_agency = None
     recipient = req.to_email.lower().strip() if req.to_email else ""
+
     if not _is_prod():
         logger.info(f"📨 Routage pour le destinataire : {recipient}")
-
 
     if "+" in recipient:
         try:
             alias_part = recipient.split("+")[1].split("@")[0]
-            logger.info(f"🔎 Recherche de l'alias : {alias_part}")
-            target_agency = db.query(Agency).filter(Agency.email_alias == alias_part).first()
+            target_agency = (
+                db.query(Agency)
+                .filter(Agency.email_alias == alias_part)
+                .first()
+            )
         except Exception as e:
             logger.error(f"Alias error: {e}")
 
     if not target_agency:
-        logger.warning("⚠️ Pas d'alias détecté, routage vers l'agence par défaut (Fallback)")
+        logger.warning("⚠️ Pas d'alias détecté, fallback agence par défaut")
         target_agency = db.query(Agency).order_by(Agency.id.asc()).first()
-
 
     if not target_agency:
         raise HTTPException(500, "Aucune agence configurée.")
 
     agency_id = target_agency.id
-
     s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
     comp_name = s.company_name if s else target_agency.name
 
-    # 2) TRAITEMENT DES PIÈCES JOINTES (analyse + FileAnalysis)
+    # ============================================================
+# 🧠 BARRIÈRE MÉTIER (WATCHER)
+# ============================================================
+
+    if req.filter_decision == "ignore":
+        new_email = EmailAnalysis(
+            agency_id=agency_id,
+            sender_email=req.from_email,
+            subject=req.subject,
+            raw_email_text=req.content,
+            summary="Email ignoré par filtrage métier",
+            category="Autre",
+            urgency="Faible",
+            is_devis=False,
+            filter_score=req.filter_score,
+            filter_decision=req.filter_decision,
+            filter_reasons=json.dumps(req.filter_reasons or []),
+        )
+        db.add(new_email)
+        db.commit()
+        db.refresh(new_email)
+
+        return EmailProcessResponse(
+            analyse=EmailAnalyseResponse(
+                is_devis=False,
+                category="Autre",
+                urgency="Faible",
+                summary="Email ignoré par filtrage métier",
+                suggested_title=req.subject,
+            ),
+            reponse=EmailReplyResponse(reply="", subject=req.subject),
+            send_status="ignored_by_filter",
+            email_id=new_email.id,
+        )
+
+
+    elif req.filter_decision == "process_light":
+        new_email = EmailAnalysis(
+            agency_id=agency_id,
+            sender_email=req.from_email,
+            subject=req.subject,
+            raw_email_text=req.content,
+            summary="Email traité en mode léger (sans IA)",
+            category="Autre",
+            urgency="Faible",
+            is_devis=False,
+            filter_score=req.filter_score,
+            filter_decision=req.filter_decision,
+            filter_reasons=json.dumps(req.filter_reasons or []),
+        )
+        db.add(new_email)
+        db.commit()
+        db.refresh(new_email)
+
+        return EmailProcessResponse(
+            analyse=EmailAnalyseResponse(
+                is_devis=False,
+                category="Autre",
+                urgency="Faible",
+                summary="Email traité en mode léger",
+                suggested_title=req.subject,
+            ),
+            reponse=EmailReplyResponse(reply="", subject=req.subject),
+            send_status="light_processed",
+            email_id=new_email.id,
+        )
+
+    # ============================================================
+    # 2) TRAITEMENT DES PIÈCES JOINTES
+    # ============================================================
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
 
@@ -1753,15 +1846,26 @@ async def webhook_process_email(
         uploads_dir = Path("uploads")
         uploads_dir.mkdir(exist_ok=True)
 
+        # 🔐 Limite nombre PJ
+        if len(req.attachments) > MAX_ATTACHMENTS_PER_EMAIL:
+            logger.warning("[SECURITY] Trop de pièces jointes, limitation appliquée")
+            req.attachments = req.attachments[:MAX_ATTACHMENTS_PER_EMAIL]
+
         for att in req.attachments:
             try:
-                # 1) bytes brutes décodées du webhook
+                # 🔐 Limite taille PJ
+                raw_size = len(att.content_base64) * 3 // 4
+                if raw_size > MAX_ATTACHMENT_SIZE:
+                    logger.warning(
+                        f"[SECURITY] PJ ignorée (trop lourde): {att.filename}"
+                    )
+                    continue
+
+                # Décodage
                 file_data = base64.b64decode(att.content_base64)
 
-                # 🔍 Empreinte pour éviter les doublons
+                # 🔍 Anti-doublon par hash
                 file_hash = hashlib.sha256(file_data).hexdigest()
-
-                # Si le même fichier existe déjà → on le réutilise
                 existing_file = (
                     db.query(FileAnalysis)
                     .filter(
@@ -1770,6 +1874,7 @@ async def webhook_process_email(
                     )
                     .first()
                 )
+
                 if existing_file:
                     attachment_file_ids.append(existing_file.id)
                     attachment_summary_text += (
@@ -1779,54 +1884,54 @@ async def webhook_process_email(
 
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
 
-
-                # 2) chemin temporaire EN CLAIR pour l'analyse IA
+                # Temporaire clair (IA)
                 tmp_path = uploads_dir / f"tmp_{safe_filename}"
-
                 with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                # 3) analyse IA sur le fichier clair
-                doc_analysis = await analyze_document_logic(str(tmp_path), safe_filename)
+                # Analyse IA
+                doc_analysis = await analyze_document_logic(
+                    str(tmp_path), safe_filename
+                )
 
-                # 4) on chiffre le contenu pour stockage long terme
+                # Stockage chiffré
                 encrypted_bytes = encrypt_bytes(file_data)
                 final_path = uploads_dir / safe_filename
-
                 with open(final_path, "wb") as f:
                     f.write(encrypted_bytes)
 
-                # 5) on supprime le temporaire en clair
                 try:
                     os.remove(tmp_path)
                 except FileNotFoundError:
                     pass
 
-                if doc_analysis:
-                    new_file = FileAnalysis(
-                        filename=safe_filename,
-                        file_type=str(doc_analysis.get("type", "Autre")),
-                        sender=str(doc_analysis.get("sender", req.from_email)),
-                        extracted_date=str(doc_analysis.get("date", "")),
-                        amount=str(doc_analysis.get("amount", "0")),
-                        summary=str(doc_analysis.get("summary", "Reçu par email")),
-                        owner_id=None,
-                        agency_id=agency_id,
-                        file_hash=file_hash,  # 👈
-                    )
+                new_file = FileAnalysis(
+                    filename=safe_filename,
+                    file_type=str(doc_analysis.get("type", "Autre")) if doc_analysis else "Autre",
+                    sender=req.from_email,
+                    extracted_date=str(doc_analysis.get("date", "")) if doc_analysis else "",
+                    amount=str(doc_analysis.get("amount", "0")) if doc_analysis else "0",
+                    summary=str(doc_analysis.get("summary", "Reçu par email")) if doc_analysis else "Reçu par email",
+                    owner_id=None,
+                    agency_id=agency_id,
+                    file_hash=file_hash,
+                )
 
-                    db.add(new_file)
-                    db.commit()
-                    db.refresh(new_file)
+                db.add(new_file)
+                db.commit()
+                db.refresh(new_file)
 
-                    attachment_file_ids.append(new_file.id)
-                    attachment_summary_text += f"- PJ: {att.filename} ({doc_analysis.get('type')})\n"
+                attachment_file_ids.append(new_file.id)
+                attachment_summary_text += (
+                    f"- PJ: {att.filename} ({new_file.file_type})\n"
+                )
+
             except Exception as e:
-                logger.error(f"Erreur PJ: {e}")
+                logger.error(f"Erreur PJ ({att.filename}): {e}")
 
-
-    # 3) ANALYSE IA DE L'EMAIL
-
+    # ============================================================
+    # 3) ANALYSE IA EMAIL
+    # ============================================================
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(
             from_email=req.from_email,
@@ -1839,71 +1944,52 @@ async def webhook_process_email(
         attachment_summary=attachment_summary_text,
     )
 
-    # 3.bis – CONTEXTE DOSSIER LOCATAIRE POUR LA RÉPONSE
-    tenant_status_for_reply: Optional[str] = None
+    # ============================================================
+    # 4) CONTEXTE DOSSIER LOCATAIRE
+    # ============================================================
+    tenant_status_for_reply = None
     missing_docs_for_reply: List[str] = []
     duplicate_docs_for_reply: List[str] = []
 
     try:
-        # On cherche OU crée le dossier en fonction de l'email candidat
-        candidate_email = (req.from_email or "").strip().lower()
         tf = ensure_tenant_file_for_email(
             db=db,
             agency_id=agency_id,
-            email_address=candidate_email,
+            email_address=req.from_email.lower(),
         )
 
-        checklist: Optional[dict] = None
-        duplicate_codes: List[str] = []
-
         if tf:
-            # On attache les PJ au dossier (anti-doublons inclus)
             if attachment_file_ids:
-                attach_result = attach_files_to_tenant_file(db, tf, attachment_file_ids)
-
-                # 🟢 ICI ON ALIMENTE CE QUI PARTIRA DANS req.missing_docs / req.duplicate_docs
+                attach_result = attach_files_to_tenant_file(
+                    db, tf, attachment_file_ids
+                )
                 checklist = attach_result.get("checklist") or {}
                 duplicate_codes = attach_result.get("duplicate_doc_types") or []
             else:
-                # Pas de nouvelles PJ : on recalcule l'état du dossier existant
                 checklist = recompute_tenant_file_status(db, tf)
                 duplicate_codes = []
 
-            # Mapping codes -> labels lisibles pour l'email
             DOC_LABELS = {
                 "id": "Pièce d'identité",
                 "payslip": "Bulletin de paie",
                 "tax": "Avis d'imposition",
             }
 
-            missing_codes = (checklist.get("missing") or []) if checklist else []
-            missing_docs_for_reply = [DOC_LABELS.get(code, code) for code in missing_codes]
-            duplicate_docs_for_reply = [DOC_LABELS.get(code, code) for code in duplicate_codes]
+            missing_docs_for_reply = [
+                DOC_LABELS.get(c, c) for c in checklist.get("missing", [])
+            ]
+            duplicate_docs_for_reply = [
+                DOC_LABELS.get(c, c) for c in duplicate_codes
+            ]
 
-            # Statut dossier lisible
-            raw_status = (tf.status.value if hasattr(tf.status, "value") else str(tf.status)).lower()
-            if "new" in raw_status:
-                tenant_status_for_reply = "Nouveau dossier (aucun document enregistré)."
-            elif "incomplete" in raw_status:
-                tenant_status_for_reply = "Dossier incomplet."
-            elif "to_validate" in raw_status:
-                tenant_status_for_reply = "Dossier complet, en attente de validation."
-            elif "complete" in raw_status:
-                tenant_status_for_reply = "Dossier complet et validé."
-            else:
-                tenant_status_for_reply = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
-
-        else:
-            # Pas de dossier exploitable
-            checklist = None
-            duplicate_codes = []
-            tenant_status_for_reply = None
+            tenant_status_for_reply = tf.status.value
 
     except Exception as e:
-        logger.error(f"⚠️ Contexte dossier pour la réponse: {e}")
-    
+        logger.error(f"Contexte dossier locataire: {e}")
 
-    # 4) GÉNÉRATION DE LA RÉPONSE (AVEC missing_docs / duplicate_docs)
+    # ============================================================
+    # 5) GÉNÉRATION RÉPONSE
+    # ============================================================
     reponse = await generate_reply_logic(
         EmailReplyRequest(
             from_email=req.from_email,
@@ -1914,14 +2000,16 @@ async def webhook_process_email(
             urgency=analyse.urgency,
             tenant_status=tenant_status_for_reply,
             missing_docs=missing_docs_for_reply,
-            duplicate_docs=duplicate_docs_for_reply,  # 🟢 ICI → arrive dans req.duplicate_docs
+            duplicate_docs=duplicate_docs_for_reply,
         ),
         comp_name,
         s.tone if s else "pro",
         s.signature if s else "Team",
     )
 
-    # 5) ENREGISTREMENT DE L'EMAIL EN BASE
+    # ============================================================
+    # 6) ENREGISTREMENT EMAIL
+    # ============================================================
     new_email = EmailAnalysis(
         agency_id=agency_id,
         sender_email=req.from_email,
@@ -1934,39 +2022,24 @@ async def webhook_process_email(
         suggested_title=analyse.suggested_title,
         suggested_response_text=reponse.reply,
         raw_ai_output=analyse.raw_ai_text,
+        filter_score=req.filter_score,
+        filter_decision=req.filter_decision,
+        filter_reasons=json.dumps(req.filter_reasons or []),
     )
     db.add(new_email)
     db.commit()
     db.refresh(new_email)
 
-    # 6) LIEN EMAIL ↔ DOSSIER LOCATAIRE SI tf EXISTE
-    try:
-        candidate_email = (req.from_email or "").strip().lower()
-        tf = ensure_tenant_file_for_email(
-            db=db,
-            agency_id=agency_id,
-            email_address=candidate_email,
-        )
-        if tf:
-            ensure_email_link(
-                db=db,
-                tenant_file_id=tf.id,
-                email_analysis_id=new_email.id,
-            )
-    except Exception as e:
-        print(f"⚠️ Lien email ↔ dossier locataire: {e}")
-
-    # 7) ENVOI EFFECTIF DE L'EMAIL (si demandé)
-    sent = "sent" if req.send_email else "not_sent"
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
 
     return EmailProcessResponse(
         analyse=analyse,
         reponse=reponse,
-        send_status=sent,
+        send_status="sent" if req.send_email else "not_sent",
         email_id=new_email.id,
     )
+
 # ============================================================
 # --- ROUTES DASHBOARD & DATA (PROTEGEES PAR AGENCE) ---
 # (reste inchangé)
@@ -2741,6 +2814,12 @@ async def delete_my_account(
     current_user: User = Depends(get_current_user_db),
 ):
     agency_id = current_user.agency_id
+
+    # 🔐 Sécurité : limiter taille du contenu email
+    if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
+        logger.warning("[SECURITY] Email content too large, truncated")
+        req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
+
 
     # --- suppression simple : utilisateur uniquement ---
     if mode == "account" or not agency_id:

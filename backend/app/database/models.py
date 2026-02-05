@@ -17,8 +17,10 @@ from .database import Base
 
 
 # ============================================================
-# 🔹 ENUMS
+# 🔹 ENUMS MÉTIER
 # ============================================================
+# → Permettent d'éviter les chaînes magiques
+# → Facilitent la validation, la lisibilité et l'évolution
 
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "super_admin"
@@ -27,58 +29,67 @@ class UserRole(str, enum.Enum):
 
 
 class TenantFileStatus(str, enum.Enum):
-    NEW = "new"
-    INCOMPLETE = "incomplete"
-    TO_VALIDATE = "to_validate"
+    """
+    États possibles d’un dossier locataire
+    """
+    NEW = "new"                  # dossier créé, aucun document
+    INCOMPLETE = "incomplete"    # documents manquants
+    TO_VALIDATE = "to_validate"  # dossier complet, en attente validation humaine
     VALIDATED = "validated"
     REJECTED = "rejected"
 
 
 class TenantDocType(str, enum.Enum):
-    ID = "id"  # CNI / Passeport
-    PAYSLIP = "payslip"  # Fiche de paie
-    TAX = "tax"  # Avis d'imposition
+    """
+    Types fonctionnels de documents locataires
+    """
+    ID = "id"
+    PAYSLIP = "payslip"
+    TAX = "tax"
     WORK_CONTRACT = "work_contract"
-    BANK = "bank"  # RIB / relevé
+    BANK = "bank"
     OTHER = "other"
 
 
 class DocQuality(str, enum.Enum):
+    """
+    Qualité estimée du document (IA ou humain)
+    """
     OK = "ok"
     UNCLEAR = "unclear"
     INVALID = "invalid"
 
 
 # ============================================================
-# 🔹 CORE SAAS MODELS
+# 🏢 AGENCE / SAAS MULTI-TENANT
 # ============================================================
 
 class Agency(Base):
     """
+    Représente une agence / syndic cliente de CipherFlow.
+
     RGPD :
-    - Données : infos d'identification de l'agence / syndic.
-    - Finalité : gestion du compte client (responsable de traitement).
-    - Base légale : exécution du contrat (SaaS).
-    - Conservation : pendant la relation contractuelle + quelques années (à définir au niveau contrat).
+    - Responsable de traitement
+    - Contient uniquement des données professionnelles
     """
     __tablename__ = "agencies"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # ✅ Petite amélioration : nullable=False (une agence doit avoir un nom)
+    # Nom affiché dans l'interface
     name = Column(String, unique=True, index=True, nullable=False)
+
+    # Alias email pour le routage (ex: contact+alias@cipherflow.io)
+    email_alias = Column(String, unique=True, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    # ✅ Identifiant pour le routage email
-    email_alias = Column(String, unique=True, nullable=True, index=True)
 
     # Relations
     users = relationship("User", back_populates="agency")
     settings = relationship("AppSettings", back_populates="agency", uselist=False)
 
-    # ✅ Gestion locative
+    # Dossiers locataires gérés par l'agence
     tenant_files = relationship(
         "TenantFile",
         back_populates="agency",
@@ -86,22 +97,25 @@ class Agency(Base):
     )
 
 
+# ============================================================
+# 👤 UTILISATEURS
+# ============================================================
+
 class User(Base):
     """
+    Utilisateur de la plateforme (employé d'agence).
+
     RGPD :
-    - Données : email pro, nom/prénom, préférences UI, statut de compte.
-    - Finalité : gestion des accès à la plateforme pour le compte du client (agence/syndic).
-    - Base légale : exécution du contrat (compte utilisateur).
-    - Conservation : pendant la durée du contrat + délai de prescription (à préciser dans contrat).
+    - Données strictement nécessaires à l'authentification
     """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # ✅ Petite amélioration : nullable=False (un user doit avoir un email)
+    # Email = identifiant de connexion
     email = Column(String, unique=True, index=True, nullable=False)
 
-    # ✅ Profil
+    # Infos facultatives
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
 
@@ -109,29 +123,30 @@ class User(Base):
     ui_prefs_json = Column(Text, nullable=True)
 
     account_status = Column(String, default="active", nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # ⚠️ On laisse tel quel (si tu as des users Google sans password, il faudra gérer ça à part)
+    # Auth locale
     hashed_password = Column(String)
 
-    # ✅ Email verification (UNIQUE, pas en double)
+    # Vérification email
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verification_token_hash = Column(String, nullable=True, index=True)
     email_verification_expires_at = Column(DateTime, nullable=True)
 
-    # ✅ Password reset (forgot/reset password)
+    # Reset password
     reset_password_token_hash = Column(String, nullable=True, index=True)
     reset_password_expires_at = Column(DateTime, nullable=True)
     reset_password_used_at = Column(DateTime, nullable=True)
 
+    # Rattachement agence
     agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=True)
-
-    # ✅ On garde String pour éviter migration / changement de type DB
     role = Column(String, default=UserRole.AGENT.value)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     agency = relationship("Agency", back_populates="users")
 
+    # Tokens de session (refresh tokens)
     refresh_tokens = relationship(
         "RefreshToken",
         back_populates="user",
@@ -139,19 +154,25 @@ class User(Base):
     )
 
 
+# ============================================================
+# 🔐 REFRESH TOKENS (SECURITÉ)
+# ============================================================
+
 class RefreshToken(Base):
     """
+    Stockage sécurisé des sessions utilisateur.
+
     RGPD :
-    - Données : hash de refresh token, horodatages, statut.
-    - Finalité : gestion sécurisée des sessions (authentification).
-    - Base légale : intérêt légitime (sécurisation des accès).
-    - Conservation : durée de vie technique du token + logs de sécurité (à définir).
+    - données techniques
+    - pas de données personnelles en clair
     """
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+
+    # Hash SHA-256 du token réel (jamais stocker le token brut)
     token_hash = Column(String, unique=True, index=True, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -163,14 +184,13 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 
+# ============================================================
+# ⚙️ PARAMÈTRES APPLICATION (PAR AGENCE)
+# ============================================================
+
 class AppSettings(Base):
     """
-    RGPD :
-    - Données : paramètres fonctionnels & UI au niveau agence.
-    - Finalité : personnalisation du service pour le compte du client.
-    - Base légale : exécution du contrat.
-    - Conservation : pendant la durée du contrat.
-    - Inclut un champ JSON pour configurer les durées de conservation (retention_config_json).
+    Configuration fonctionnelle et RGPD par agence.
     """
     __tablename__ = "app_settings"
 
@@ -178,47 +198,42 @@ class AppSettings(Base):
     agency_id = Column(Integer, ForeignKey("agencies.id"), unique=True)
 
     company_name = Column(String, default="Ma Société")
-    agent_name = Column(String, default="L'Assistant")
+    agent_name = Column(String, default="Assistant IA")
     tone = Column(String, default="pro")
     signature = Column(String, default="Cordialement")
     logo = Column(Text, nullable=True)
 
-    # ✅ Timestamps de configuration
+    # Configuration RGPD (durées de conservation)
+    retention_config_json = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    # ✅ Configuration RGPD : durées de conservation par type de donnée (JSON)
-    # Exemple:
-    # {
-    #   "emails_days": 365,
-    #   "tenant_files_days_after_closure": 1825,
-    #   "uploads_days": 180
-    # }
-    retention_config_json = Column(Text, nullable=True)
 
     agency = relationship("Agency", back_populates="settings")
 
 
+# ============================================================
+# 🧠 EMAIL ANALYSIS (AVEC FILTRAGE WATCHER)
+# ============================================================
+
 class EmailAnalysis(Base):
     """
-    RGPD :
-    - Données : contenu d'email, résumé, classification IA.
-    - Finalité : aide à la gestion des emails pour le compte de l'agence/syndic.
-    - Base légale : exécution du contrat avec les clients finaux (via le syndic).
-    - Conservation : limitée dans le temps ; possibilité de supprimer le corps tout en gardant les stats.
+    Représente un email reçu + son traitement.
+
+    Peut exister même si :
+    - l'email est ignoré
+    - aucune réponse n'est envoyée
     """
     __tablename__ = "email_analyses"
 
     id = Column(Integer, primary_key=True, index=True)
-
     agency_id = Column(Integer, ForeignKey("agencies.id"), index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     sender_email = Column(String)
     subject = Column(String)
     raw_email_text = Column(Text)
 
+    # Résultat IA
     is_devis = Column(Boolean, default=False)
     category = Column(String)
     urgency = Column(String)
@@ -228,44 +243,37 @@ class EmailAnalysis(Base):
     suggested_response_text = Column(Text)
 
     raw_ai_output = Column(Text)
+
+    # Envoi effectif
     reply_sent = Column(Boolean, default=False)
-    # ✅ Nullable=True car une analyse peut exister sans qu'une réponse ait été envoyée
     reply_sent_at = Column(DateTime, nullable=True)
 
+    # ====================================================
+    # 🧠 FILTRAGE MÉTIER (WATCHER)
+    # ====================================================
+    # Décision AVANT IA :
+    # - ignore
+    # - process_light
+    # - process_full
+    filter_decision = Column(String, nullable=True, index=True)
 
-class Invoice(Base):
-    """
-    RGPD :
-    - Données : facturation, identifiants de clients, montants.
-    - Finalité : gestion comptable et facturation.
-    - Base légale : obligation légale + exécution du contrat.
-    - Conservation : en général 10 ans pour la comptabilité (à confirmer avec l'expert comptable).
-    """
-    __tablename__ = "invoices"
+    # Score explicable (0–100)
+    filter_score = Column(Integer, nullable=True)
 
-    id = Column(Integer, primary_key=True, index=True)
-
-    agency_id = Column(Integer, ForeignKey("agencies.id"), index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"))
-
-    reference = Column(String, index=True)
-    client_name = Column(String)
-    amount_total = Column(String)
-    date_issued = Column(DateTime, default=datetime.utcnow, nullable=False)
-    items_json = Column(Text)
+    # Raisons humaines (JSON string)
+    filter_reasons = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+# ============================================================
+# 📄 DOCUMENTS ANALYSÉS
+# ============================================================
+
 class FileAnalysis(Base):
     """
-    RGPD :
-    - Données : métadonnées de documents analysés (souvent très sensibles :
-      fiches de paie, avis d'imposition, etc.).
-    - Finalité : aide à l'analyse des documents locataires.
-    - Base légale : exécution du contrat (gestion locative).
-    - Conservation : limitée au strict nécessaire (période à définir puis purge).
+    Métadonnées des documents (les fichiers eux-mêmes sont chiffrés sur disque).
     """
     __tablename__ = "file_analyses"
 
@@ -276,10 +284,9 @@ class FileAnalysis(Base):
 
     filename = Column(String)
     file_type = Column(String)
-    # Empreinte du fichier pour éviter les doublons
-    # (SHA-256 des octets du fichier en clair)
-    file_hash = Column(String, index=True, nullable=True)
 
+    # Empreinte SHA-256 pour anti-doublon
+    file_hash = Column(String, index=True, nullable=True)
 
     sender = Column(String)
     extracted_date = Column(String)
@@ -291,41 +298,34 @@ class FileAnalysis(Base):
 
 
 # ============================================================
-# 🔹 GESTION LOCATIVE — DOSSIER LOCATAIRE
+# 🗂️ DOSSIER LOCATAIRE
 # ============================================================
 
 class TenantFile(Base):
     """
-    RGPD :
-    - Données : infos locataire (nom, email, statut du dossier, risque, check-list).
-    - Finalité : gestion du dossier locataire pour le compte de l'agence/syndic.
-    - Base légale : exécution du contrat de location / gestion locative.
-    - Conservation : tant que le dossier est actif, puis X années après la clôture
-      (champ is_closed/closed_at pour déclencher la conservation post-contractuelle).
+    Dossier locataire regroupant emails et documents.
     """
     __tablename__ = "tenant_files"
 
     id = Column(Integer, primary_key=True, index=True)
     agency_id = Column(Integer, ForeignKey("agencies.id"), index=True, nullable=False)
 
-    # Métier
     status = Column(Enum(TenantFileStatus), default=TenantFileStatus.NEW, nullable=False)
+
     candidate_email = Column(String, index=True, nullable=True)
     candidate_name = Column(String, nullable=True)
 
-    # Checklist & risque (JSON string pour rester simple)
-    checklist_json = Column(Text, nullable=True)  # ex: {"missing":["tax"],"received":["id"]}
-    risk_level = Column(String, nullable=True)  # "low" / "medium" / "high"
+    checklist_json = Column(Text, nullable=True)
+    risk_level = Column(String, nullable=True)
+
+    is_closed = Column(Boolean, default=False, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # ✅ Clôture du dossier (pour les règles de conservation)
-    is_closed = Column(Boolean, default=False, nullable=False)
-    closed_at = Column(DateTime, nullable=True)
-
-    # Relations
     agency = relationship("Agency", back_populates="tenant_files")
+
     email_links = relationship(
         "TenantEmailLink",
         back_populates="tenant_file",
@@ -340,10 +340,7 @@ class TenantFile(Base):
 
 class TenantEmailLink(Base):
     """
-    RGPD :
-    - Données : lien entre un email et un dossier locataire.
-    - Finalité : traçabilité des échanges pour la gestion du dossier.
-    - Conservation : alignée sur celle du TenantFile lié.
+    Lien email ↔ dossier locataire.
     """
     __tablename__ = "tenant_email_links"
 
@@ -359,10 +356,7 @@ class TenantEmailLink(Base):
 
 class TenantDocumentLink(Base):
     """
-    RGPD :
-    - Données : lien entre un document analysé et un dossier locataire (type, qualité, notes).
-    - Finalité : gestion et validation des pièces du dossier locataire.
-    - Conservation : alignée sur celle du TenantFile et des règles de conservation des documents.
+    Lien document ↔ dossier locataire.
     """
     __tablename__ = "tenant_document_links"
 
