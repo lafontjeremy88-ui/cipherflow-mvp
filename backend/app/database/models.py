@@ -19,10 +19,16 @@ from .database import Base
 # ============================================================
 # 🔹 ENUMS MÉTIER
 # ============================================================
-# → Permettent d'éviter les chaînes magiques
-# → Facilitent la validation, la lisibilité et l'évolution
+# Les enums permettent :
+# - d’éviter les strings "magiques"
+# - d’avoir des valeurs contrôlées
+# - de faciliter les évolutions futures
+# - d’être cohérent backend / frontend / IA
 
 class UserRole(str, enum.Enum):
+    """
+    Rôles applicatifs des utilisateurs.
+    """
     SUPER_ADMIN = "super_admin"
     AGENCY_ADMIN = "agency_admin"
     AGENT = "agent"
@@ -30,30 +36,30 @@ class UserRole(str, enum.Enum):
 
 class TenantFileStatus(str, enum.Enum):
     """
-    États possibles d’un dossier locataire
+    États possibles d’un dossier locataire.
     """
     NEW = "new"                  # dossier créé, aucun document
     INCOMPLETE = "incomplete"    # documents manquants
-    TO_VALIDATE = "to_validate"  # dossier complet, en attente validation humaine
+    TO_VALIDATE = "to_validate"  # dossier complet, attente validation humaine
     VALIDATED = "validated"
     REJECTED = "rejected"
 
 
 class TenantDocType(str, enum.Enum):
     """
-    Types fonctionnels de documents locataires
+    Types fonctionnels de documents locataires.
     """
-    ID = "id"
-    PAYSLIP = "payslip"
-    TAX = "tax"
+    ID = "id"                    # pièce d'identité
+    PAYSLIP = "payslip"          # fiche de paie
+    TAX = "tax"                  # avis d'imposition
     WORK_CONTRACT = "work_contract"
-    BANK = "bank"
+    BANK = "bank"                # RIB / relevé bancaire
     OTHER = "other"
 
 
 class DocQuality(str, enum.Enum):
     """
-    Qualité estimée du document (IA ou humain)
+    Qualité estimée du document.
     """
     OK = "ok"
     UNCLEAR = "unclear"
@@ -61,7 +67,7 @@ class DocQuality(str, enum.Enum):
 
 
 # ============================================================
-# 🏢 AGENCE / SAAS MULTI-TENANT
+# 🏢 AGENCE / MULTI-TENANT SAAS
 # ============================================================
 
 class Agency(Base):
@@ -70,26 +76,30 @@ class Agency(Base):
 
     RGPD :
     - Responsable de traitement
-    - Contient uniquement des données professionnelles
+    - Données strictement professionnelles
     """
     __tablename__ = "agencies"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Nom affiché dans l'interface
+    # Nom affiché dans l’UI
     name = Column(String, unique=True, index=True, nullable=False)
 
-    # Alias email pour le routage (ex: contact+alias@cipherflow.io)
+    # Alias email utilisé pour le routage (ex: contact+alias@cipherflow.io)
     email_alias = Column(String, unique=True, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
     # Relations
     users = relationship("User", back_populates="agency")
     settings = relationship("AppSettings", back_populates="agency", uselist=False)
 
-    # Dossiers locataires gérés par l'agence
     tenant_files = relationship(
         "TenantFile",
         back_populates="agency",
@@ -103,19 +113,20 @@ class Agency(Base):
 
 class User(Base):
     """
-    Utilisateur de la plateforme (employé d'agence).
+    Utilisateur interne d’une agence (agent, admin…).
 
     RGPD :
-    - Données strictement nécessaires à l'authentification
+    - Données minimales
+    - Pas de données client ici
     """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Email = identifiant de connexion
+    # Email = identifiant principal
     email = Column(String, unique=True, index=True, nullable=False)
 
-    # Infos facultatives
+    # Profil facultatif
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
 
@@ -124,7 +135,7 @@ class User(Base):
 
     account_status = Column(String, default="active", nullable=False)
 
-    # Auth locale
+    # Auth locale (hashé)
     hashed_password = Column(String)
 
     # Vérification email
@@ -137,16 +148,20 @@ class User(Base):
     reset_password_expires_at = Column(DateTime, nullable=True)
     reset_password_used_at = Column(DateTime, nullable=True)
 
-    # Rattachement agence
+    # Lien agence
     agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=True)
     role = Column(String, default=UserRole.AGENT.value)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
     agency = relationship("Agency", back_populates="users")
 
-    # Tokens de session (refresh tokens)
     refresh_tokens = relationship(
         "RefreshToken",
         back_populates="user",
@@ -155,16 +170,12 @@ class User(Base):
 
 
 # ============================================================
-# 🔐 REFRESH TOKENS (SECURITÉ)
+# 🔐 REFRESH TOKENS (SÉCURITÉ)
 # ============================================================
 
 class RefreshToken(Base):
     """
-    Stockage sécurisé des sessions utilisateur.
-
-    RGPD :
-    - données techniques
-    - pas de données personnelles en clair
+    Gestion sécurisée des sessions utilisateur.
     """
     __tablename__ = "refresh_tokens"
 
@@ -172,7 +183,7 @@ class RefreshToken(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
 
-    # Hash SHA-256 du token réel (jamais stocker le token brut)
+    # Hash du token réel (jamais stocker le token brut)
     token_hash = Column(String, unique=True, index=True, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -190,7 +201,7 @@ class RefreshToken(Base):
 
 class AppSettings(Base):
     """
-    Configuration fonctionnelle et RGPD par agence.
+    Paramétrage fonctionnel et RGPD par agence.
     """
     __tablename__ = "app_settings"
 
@@ -203,11 +214,16 @@ class AppSettings(Base):
     signature = Column(String, default="Cordialement")
     logo = Column(Text, nullable=True)
 
-    # Configuration RGPD (durées de conservation)
+    # JSON des règles de conservation RGPD
     retention_config_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
     agency = relationship("Agency", back_populates="settings")
 
@@ -219,10 +235,6 @@ class AppSettings(Base):
 class EmailAnalysis(Base):
     """
     Représente un email reçu + son traitement.
-
-    Peut exister même si :
-    - l'email est ignoré
-    - aucune réponse n'est envoyée
     """
     __tablename__ = "email_analyses"
 
@@ -244,27 +256,22 @@ class EmailAnalysis(Base):
 
     raw_ai_output = Column(Text)
 
-    # Envoi effectif
+    # Envoi
     reply_sent = Column(Boolean, default=False)
     reply_sent_at = Column(DateTime, nullable=True)
 
-    # ====================================================
-    # 🧠 FILTRAGE MÉTIER (WATCHER)
-    # ====================================================
-    # Décision AVANT IA :
-    # - ignore
-    # - process_light
-    # - process_full
+    # 🔍 Filtrage watcher
     filter_decision = Column(String, nullable=True, index=True)
-
-    # Score explicable (0–100)
     filter_score = Column(Integer, nullable=True)
-
-    # Raisons humaines (JSON string)
     filter_reasons = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
 
 # ============================================================
@@ -273,7 +280,8 @@ class EmailAnalysis(Base):
 
 class FileAnalysis(Base):
     """
-    Métadonnées des documents (les fichiers eux-mêmes sont chiffrés sur disque).
+    Métadonnées des documents analysés.
+    Les fichiers réels sont chiffrés sur disque.
     """
     __tablename__ = "file_analyses"
 
@@ -294,7 +302,12 @@ class FileAnalysis(Base):
     summary = Column(Text)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
 
 # ============================================================
@@ -322,7 +335,12 @@ class TenantFile(Base):
     closed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
     agency = relationship("Agency", back_populates="tenant_files")
 
