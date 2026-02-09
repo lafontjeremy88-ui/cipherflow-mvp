@@ -1912,7 +1912,7 @@ async def webhook_process_email(
                     else:
                         logger.info(
                             "[PJ-FILTER] PJ existante analysée mais NON rattachée "
-                            f"(doc_type={doc_type_code}, file_id={existing_file.id})"
+                            f"(doc_type={doc_type_code})"
                         )
                     continue
 
@@ -1973,7 +1973,7 @@ async def webhook_process_email(
                 else:
                     logger.info(
                         "[PJ-FILTER] PJ analysée mais NON rattachée au dossier locataire "
-                        f"(doc_type={doc_type_code}, file_id={new_file.id})"
+                        f"(doc_type={doc_type_code})"
                     )
 
             except Exception as e:
@@ -1995,47 +1995,52 @@ async def webhook_process_email(
     )
 
     # ============================================================
-    # 4) CONTEXTE DOSSIER LOCATAIRE
+    # 4) CONTEXTE DOSSIER LOCATAIRE (BARRIÈRE MÉTIER CLÉ)
     # ============================================================
     tenant_status_for_reply = None
     missing_docs_for_reply: List[str] = []
     duplicate_docs_for_reply: List[str] = []
 
-    try:
-        tf = ensure_tenant_file_for_email(
-            db=db,
-            agency_id=agency_id,
-            email_address=req.from_email.lower(),
-        )
+    is_locative_email = analyse.category == "Candidature"
 
-        if tf:
-            if attachment_file_ids:
-                attach_result = attach_files_to_tenant_file(
-                    db, tf, attachment_file_ids
-                )
-                checklist = attach_result.get("checklist") or {}
-                duplicate_codes = attach_result.get("duplicate_doc_types") or []
-            else:
-                checklist = recompute_tenant_file_status(db, tf)
-                duplicate_codes = []
+    if not is_locative_email:
+        logger.info("[BUSINESS] Email non locatif → aucun dossier locataire créé")
+    else:
+        try:
+            tf = ensure_tenant_file_for_email(
+                db=db,
+                agency_id=agency_id,
+                email_address=req.from_email.lower(),
+            )
 
-            DOC_LABELS = {
-                "id": "Pièce d'identité",
-                "payslip": "Bulletin de paie",
-                "tax": "Avis d'imposition",
-            }
+            if tf:
+                if attachment_file_ids:
+                    attach_result = attach_files_to_tenant_file(
+                        db, tf, attachment_file_ids
+                    )
+                    checklist = attach_result.get("checklist") or {}
+                    duplicate_codes = attach_result.get("duplicate_doc_types") or []
+                else:
+                    checklist = recompute_tenant_file_status(db, tf)
+                    duplicate_codes = []
 
-            missing_docs_for_reply = [
-                DOC_LABELS.get(c, c) for c in checklist.get("missing", [])
-            ]
-            duplicate_docs_for_reply = [
-                DOC_LABELS.get(c, c) for c in duplicate_codes
-            ]
+                DOC_LABELS = {
+                    "id": "Pièce d'identité",
+                    "payslip": "Bulletin de paie",
+                    "tax": "Avis d'imposition",
+                }
 
-            tenant_status_for_reply = tf.status.value
+                missing_docs_for_reply = [
+                    DOC_LABELS.get(c, c) for c in checklist.get("missing", [])
+                ]
+                duplicate_docs_for_reply = [
+                    DOC_LABELS.get(c, c) for c in duplicate_codes
+                ]
 
-    except Exception as e:
-        logger.error(f"Contexte dossier locataire: {e}")
+                tenant_status_for_reply = tf.status.value
+
+        except Exception as e:
+            logger.error(f"Contexte dossier locataire: {e}")
 
     # ============================================================
     # 5) GÉNÉRATION RÉPONSE
@@ -2053,8 +2058,8 @@ async def webhook_process_email(
             duplicate_docs=duplicate_docs_for_reply,
         ),
         comp_name,
-        s.tone if s else "pro",
-        s.signature if s else "Team",
+        settings.tone if settings else "pro",
+        settings.signature if settings else "Team",
     )
 
     # ============================================================
@@ -2089,6 +2094,7 @@ async def webhook_process_email(
         send_status="sent" if req.send_email else "not_sent",
         email_id=new_email.id,
     )
+
 
 # ============================================================
 # --- ROUTES DASHBOARD & DATA (PROTEGEES PAR AGENCE) ---
