@@ -3528,49 +3528,44 @@ async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current
     return {"status": "deleted"}
 
 @app.get("/api/files/view/{file_id}")
-async def view_file(
+def view_file(
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_db),
+    user=Depends(get_current_user),
 ):
-    f = (
+    file = (
         db.query(FileAnalysis)
-        .filter(
-            FileAnalysis.id == file_id,
-            FileAnalysis.agency_id == current_user.agency_id
-        )
+        .filter(FileAnalysis.id == file_id)
         .first()
     )
 
-    if not f:
-        raise HTTPException(404, detail="Fichier introuvable ou accès refusé")
+    if not file:
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
 
-    path = f"uploads/{f.filename}"
-    if not os.path.exists(path):
-        raise HTTPException(404, detail="Fichier introuvable")
+    file_path = Path("uploads") / file.filename
 
-    with open(path, "rb") as f:
-        encrypted = f.read()
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier manquant sur le disque")
 
-    decrypted = decrypt_bytes(encrypted)
+    try:
+        encrypted_bytes = file_path.read_bytes()
+        decrypted_bytes = decrypt_bytes(encrypted_bytes)
+    except Exception as e:
+        logger.error(f"[FILES] Erreur déchiffrement fichier {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lecture fichier")
 
-    filename = f.filename.lower()
+    # ✅ MIME depuis le NOM DU FICHIER (PAS depuis f)
+    mime_type, _ = mimetypes.guess_type(file.filename)
+    mime_type = mime_type or "application/octet-stream"
 
-    mime = "application/octet-stream"
-    if filename.endswith(".pdf"):
-        mime = "application/pdf"
-    elif filename.endswith((".jpg", ".jpeg")):
-        mime = "image/jpeg"
-    elif filename.endswith(".png"):
-        mime = "image/png"
-
-    return Response(
-        content=decrypted,
-        media_type=mime,
+    return StreamingResponse(
+        io.BytesIO(decrypted_bytes),
+        media_type=mime_type,
         headers={
-            "Content-Disposition": f'inline; filename="{f.filename}"'
+            "Content-Disposition": f'inline; filename="{file.filename}"'
         },
     )
+
 
 
 
