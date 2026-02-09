@@ -3558,19 +3558,19 @@ def view_file(
         logger.error(f"[FILES] Erreur déchiffrement fichier {file_id}: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture fichier")
 
-  # Détermination du MIME type à partir du nom du fichier
+# Détermination du MIME type à partir du nom du fichier
     mime_type, _ = mimetypes.guess_type(file.filename)
     if not mime_type:
         mime_type = "application/octet-stream"
 
-
     return Response(
-    content=decrypted_bytes,
-    media_type=mime_type,
-    headers={
-        "Content-Disposition": f'inline; filename="{file.filename}"'
-    },
-)
+        content=decrypted_bytes,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{file.filename}"'
+        },
+    )
+
 
 
 
