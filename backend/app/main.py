@@ -3559,8 +3559,7 @@ def view_file(
         raise HTTPException(status_code=500, detail="Erreur lecture fichier")
 
   # Détermination du MIME type à partir du nom du fichier
-    mime_type, _ = mimetypes.guess_type(file.original_filename)
-
+    mime_type, _ = mimetypes.guess_type(file.filename)
     if not mime_type:
         mime_type = "application/octet-stream"
 
