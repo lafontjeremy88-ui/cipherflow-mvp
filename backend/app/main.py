@@ -1904,7 +1904,7 @@ async def webhook_process_email(
                 if existing_file:
                     doc_type_code = map_doc_type(existing_file.file_type or "")
 
-                    if should_attach_to_tenant_file(doc_type_code):
+                    if is_relevant_for_tenant_file(doc_type_code):
                         attachment_file_ids.append(existing_file.id)
                         attachment_summary_text += (
                             f"- PJ: {att.filename} ({existing_file.file_type})\n"
@@ -1965,7 +1965,7 @@ async def webhook_process_email(
 
                 doc_type_code = map_doc_type(new_file.file_type or "")
 
-                if should_attach_to_tenant_file(doc_type_code):
+                if is_relevant_for_tenant_file(doc_type_code):
                     attachment_file_ids.append(new_file.id)
                     attachment_summary_text += (
                         f"- PJ: {att.filename} ({new_file.file_type})\n"
