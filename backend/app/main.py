@@ -552,6 +552,17 @@ def map_doc_type(raw: str) -> str:
 
     return DocType.OTHER.value
 
+def is_relevant_for_tenant_file(doc_type: str) -> bool:
+    """
+    Décide si un document peut être rattaché à un dossier locataire.
+    """
+    return doc_type in {
+        DocType.ID.value,
+        DocType.PAYSLIP.value,
+        DocType.TAX.value,
+    }
+
+
 def guess_label_from_filename(filename: str) -> str:
     """
     Fallback quand l'IA doc plante :
@@ -814,6 +825,29 @@ def attach_files_to_tenant_file(
         "duplicate_doc_types": duplicate_types,
         "checklist": checklist,
     }
+
+def detect_file_kind(filename: str, content_type: str | None = None) -> str:
+    """
+    Retourne : 'pdf' | 'image' | 'unsupported'
+    """
+    name = (filename or "").lower()
+
+    if name.endswith(".pdf"):
+        return "pdf"
+
+    if name.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        return "image"
+
+    # fallback MIME si fourni
+    if content_type:
+        ct = content_type.lower()
+        if ct == "application/pdf":
+            return "pdf"
+        if ct.startswith("image/"):
+            return "image"
+
+    return "unsupported"
+
 
 # --- IA LOGIQUE ---
 async def analyze_document_logic(file_path: str, filename: str):
@@ -1733,7 +1767,7 @@ async def webhook_process_email(
     ):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    # 🔐 Sécurité : limiter taille du contenu email
+    # 🔐 Limite taille email
     if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
         logger.warning("[SECURITY] Email content too large, truncated")
         req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
@@ -1741,11 +1775,8 @@ async def webhook_process_email(
     # ============================================================
     # 1) ROUTAGE MULTI-AGENCE
     # ============================================================
-    target_agency = None
     recipient = req.to_email.lower().strip() if req.to_email else ""
-
-    if not _is_prod():
-        logger.info(f"📨 Routage pour le destinataire : {recipient}")
+    target_agency = None
 
     if "+" in recipient:
         try:
@@ -1766,13 +1797,16 @@ async def webhook_process_email(
         raise HTTPException(500, "Aucune agence configurée.")
 
     agency_id = target_agency.id
-    s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
-    comp_name = s.company_name if s else target_agency.name
+    settings = (
+        db.query(AppSettings)
+        .filter(AppSettings.agency_id == agency_id)
+        .first()
+    )
+    comp_name = settings.company_name if settings else target_agency.name
 
     # ============================================================
-# 🧠 BARRIÈRE MÉTIER (WATCHER)
-# ============================================================
-
+    # 🧠 BARRIÈRE MÉTIER (WATCHER)
+    # ============================================================
     if req.filter_decision == "ignore":
         new_email = EmailAnalysis(
             agency_id=agency_id,
@@ -1804,14 +1838,13 @@ async def webhook_process_email(
             email_id=new_email.id,
         )
 
-
     elif req.filter_decision == "process_light":
         new_email = EmailAnalysis(
             agency_id=agency_id,
             sender_email=req.from_email,
             subject=req.subject,
             raw_email_text=req.content,
-            summary="Email traité en mode léger (sans IA)",
+            summary="Email traité en mode léger",
             category="Autre",
             urgency="Faible",
             is_devis=False,
@@ -1846,26 +1879,19 @@ async def webhook_process_email(
         uploads_dir = Path("uploads")
         uploads_dir.mkdir(exist_ok=True)
 
-        # 🔐 Limite nombre PJ
         if len(req.attachments) > MAX_ATTACHMENTS_PER_EMAIL:
             logger.warning("[SECURITY] Trop de pièces jointes, limitation appliquée")
             req.attachments = req.attachments[:MAX_ATTACHMENTS_PER_EMAIL]
 
         for att in req.attachments:
             try:
-                # 🔐 Limite taille PJ
                 raw_size = len(att.content_base64) * 3 // 4
                 if raw_size > MAX_ATTACHMENT_SIZE:
-                    logger.warning(
-                        f"[SECURITY] PJ ignorée (trop lourde): {att.filename}"
-                    )
                     continue
 
-                # Décodage
                 file_data = base64.b64decode(att.content_base64)
-
-                # 🔍 Anti-doublon par hash
                 file_hash = hashlib.sha256(file_data).hexdigest()
+
                 existing_file = (
                     db.query(FileAnalysis)
                     .filter(
@@ -1876,25 +1902,41 @@ async def webhook_process_email(
                 )
 
                 if existing_file:
-                    attachment_file_ids.append(existing_file.id)
-                    attachment_summary_text += (
-                        f"- PJ: {att.filename} ({existing_file.file_type or 'Document'})\n"
-                    )
+                    doc_type_code = map_doc_type(existing_file.file_type or "")
+
+                    if should_attach_to_tenant_file(doc_type_code):
+                        attachment_file_ids.append(existing_file.id)
+                        attachment_summary_text += (
+                            f"- PJ: {att.filename} ({existing_file.file_type})\n"
+                        )
+                    else:
+                        logger.info(
+                            "[PJ-FILTER] PJ existante analysée mais NON rattachée "
+                            f"(doc_type={doc_type_code}, file_id={existing_file.id})"
+                        )
                     continue
 
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
-
-                # Temporaire clair (IA)
                 tmp_path = uploads_dir / f"tmp_{safe_filename}"
+
                 with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                # Analyse IA
-                doc_analysis = await analyze_document_logic(
-                    str(tmp_path), safe_filename
-                )
+                file_kind = detect_file_kind(att.filename, att.content_type)
+                doc_analysis = None
 
-                # Stockage chiffré
+                if file_kind == "pdf":
+                    doc_analysis = await analyze_document_logic(
+                        str(tmp_path), safe_filename
+                    )
+                elif file_kind == "image":
+                    doc_analysis = {
+                        "type": "Document",
+                        "summary": "Image reçue (OCR en cours)",
+                        "date": "",
+                        "amount": "0",
+                    }
+
                 encrypted_bytes = encrypt_bytes(file_data)
                 final_path = uploads_dir / safe_filename
                 with open(final_path, "wb") as f:
@@ -1921,13 +1963,21 @@ async def webhook_process_email(
                 db.commit()
                 db.refresh(new_file)
 
-                attachment_file_ids.append(new_file.id)
-                attachment_summary_text += (
-                    f"- PJ: {att.filename} ({new_file.file_type})\n"
-                )
+                doc_type_code = map_doc_type(new_file.file_type or "")
+
+                if should_attach_to_tenant_file(doc_type_code):
+                    attachment_file_ids.append(new_file.id)
+                    attachment_summary_text += (
+                        f"- PJ: {att.filename} ({new_file.file_type})\n"
+                    )
+                else:
+                    logger.info(
+                        "[PJ-FILTER] PJ analysée mais NON rattachée au dossier locataire "
+                        f"(doc_type={doc_type_code}, file_id={new_file.id})"
+                    )
 
             except Exception as e:
-                logger.error(f"Erreur PJ ({att.filename}): {e}")
+                logger.error(f"Erreur PJ: {e}")
 
     # ============================================================
     # 3) ANALYSE IA EMAIL
@@ -2980,6 +3030,12 @@ async def process_manual(
     # 1) TRAITEMENT DES PIÈCES JOINTES (ALIGNÉ WEBHOOK)
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
+
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+
+
+
     if req.attachments:
         for att in req.attachments:
             try:
@@ -2998,11 +3054,21 @@ async def process_manual(
                     .first()
                 )
                 if existing_file:
-                    attachment_file_ids.append(existing_file.id)
-                    attachment_summary_text += (
-                        f"- PJ: {att.filename} ({existing_file.file_type or 'Document'})\n"
-                    )
+                    doc_type_code = map_doc_type(existing_file.file_type or "")
+
+                    if is_relevant_for_tenant_file(doc_type_code):
+                        attachment_file_ids.append(existing_file.id)
+                        attachment_summary_text += (
+                            f"- PJ: {att.filename} ({existing_file.file_type or 'Document'})\n"
+                        )
+                    else:
+                        logger.info(
+                            f"[FILTER][MANUAL] PJ ignorée pour dossier locataire (déjà existante): "
+                            f"{att.filename} (type={doc_type_code})"
+                        )
+
                     continue
+
 
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
 
@@ -3012,8 +3078,32 @@ async def process_manual(
                 with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                # analyse IA
-                doc_analysis = await analyze_document_logic(str(tmp_path), safe_filename) or {}
+                file_kind = detect_file_kind(att.filename, att.content_type)
+
+                if file_kind == "unsupported":
+                    logger.warning(f"[ATTACHMENT] Format ignoré: {att.filename}")
+                    continue
+
+                doc_analysis = None
+
+                if file_kind == "pdf":
+                    doc_analysis = await analyze_document_logic(
+                        str(tmp_path), safe_filename
+                    )
+
+                elif file_kind == "image":
+                    # OCR image (texte brut, pas analyse métier)
+                    try:
+                        doc_analysis = {
+                            "type": "Document",
+                            "summary": "Image reçue (OCR en cours)",
+                            "date": "",
+                            "amount": "0",
+                        }
+                    except Exception as e:
+                        logger.warning(f"OCR image failed {att.filename}: {e}")
+                        continue
+
 
                 # stockage chiffré
                 encrypted_bytes = encrypt_bytes(file_data)
@@ -3047,8 +3137,19 @@ async def process_manual(
                 db.commit()
                 db.refresh(new_file)
 
-                attachment_file_ids.append(new_file.id)
-                attachment_summary_text += f"- PJ: {att.filename} ({raw_type})\n"
+                doc_type_code = map_doc_type(new_file.file_type or "")
+
+                if is_relevant_for_tenant_file(doc_type_code):
+                    attachment_file_ids.append(new_file.id)
+                    attachment_summary_text += (
+                        f"- PJ: {att.filename} ({new_file.file_type})\n"
+                    )
+                else:
+                    logger.info(
+                        f"[FILTER][MANUAL] PJ ignorée pour dossier locataire: "
+                        f"{att.filename} (type={doc_type_code})"
+                    )
+
 
             except Exception as e:
                 logger.error(f"Erreur PJ manual: {e}")
