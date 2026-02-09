@@ -1994,13 +1994,14 @@ async def webhook_process_email(
         attachment_summary=attachment_summary_text,
     )
 
-    # ============================================================
+        # ============================================================
     # 4) CONTEXTE DOSSIER LOCATAIRE (BARRIÈRE MÉTIER CLÉ)
     # ============================================================
     tenant_status_for_reply = None
     missing_docs_for_reply: List[str] = []
     duplicate_docs_for_reply: List[str] = []
 
+    # 🔒 Barrière métier : uniquement les emails locatifs
     is_locative_email = analyse.category == "Candidature"
 
     if not is_locative_email:
@@ -3553,11 +3554,24 @@ async def view_file(
 
     decrypted = decrypt_bytes(encrypted)
 
+    filename = f.filename.lower()
+
+    mime = "application/octet-stream"
+    if filename.endswith(".pdf"):
+        mime = "application/pdf"
+    elif filename.endswith((".jpg", ".jpeg")):
+        mime = "image/jpeg"
+    elif filename.endswith(".png"):
+        mime = "image/png"
+
     return Response(
         content=decrypted,
-        media_type="application/pdf",  # ou image/*
-        headers={"Content-Disposition": "inline"},
-    )    
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'inline; filename="{f.filename}"'
+        },
+    )
+
 
 
 @app.get("/api/files/download/{file_id}")
