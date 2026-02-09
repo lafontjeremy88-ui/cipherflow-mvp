@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from enum import Enum
 from fastapi.security import OAuth2PasswordRequestForm
-
+import mimetypes
 from PIL import Image
 import resend
 from jose import jwt, JWTError
@@ -39,7 +39,7 @@ from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi import Request
-
+from fastapi.responses import StreamingResponse 
 from google import genai
 
 # Imports internes
@@ -3531,11 +3531,15 @@ async def delete_invoice(invoice_id: int, db: Session = Depends(get_db), current
 def view_file(
     file_id: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
 ):
     file = (
         db.query(FileAnalysis)
-        .filter(FileAnalysis.id == file_id)
+        .filter(
+            FileAnalysis.id == file_id,
+            FileAnalysis.agency_id == current_user.agency_id,
+        )
+
         .first()
     )
 
@@ -3554,17 +3558,20 @@ def view_file(
         logger.error(f"[FILES] Erreur déchiffrement fichier {file_id}: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture fichier")
 
-    # ✅ MIME depuis le NOM DU FICHIER (PAS depuis f)
-    mime_type, _ = mimetypes.guess_type(file.filename)
-    mime_type = mime_type or "application/octet-stream"
+  # Détermination du MIME type à partir du nom du fichier
+    mime_type, _ = mimetypes.guess_type(file.original_filename)
 
-    return StreamingResponse(
-        io.BytesIO(decrypted_bytes),
-        media_type=mime_type,
-        headers={
-            "Content-Disposition": f'inline; filename="{file.filename}"'
-        },
-    )
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+
+    return Response(
+    content=decrypted,
+    media_type=mime_type,
+    headers={
+        "Content-Disposition": f'inline; filename="{file.original_filename}"'
+    },
+)
 
 
 
