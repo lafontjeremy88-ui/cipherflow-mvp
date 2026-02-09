@@ -3565,10 +3565,10 @@ def view_file(
 
 
     return Response(
-    content=decrypted,
+    content=decrypted_bytes,
     media_type=mime_type,
     headers={
-        "Content-Disposition": f'inline; filename="{file.original_filename}"'
+        "Content-Disposition": f'inline; filename="{file.filename}"'
     },
 )
 
@@ -3603,7 +3603,7 @@ async def download_file(
     decrypted = decrypt_bytes(encrypted)
 
     return Response(
-        content=decrypted,
+        content=decrypted_bytes,
         media_type="application/pdf",  # ou image/*
         headers={"Content-Disposition": "inline"},
     )   
