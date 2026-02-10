@@ -1957,7 +1957,7 @@ async def webhook_process_email(
         urgency=analyse.urgency,
         summary=analyse.summary,
         suggested_title=analyse.suggested_title,
-        suggested_response_text=analyse.suggested_response_text,
+        suggested_response_text=reponse.reply,
         raw_ai_output=analyse.raw_ai_text,
         filter_score=req.filter_score,
         filter_decision=req.filter_decision,
