@@ -3585,7 +3585,7 @@ async def download_file(
         db.query(FileAnalysis)
         .filter(
             FileAnalysis.id == file_id,
-            FileAnalysis.agency_id == current_user.agency_id
+            FileAnalysis.agency_id == current_user.agency_id,
         )
         .first()
     )
@@ -3597,16 +3597,19 @@ async def download_file(
     if not os.path.exists(path):
         raise HTTPException(404, detail="Fichier introuvable")
 
-    with open(path, "rb") as f:
-        encrypted = f.read()
+    with open(path, "rb") as fh:
+        encrypted = fh.read()
 
     decrypted = decrypt_bytes(encrypted)
 
     return Response(
-        content=decrypted_bytes,
-        media_type="application/pdf",  # ou image/*
-        headers={"Content-Disposition": "inline"},
-    )   
+        content=decrypted,  # ✅ BONNE variable
+        media_type="application/pdf",  # OK pour l’instant
+        headers={
+            "Content-Disposition": f'attachment; filename="{f.filename}"'
+        },
+    )
+
 
 
 @app.post("/email/send")
