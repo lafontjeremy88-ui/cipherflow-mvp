@@ -2979,22 +2979,21 @@ async def delete_my_account(
 # ===============================
 
 def auto_link_email_to_tenant_file(db: Session, email):
-    """
-    Liaison email → dossier locataire (ANTI-DOUBLON).
-    Passe obligatoirement par ensure_tenant_file_for_email.
-    """
     try:
         if not email or not email.agency_id:
             return
 
-        tf = ensure_tenant_file_for_email(
-            db=db,
-            agency_id=email.agency_id,
-            email_address=email.sender_email,
+        tf = (
+            db.query(TenantFile)
+            .filter(
+                TenantFile.agency_id == email.agency_id,
+                func.lower(TenantFile.candidate_email) == email.sender_email.lower(),
+            )
+            .first()
         )
 
         if not tf:
-            return
+            return  # ❗️ pas de création ici
 
         ensure_email_link(
             db=db,
@@ -3002,10 +3001,9 @@ def auto_link_email_to_tenant_file(db: Session, email):
             email_analysis_id=email.id,
         )
 
-        logger.info(f"[auto_link] email #{email.id} → dossier #{tf.id}")
-
     except Exception as e:
-        logger.error(f"[auto_link_email_to_tenant_file] ERROR: {e}")
+        logger.error(f"[auto_link_email_to_tenant_file] {e}")
+
 
 
 
