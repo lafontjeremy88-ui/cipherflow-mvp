@@ -1787,6 +1787,13 @@ async def webhook_process_email(
         logger.warning("[SECURITY] Email content too large, truncated")
         req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
 
+
+    reponse = EmailReplyResponse(
+    reply="",
+    subject=req.subject,
+)
+
+
     # ============================================================
     # 1) ROUTAGE MULTI-AGENCE
     # ============================================================
