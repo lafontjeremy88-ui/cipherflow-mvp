@@ -2014,35 +2014,34 @@ async def webhook_process_email(
 
             tenant_status_for_reply = tf.status.value
 
+    reponse = EmailReplyResponse(
+        reply="",
+        subject=req.subject,
+    )
+
+
     # ============================================================
     # 7) GÉNÉRATION RÉPONSE
     # ============================================================
-    reponse = await generate_reply_logic(
-        EmailReplyRequest(
-            from_email=req.from_email,
-            subject=req.subject,
-            content=req.content,
-            summary=analyse.summary,
-            category=analyse.category,
-            urgency=analyse.urgency,
-            tenant_status=tenant_status_for_reply,
-            missing_docs=missing_docs_for_reply,
-            duplicate_docs=duplicate_docs_for_reply,
-        ),
-        comp_name,
-        settings.tone if settings else "pro",
-        settings.signature if settings else "Team",
-    )
-
-    if req.send_email:
-        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-
-    return EmailProcessResponse(
-        analyse=analyse,
-        reponse=reponse,
-        send_status="sent" if req.send_email else "not_sent",
-        email_id=new_email.id,
-    )
+    try:
+        reponse = await generate_reply_logic(
+            EmailReplyRequest(
+                from_email=req.from_email,
+                subject=req.subject,
+                content=req.content,
+                summary=analyse.summary,
+                category=analyse.category,
+                urgency=analyse.urgency,
+                tenant_status=tenant_status_for_reply,
+                missing_docs=missing_docs_for_reply,
+                duplicate_docs=duplicate_docs_for_reply,
+            ),
+            comp_name,
+            settings.tone if settings else "pro",
+            settings.signature if settings else "Team",
+        )
+    except Exception as e:
+        logger.error(f"[REPLY-IA] Échec génération réponse : {e}")
 
 
 # ============================================================
