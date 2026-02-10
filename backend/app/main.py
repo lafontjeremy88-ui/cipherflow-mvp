@@ -560,7 +560,23 @@ def is_relevant_for_tenant_file(doc_type: str) -> bool:
         DocType.ID.value,
         DocType.PAYSLIP.value,
         DocType.TAX.value,
+        
     }
+def should_attach_to_tenant_file(analyse, attachment_file_ids: List[int]) -> bool:
+    """
+    Règle métier centrale :
+    - soit l'email est une candidature
+    - soit il contient des pièces locatives exploitables
+    """
+    # Cas 1 : on a des pièces locatives exploitables
+    if attachment_file_ids:
+        return True
+
+    # Cas 2 : l'IA classe explicitement en candidature
+    if analyse.category == "Candidature":
+        return True
+
+    return False
 
 
 def guess_label_from_filename(filename: str) -> str:
@@ -1767,7 +1783,6 @@ async def webhook_process_email(
     ):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    # 🔐 Limite taille email
     if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
         logger.warning("[SECURITY] Email content too large, truncated")
         req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
@@ -1805,15 +1820,15 @@ async def webhook_process_email(
     comp_name = settings.company_name if settings else target_agency.name
 
     # ============================================================
-    # 🧠 BARRIÈRE MÉTIER (WATCHER)
+    # 2) FILTRAGE MÉTIER SIMPLE
     # ============================================================
-    if req.filter_decision == "ignore":
+    if req.filter_decision in ("ignore", "process_light"):
         new_email = EmailAnalysis(
             agency_id=agency_id,
             sender_email=req.from_email,
             subject=req.subject,
             raw_email_text=req.content,
-            summary="Email ignoré par filtrage métier",
+            summary="Email ignoré ou traité en mode léger",
             category="Autre",
             urgency="Faible",
             is_devis=False,
@@ -1830,47 +1845,16 @@ async def webhook_process_email(
                 is_devis=False,
                 category="Autre",
                 urgency="Faible",
-                summary="Email ignoré par filtrage métier",
+                summary=new_email.summary,
                 suggested_title=req.subject,
             ),
             reponse=EmailReplyResponse(reply="", subject=req.subject),
-            send_status="ignored_by_filter",
-            email_id=new_email.id,
-        )
-
-    elif req.filter_decision == "process_light":
-        new_email = EmailAnalysis(
-            agency_id=agency_id,
-            sender_email=req.from_email,
-            subject=req.subject,
-            raw_email_text=req.content,
-            summary="Email traité en mode léger",
-            category="Autre",
-            urgency="Faible",
-            is_devis=False,
-            filter_score=req.filter_score,
-            filter_decision=req.filter_decision,
-            filter_reasons=json.dumps(req.filter_reasons or []),
-        )
-        db.add(new_email)
-        db.commit()
-        db.refresh(new_email)
-
-        return EmailProcessResponse(
-            analyse=EmailAnalyseResponse(
-                is_devis=False,
-                category="Autre",
-                urgency="Faible",
-                summary="Email traité en mode léger",
-                suggested_title=req.subject,
-            ),
-            reponse=EmailReplyResponse(reply="", subject=req.subject),
-            send_status="light_processed",
+            send_status=req.filter_decision,
             email_id=new_email.id,
         )
 
     # ============================================================
-    # 2) TRAITEMENT DES PIÈCES JOINTES
+    # 3) TRAITEMENT DES PIÈCES JOINTES
     # ============================================================
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
@@ -1879,16 +1863,8 @@ async def webhook_process_email(
         uploads_dir = Path("uploads")
         uploads_dir.mkdir(exist_ok=True)
 
-        if len(req.attachments) > MAX_ATTACHMENTS_PER_EMAIL:
-            logger.warning("[SECURITY] Trop de pièces jointes, limitation appliquée")
-            req.attachments = req.attachments[:MAX_ATTACHMENTS_PER_EMAIL]
-
-        for att in req.attachments:
+        for att in req.attachments[:MAX_ATTACHMENTS_PER_EMAIL]:
             try:
-                raw_size = len(att.content_base64) * 3 // 4
-                if raw_size > MAX_ATTACHMENT_SIZE:
-                    continue
-
                 file_data = base64.b64decode(att.content_base64)
                 file_hash = hashlib.sha256(file_data).hexdigest()
 
@@ -1903,17 +1879,9 @@ async def webhook_process_email(
 
                 if existing_file:
                     doc_type_code = map_doc_type(existing_file.file_type or "")
-
                     if is_relevant_for_tenant_file(doc_type_code):
                         attachment_file_ids.append(existing_file.id)
-                        attachment_summary_text += (
-                            f"- PJ: {att.filename} ({existing_file.file_type})\n"
-                        )
-                    else:
-                        logger.info(
-                            "[PJ-FILTER] PJ existante analysée mais NON rattachée "
-                            f"(doc_type={doc_type_code})"
-                        )
+                        attachment_summary_text += f"- PJ: {att.filename}\n"
                     continue
 
                 safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
@@ -1922,39 +1890,24 @@ async def webhook_process_email(
                 with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                file_kind = detect_file_kind(att.filename, att.content_type)
-                doc_analysis = None
-
-                if file_kind == "pdf":
-                    doc_analysis = await analyze_document_logic(
-                        str(tmp_path), safe_filename
-                    )
-                elif file_kind == "image":
-                    doc_analysis = {
-                        "type": "Document",
-                        "summary": "Image reçue (OCR en cours)",
-                        "date": "",
-                        "amount": "0",
-                    }
+                doc_analysis = await analyze_document_logic(
+                    str(tmp_path), safe_filename
+                )
 
                 encrypted_bytes = encrypt_bytes(file_data)
                 final_path = uploads_dir / safe_filename
                 with open(final_path, "wb") as f:
                     f.write(encrypted_bytes)
 
-                try:
-                    os.remove(tmp_path)
-                except FileNotFoundError:
-                    pass
+                os.remove(tmp_path)
 
                 new_file = FileAnalysis(
                     filename=safe_filename,
-                    file_type=str(doc_analysis.get("type", "Autre")) if doc_analysis else "Autre",
+                    file_type=doc_analysis.get("type", "Autre"),
                     sender=req.from_email,
-                    extracted_date=str(doc_analysis.get("date", "")) if doc_analysis else "",
-                    amount=str(doc_analysis.get("amount", "0")) if doc_analysis else "0",
-                    summary=str(doc_analysis.get("summary", "Reçu par email")) if doc_analysis else "Reçu par email",
-                    owner_id=None,
+                    extracted_date=str(doc_analysis.get("date", "")),
+                    amount=str(doc_analysis.get("amount", "0")),
+                    summary=str(doc_analysis.get("summary", "")),
                     agency_id=agency_id,
                     file_hash=file_hash,
                 )
@@ -1963,24 +1916,21 @@ async def webhook_process_email(
                 db.commit()
                 db.refresh(new_file)
 
-                doc_type_code = map_doc_type(new_file.file_type or "")
-
-                if is_relevant_for_tenant_file(doc_type_code):
+                if is_relevant_for_tenant_file(map_doc_type(new_file.file_type)):
                     attachment_file_ids.append(new_file.id)
-                    attachment_summary_text += (
-                        f"- PJ: {att.filename} ({new_file.file_type})\n"
-                    )
-                else:
-                    logger.info(
-                        "[PJ-FILTER] PJ analysée mais NON rattachée au dossier locataire "
-                        f"(doc_type={doc_type_code})"
-                    )
+                    attachment_summary_text += f"- PJ: {att.filename}\n"
 
             except Exception as e:
-                logger.error(f"Erreur PJ: {e}")
+                logger.error(f"[PJ] Erreur traitement PJ : {e}")
+
+    if not attachment_file_ids:
+        logger.info(
+            f"[ATTACH] Aucun document rattachable "
+            f"(email='{req.subject}', from={req.from_email})"
+        )
 
     # ============================================================
-    # 3) ANALYSE IA EMAIL
+    # 4) ANALYSE IA EMAIL
     # ============================================================
     analyse = await analyze_email_logic(
         EmailAnalyseRequest(
@@ -1994,57 +1944,78 @@ async def webhook_process_email(
         attachment_summary=attachment_summary_text,
     )
 
-        # ============================================================
-    # 4) CONTEXTE DOSSIER LOCATAIRE (BARRIÈRE MÉTIER CLÉ)
     # ============================================================
+    # 5) ENREGISTREMENT EMAIL (AVANT DOSSIER)
+    # ============================================================
+    new_email = EmailAnalysis(
+        agency_id=agency_id,
+        sender_email=req.from_email,
+        subject=req.subject,
+        raw_email_text=req.content,
+        is_devis=analyse.is_devis,
+        category=analyse.category,
+        urgency=analyse.urgency,
+        summary=analyse.summary,
+        suggested_title=analyse.suggested_title,
+        suggested_response_text=analyse.suggested_response_text,
+        raw_ai_output=analyse.raw_ai_text,
+        filter_score=req.filter_score,
+        filter_decision=req.filter_decision,
+        filter_reasons=json.dumps(req.filter_reasons or []),
+    )
+    db.add(new_email)
+    db.commit()
+    db.refresh(new_email)
+
+    # ============================================================
+    # 6) DOSSIER LOCATAIRE + LIENS
+    # ============================================================
+    tf = None
     tenant_status_for_reply = None
-    missing_docs_for_reply: List[str] = []
-    duplicate_docs_for_reply: List[str] = []
+    missing_docs_for_reply = []
+    duplicate_docs_for_reply = []
 
-    # 🔒 Barrière métier : uniquement les emails locatifs
-    is_locative_email = analyse.category == "Candidature"
+    if should_attach_to_tenant_file(analyse, attachment_file_ids):
+        tf = ensure_tenant_file_for_email(
+            db=db,
+            agency_id=agency_id,
+            email_address=req.from_email.lower(),
+        )
 
-    if not is_locative_email:
-        logger.info("[BUSINESS] Email non locatif → aucun dossier locataire créé")
-    else:
-        try:
-            tf = ensure_tenant_file_for_email(
+        if tf:
+            ensure_email_link(
                 db=db,
-                agency_id=agency_id,
-                email_address=req.from_email.lower(),
+                tenant_file_id=tf.id,
+                email_analysis_id=new_email.id,
             )
 
-            if tf:
-                if attachment_file_ids:
-                    attach_result = attach_files_to_tenant_file(
-                        db, tf, attachment_file_ids
-                    )
-                    checklist = attach_result.get("checklist") or {}
-                    duplicate_codes = attach_result.get("duplicate_doc_types") or []
-                else:
-                    checklist = recompute_tenant_file_status(db, tf)
-                    duplicate_codes = []
+            if attachment_file_ids:
+                attach_result = attach_files_to_tenant_file(
+                    db, tf, attachment_file_ids
+                )
+                checklist = attach_result.get("checklist", {})
+                duplicate_codes = attach_result.get("duplicate_doc_types", [])
+            else:
+                checklist = recompute_tenant_file_status(db, tf)
+                duplicate_codes = []
 
-                DOC_LABELS = {
-                    "id": "Pièce d'identité",
-                    "payslip": "Bulletin de paie",
-                    "tax": "Avis d'imposition",
-                }
+            DOC_LABELS = {
+                "id": "Pièce d'identité",
+                "payslip": "Bulletin de paie",
+                "tax": "Avis d'imposition",
+            }
 
-                missing_docs_for_reply = [
-                    DOC_LABELS.get(c, c) for c in checklist.get("missing", [])
-                ]
-                duplicate_docs_for_reply = [
-                    DOC_LABELS.get(c, c) for c in duplicate_codes
-                ]
+            missing_docs_for_reply = [
+                DOC_LABELS.get(c, c) for c in checklist.get("missing", [])
+            ]
+            duplicate_docs_for_reply = [
+                DOC_LABELS.get(c, c) for c in duplicate_codes
+            ]
 
-                tenant_status_for_reply = tf.status.value
-
-        except Exception as e:
-            logger.error(f"Contexte dossier locataire: {e}")
+            tenant_status_for_reply = tf.status.value
 
     # ============================================================
-    # 5) GÉNÉRATION RÉPONSE
+    # 7) GÉNÉRATION RÉPONSE
     # ============================================================
     reponse = await generate_reply_logic(
         EmailReplyRequest(
@@ -2062,29 +2033,6 @@ async def webhook_process_email(
         settings.tone if settings else "pro",
         settings.signature if settings else "Team",
     )
-
-    # ============================================================
-    # 6) ENREGISTREMENT EMAIL
-    # ============================================================
-    new_email = EmailAnalysis(
-        agency_id=agency_id,
-        sender_email=req.from_email,
-        subject=req.subject,
-        raw_email_text=req.content,
-        is_devis=analyse.is_devis,
-        category=analyse.category,
-        urgency=analyse.urgency,
-        summary=analyse.summary,
-        suggested_title=analyse.suggested_title,
-        suggested_response_text=reponse.reply,
-        raw_ai_output=analyse.raw_ai_text,
-        filter_score=req.filter_score,
-        filter_decision=req.filter_decision,
-        filter_reasons=json.dumps(req.filter_reasons or []),
-    )
-    db.add(new_email)
-    db.commit()
-    db.refresh(new_email)
 
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
