@@ -1013,12 +1013,33 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
 
     if req.tenant_status:
         try:
-            tenant_status_enum = TenantFileStatus(req.tenant_status)
+            normalized_status = req.tenant_status.strip().upper()
+            tenant_status_enum = TenantFileStatus(normalized_status)
         except Exception:
+            logger.warning(
+                f"[REPLY] Statut dossier inconnu reçu : {req.tenant_status}"
+            )
             tenant_status_enum = None
+
+    # ============================================================
+    # 1️⃣ EXTRACTION DES LISTES
+    # ============================================================
 
     missing = [d for d in (req.missing_docs or []) if d]
     duplicates = [d for d in (req.duplicate_docs or []) if d]
+
+    # ============================================================
+    # DEBUG (à supprimer après validation)
+    # ============================================================
+
+    logger.info(f"[REPLY DEBUG] raw status = {req.tenant_status}")
+    logger.info(f"[REPLY DEBUG] enum status = {tenant_status_enum}")
+    logger.info(f"[REPLY DEBUG] missing = {missing}")
+    logger.info(f"[REPLY DEBUG] duplicates = {duplicates}")
+
+    # ============================================================
+    # 2️⃣ DÉTERMINATION SI ON A DU CONTEXTE DOSSIER
+    # ============================================================
 
     has_dossier_info = (
         tenant_status_enum is not None
@@ -1027,17 +1048,21 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     )
 
     # ============================================================
-    # 1️⃣ LOGIQUE MÉTIER PRIORITAIRE (SANS IA)
+    # 3️⃣ LOGIQUE MÉTIER PRIORITAIRE (SANS IA)
     # ============================================================
 
     if has_dossier_info:
 
         # ----------------------------
-        # CAS DOSSIER INCOMPLET
+        # DOSSIER INCOMPLET
         # ----------------------------
         if tenant_status_enum == TenantFileStatus.INCOMPLETE:
 
-            missing_lines = "\n".join(f"- {d}" for d in missing)
+            missing_lines = ""
+            if missing:
+                missing_lines = "\n".join(f"- {d}" for d in missing)
+            else:
+                missing_lines = "Certaines pièces sont encore manquantes."
 
             dup_block = ""
             if duplicates:
@@ -1046,7 +1071,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                     "\n\nLes documents suivants que vous venez d'envoyer "
                     "étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
-                    "Ils ont bien été reçus, mais ne complètent pas les pièces manquantes."
+                    "Ils ont bien été reçus mais ne complètent pas les pièces manquantes."
                 )
 
             reply_text = (
@@ -1067,7 +1092,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             )
 
         # ----------------------------
-        # CAS DOSSIER COMPLET (à valider)
+        # DOSSIER COMPLET (À VALIDER)
         # ----------------------------
         if tenant_status_enum == TenantFileStatus.TO_VALIDATE:
 
@@ -1078,7 +1103,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                     "\n\nLes documents suivants que vous venez d'envoyer "
                     "étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
-                    "Ils ont bien été reçus, mais ne modifient pas l'état de votre dossier."
+                    "Ils ont bien été reçus mais ne modifient pas l'état du dossier."
                 )
 
             reply_text = (
@@ -1097,7 +1122,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             )
 
         # ----------------------------
-        # CAS DOSSIER VALIDÉ
+        # DOSSIER VALIDÉ
         # ----------------------------
         if tenant_status_enum == TenantFileStatus.VALIDATED:
 
@@ -1115,10 +1140,11 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             )
 
     # ============================================================
-    # 2️⃣ SINON -> LOGIQUE IA CLASSIQUE
+    # 4️⃣ SINON -> LOGIQUE IA CLASSIQUE
     # ============================================================
 
     dossier_context = ""
+
     if tenant_status_enum:
         dossier_context += f"\nStatut dossier : {tenant_status_enum.value}\n"
 
