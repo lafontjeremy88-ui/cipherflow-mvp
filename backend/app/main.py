@@ -1000,30 +1000,44 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     Génère la réponse email en tenant compte :
     - du contenu de l'email
     - du résumé IA / catégorie / urgence
-    - du statut du dossier locataire
+    - du statut du dossier locataire (Enum propre)
     - des pièces manquantes
     - des doublons éventuels
     """
 
     # ============================================================
-    # 0️⃣ LOGIQUE MÉTIER PRIORITAIRE (SANS IA si on a l'état dossier)
+    # 0️⃣ CONVERSION STATUT -> ENUM PROPRE
     # ============================================================
 
+    tenant_status_enum = None
+
+    if req.tenant_status:
+        try:
+            tenant_status_enum = TenantFileStatus(req.tenant_status)
+        except Exception:
+            tenant_status_enum = None
+
+    missing = [d for d in (req.missing_docs or []) if d]
+    duplicates = [d for d in (req.duplicate_docs or []) if d]
+
     has_dossier_info = (
-        req.tenant_status is not None
-        or (req.missing_docs and len(req.missing_docs) > 0)
-        or (req.duplicate_docs and len(req.duplicate_docs) > 0)
+        tenant_status_enum is not None
+        or len(missing) > 0
+        or len(duplicates) > 0
     )
+
+    # ============================================================
+    # 1️⃣ LOGIQUE MÉTIER PRIORITAIRE (SANS IA)
+    # ============================================================
 
     if has_dossier_info:
 
-        missing = [d for d in (req.missing_docs or []) if d]
-        duplicates = [d for d in (req.duplicate_docs or []) if d]
+        # ----------------------------
+        # CAS DOSSIER INCOMPLET
+        # ----------------------------
+        if tenant_status_enum == TenantFileStatus.INCOMPLETE:
 
-        # ===============================
-        # CAS 1 — DOSSIER COMPLET
-        # ===============================
-        if req.tenant_status and "complete" in req.tenant_status.lower():
+            missing_lines = "\n".join(f"- {d}" for d in missing)
 
             dup_block = ""
             if duplicates:
@@ -1032,15 +1046,17 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                     "\n\nLes documents suivants que vous venez d'envoyer "
                     "étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
-                    "Ils ont bien été reçus mais ne modifient pas l'état du dossier."
+                    "Ils ont bien été reçus, mais ne complètent pas les pièces manquantes."
                 )
 
             reply_text = (
                 "Bonjour,\n\n"
-                "Nous vous confirmons la bonne réception de vos documents. "
-                "Votre dossier est à ce jour complet et va être étudié par notre équipe."
+                "Nous vous confirmons la bonne réception de vos documents.\n\n"
+                "Cependant, votre dossier est encore incomplet.\n\n"
+                "Il nous manque encore les pièces suivantes :\n"
+                f"{missing_lines}"
                 f"{dup_block}\n\n"
-                "Nous reviendrons vers vous dès qu'une décision sera prise.\n\n"
+                "Merci de nous transmettre ces éléments afin de finaliser votre dossier.\n\n"
                 f"{signature}"
             )
 
@@ -1050,18 +1066,10 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                 raw_ai_text=None,
             )
 
-        # ===============================
-        # CAS 2 — DOSSIER INCOMPLET
-        # ===============================
-        if req.tenant_status and "incomplete" in req.tenant_status.lower():
-
-            missing_block = ""
-            if missing:
-                missing_lines = "\n".join(f"- {d}" for d in missing)
-                missing_block = (
-                    "\n\nIl nous manque encore les pièces suivantes :\n"
-                    f"{missing_lines}"
-                )
+        # ----------------------------
+        # CAS DOSSIER COMPLET (à valider)
+        # ----------------------------
+        if tenant_status_enum == TenantFileStatus.TO_VALIDATE:
 
             dup_block = ""
             if duplicates:
@@ -1070,15 +1078,33 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                     "\n\nLes documents suivants que vous venez d'envoyer "
                     "étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
-                    "Ils ne complètent pas les éléments encore manquants."
+                    "Ils ont bien été reçus, mais ne modifient pas l'état de votre dossier."
                 )
 
             reply_text = (
                 "Bonjour,\n\n"
-                "Nous vous confirmons la bonne réception de vos documents."
-                f"{missing_block}"
+                "Nous vous confirmons la bonne réception de vos documents.\n\n"
+                "Votre dossier est désormais complet et va être étudié par notre équipe."
                 f"{dup_block}\n\n"
-                "Merci de nous transmettre les éléments manquants afin de finaliser votre dossier.\n\n"
+                "Vous serez recontacté(e) dès qu'une décision sera prise.\n\n"
+                f"{signature}"
+            )
+
+            return EmailReplyResponse(
+                reply=reply_text,
+                subject=f"Re: {req.subject}",
+                raw_ai_text=None,
+            )
+
+        # ----------------------------
+        # CAS DOSSIER VALIDÉ
+        # ----------------------------
+        if tenant_status_enum == TenantFileStatus.VALIDATED:
+
+            reply_text = (
+                "Bonjour,\n\n"
+                "Votre dossier a déjà été validé par notre équipe.\n\n"
+                "Nous restons à votre disposition pour toute question complémentaire.\n\n"
                 f"{signature}"
             )
 
@@ -1089,72 +1115,58 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             )
 
     # ============================================================
-    # 1️⃣ SI PAS D'INFO DOSSIER → IA
+    # 2️⃣ SINON -> LOGIQUE IA CLASSIQUE
     # ============================================================
 
     dossier_context = ""
+    if tenant_status_enum:
+        dossier_context += f"\nStatut dossier : {tenant_status_enum.value}\n"
 
-    if req.tenant_status:
-        dossier_context += f"\n- Statut dossier : {req.tenant_status}"
+    if missing:
+        dossier_context += "Pièces manquantes :\n"
+        for doc in missing:
+            dossier_context += f"- {doc}\n"
 
-    if req.missing_docs:
-        dossier_context += "\n- Pièces manquantes :"
-        for doc in req.missing_docs:
-            dossier_context += f"\n  • {doc}"
-
-    if req.duplicate_docs:
-        dossier_context += "\n- Doublons détectés :"
-        for doc in req.duplicate_docs:
-            dossier_context += f"\n  • {doc}"
+    if duplicates:
+        dossier_context += "Pièces en doublon :\n"
+        for doc in duplicates:
+            dossier_context += f"- {doc}\n"
 
     prompt = (
         f"Tu es l'assistant de l'agence immobilière {company_name}.\n"
-        f"Ton ton d'écriture doit être : {tone}.\n\n"
+        f"Ton ton d'écriture : {tone}.\n"
+        f"Signature à utiliser :\n{signature}\n\n"
         f"Sujet : {req.subject}\n"
         f"Catégorie : {req.category}\n"
         f"Urgence : {req.urgency}\n"
         f"Résumé : {req.summary}\n"
-        f"Contenu brut :\n{req.content}\n\n"
-        f"Informations dossier :{dossier_context}\n\n"
-        f"OBJECTIF :\n"
-        f"- Répondre clairement au candidat.\n"
-        f"- Être professionnel, concis et bienveillant.\n"
-        f"- Si des pièces sont manquantes, les lister.\n"
-        f"- Utiliser la signature suivante :\n{signature}\n\n"
-        f"FORMAT DE SORTIE :\n"
-        f'{{ "reply": "...", "subject": "..." }}'
+        f"Contenu :\n{req.content}\n\n"
+        f"{dossier_context}\n\n"
+        "Retourne UNIQUEMENT un JSON valide :\n"
+        '{ "reply": "...", "subject": "..." }'
     )
 
-    try:
-        raw = await call_gemini(prompt)
-        data = extract_json_from_text(raw) or {}
+    raw = await call_gemini(prompt)
+    data = extract_json_from_text(raw) or {}
 
-        if data:
-            return EmailReplyResponse(
-                reply=data.get("reply", raw),
-                subject=data.get("subject", f"Re: {req.subject}"),
-                raw_ai_text=raw,
-            )
+    if not data:
+        fallback_reply = (
+            "Bonjour,\n\n"
+            "Nous avons bien reçu votre email.\n\n"
+            "Nous reviendrons vers vous dans les plus brefs délais.\n\n"
+            f"{signature}"
+        )
 
-    except Exception as e:
-        print(f"[IA ERROR] {e}")
-
-    # ============================================================
-    # 2️⃣ FALLBACK ULTRA SAFE
-    # ============================================================
-
-    fallback_reply = (
-        "Bonjour,\n\n"
-        "Nous avons bien reçu votre message et les éléments transmis. "
-        "Votre dossier est actuellement en cours de traitement.\n\n"
-        "Nous reviendrons vers vous si des informations complémentaires sont nécessaires.\n\n"
-        f"{signature}"
-    )
+        return EmailReplyResponse(
+            reply=fallback_reply,
+            subject=f"Re: {req.subject}",
+            raw_ai_text=raw,
+        )
 
     return EmailReplyResponse(
-        reply=fallback_reply,
-        subject=f"Re: {req.subject}",
-        raw_ai_text=None,
+        reply=data.get("reply", raw),
+        subject=data.get("subject", f"Re: {req.subject}"),
+        raw_ai_text=raw,
     )
 
 # --- CONFIG FASTAPI ---
