@@ -1000,68 +1000,74 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     Génère la réponse email en tenant compte :
     - du contenu de l'email
     - du résumé IA / catégorie / urgence
-    - du statut du dossier locataire (Enum robuste, insensible à la casse)
+    - du statut du dossier locataire
     - des pièces manquantes
     - des doublons éventuels
     """
 
     # ============================================================
-    # 0️⃣ CONVERSION STATUT -> ENUM ROBUSTE (INSENSIBLE À LA CASSE)
+    # 0️⃣ NORMALISATION ROBUSTE DU STATUT (INSENSIBLE À LA CASSE)
     # ============================================================
 
     tenant_status_enum = None
 
     if req.tenant_status:
         try:
+            normalized_status = req.tenant_status.strip().lower()
+
             tenant_status_enum = next(
-                s for s in TenantFileStatus
-                if s.value.lower() == req.tenant_status.strip().lower()
-            )
-        except StopIteration:
-            logger.warning(
-                f"[REPLY] Statut dossier inconnu reçu : {req.tenant_status}"
+                (
+                    status
+                    for status in TenantFileStatus
+                    if status.value.lower() == normalized_status
+                ),
+                None,
             )
 
+            if not tenant_status_enum:
+                logger.warning(
+                    f"[REPLY] Statut dossier inconnu reçu : {req.tenant_status}"
+                )
+
+        except Exception as e:
+            logger.warning(f"[REPLY] Erreur mapping statut : {e}")
+            tenant_status_enum = None
+
     # ============================================================
-    # 1️⃣ EXTRACTION & NETTOYAGE DES LISTES
+    # 1️⃣ EXTRACTION DES LISTES
     # ============================================================
 
     missing = [d for d in (req.missing_docs or []) if d]
     duplicates = [d for d in (req.duplicate_docs or []) if d]
 
     # ============================================================
-    # 2️⃣ CONTEXTE DOSSIER DISPONIBLE ?
+    # 2️⃣ CONTEXTE DOSSIER
     # ============================================================
 
     has_dossier_info = (
         tenant_status_enum is not None
-        or bool(missing)
-        or bool(duplicates)
+        or len(missing) > 0
+        or len(duplicates) > 0
     )
 
     # ============================================================
-    # 3️⃣ LOGIQUE MÉTIER PRIORITAIRE (SANS IA)
+    # 3️⃣ LOGIQUE MÉTIER PRIORITAIRE
     # ============================================================
 
     if has_dossier_info:
 
-        # =========================
+        # ----------------------------
         # DOSSIER INCOMPLET
-        # =========================
+        # ----------------------------
         if tenant_status_enum == TenantFileStatus.INCOMPLETE:
 
-            missing_lines = (
-                "\n".join(f"- {d}" for d in missing)
-                if missing
-                else "Certaines pièces sont encore manquantes."
-            )
+            missing_lines = "\n".join(f"- {d}" for d in missing) if missing else "- Certaines pièces restent manquantes."
 
             dup_block = ""
             if duplicates:
                 dup_list = "\n".join(f"- {d}" for d in duplicates)
                 dup_block = (
-                    "\n\nLes documents suivants que vous venez d'envoyer "
-                    "étaient déjà présents dans votre dossier :\n"
+                    "\n\nLes documents suivants étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
                     "Ils ont bien été reçus mais ne complètent pas les pièces manquantes."
                 )
@@ -1069,11 +1075,11 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             reply_text = (
                 "Bonjour,\n\n"
                 "Nous vous confirmons la bonne réception de vos documents.\n\n"
-                "Cependant, votre dossier est encore incomplet.\n\n"
-                "Il nous manque encore les pièces suivantes :\n"
+                "Votre dossier est encore incomplet.\n\n"
+                "Il nous manque les éléments suivants :\n"
                 f"{missing_lines}"
                 f"{dup_block}\n\n"
-                "Merci de nous transmettre ces éléments afin de finaliser votre dossier.\n\n"
+                "Merci de nous transmettre ces pièces afin de finaliser votre dossier.\n\n"
                 f"{signature}"
             )
 
@@ -1083,19 +1089,18 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                 raw_ai_text=None,
             )
 
-        # =========================
-        # DOSSIER COMPLET À VALIDER
-        # =========================
+        # ----------------------------
+        # DOSSIER COMPLET (À VALIDER)
+        # ----------------------------
         if tenant_status_enum == TenantFileStatus.TO_VALIDATE:
 
             dup_block = ""
             if duplicates:
                 dup_list = "\n".join(f"- {d}" for d in duplicates)
                 dup_block = (
-                    "\n\nLes documents suivants que vous venez d'envoyer "
-                    "étaient déjà présents dans votre dossier :\n"
+                    "\n\nLes documents suivants étaient déjà présents dans votre dossier :\n"
                     f"{dup_list}\n"
-                    "Ils ont bien été reçus mais ne modifient pas l'état du dossier."
+                    "Ils ont bien été pris en compte mais ne modifient pas l'état actuel du dossier."
                 )
 
             reply_text = (
@@ -1113,9 +1118,9 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                 raw_ai_text=None,
             )
 
-        # =========================
+        # ----------------------------
         # DOSSIER VALIDÉ
-        # =========================
+        # ----------------------------
         if tenant_status_enum == TenantFileStatus.VALIDATED:
 
             reply_text = (
