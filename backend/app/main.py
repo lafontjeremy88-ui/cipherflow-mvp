@@ -1000,51 +1000,43 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     Génère la réponse email en tenant compte :
     - du contenu de l'email
     - du résumé IA / catégorie / urgence
-    - du statut du dossier locataire (Enum propre)
+    - du statut du dossier locataire (Enum robuste, insensible à la casse)
     - des pièces manquantes
     - des doublons éventuels
     """
 
     # ============================================================
-    # 0️⃣ CONVERSION STATUT -> ENUM PROPRE
+    # 0️⃣ CONVERSION STATUT -> ENUM ROBUSTE (INSENSIBLE À LA CASSE)
     # ============================================================
 
     tenant_status_enum = None
 
     if req.tenant_status:
         try:
-            normalized_status = req.tenant_status.strip()
-            tenant_status_enum = TenantFileStatus(normalized_status)
-        except Exception:
+            tenant_status_enum = next(
+                s for s in TenantFileStatus
+                if s.value.lower() == req.tenant_status.strip().lower()
+            )
+        except StopIteration:
             logger.warning(
                 f"[REPLY] Statut dossier inconnu reçu : {req.tenant_status}"
             )
-            tenant_status_enum = None
 
     # ============================================================
-    # 1️⃣ EXTRACTION DES LISTES
+    # 1️⃣ EXTRACTION & NETTOYAGE DES LISTES
     # ============================================================
 
     missing = [d for d in (req.missing_docs or []) if d]
     duplicates = [d for d in (req.duplicate_docs or []) if d]
 
     # ============================================================
-    # DEBUG (à supprimer après validation)
-    # ============================================================
-
-    logger.info(f"[REPLY DEBUG] raw status = {req.tenant_status}")
-    logger.info(f"[REPLY DEBUG] enum status = {tenant_status_enum}")
-    logger.info(f"[REPLY DEBUG] missing = {missing}")
-    logger.info(f"[REPLY DEBUG] duplicates = {duplicates}")
-
-    # ============================================================
-    # 2️⃣ DÉTERMINATION SI ON A DU CONTEXTE DOSSIER
+    # 2️⃣ CONTEXTE DOSSIER DISPONIBLE ?
     # ============================================================
 
     has_dossier_info = (
         tenant_status_enum is not None
-        or len(missing) > 0
-        or len(duplicates) > 0
+        or bool(missing)
+        or bool(duplicates)
     )
 
     # ============================================================
@@ -1053,16 +1045,16 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
 
     if has_dossier_info:
 
-        # ----------------------------
+        # =========================
         # DOSSIER INCOMPLET
-        # ----------------------------
+        # =========================
         if tenant_status_enum == TenantFileStatus.INCOMPLETE:
 
-            missing_lines = ""
-            if missing:
-                missing_lines = "\n".join(f"- {d}" for d in missing)
-            else:
-                missing_lines = "Certaines pièces sont encore manquantes."
+            missing_lines = (
+                "\n".join(f"- {d}" for d in missing)
+                if missing
+                else "Certaines pièces sont encore manquantes."
+            )
 
             dup_block = ""
             if duplicates:
@@ -1091,9 +1083,9 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                 raw_ai_text=None,
             )
 
-        # ----------------------------
-        # DOSSIER COMPLET (À VALIDER)
-        # ----------------------------
+        # =========================
+        # DOSSIER COMPLET À VALIDER
+        # =========================
         if tenant_status_enum == TenantFileStatus.TO_VALIDATE:
 
             dup_block = ""
@@ -1121,9 +1113,9 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
                 raw_ai_text=None,
             )
 
-        # ----------------------------
+        # =========================
         # DOSSIER VALIDÉ
-        # ----------------------------
+        # =========================
         if tenant_status_enum == TenantFileStatus.VALIDATED:
 
             reply_text = (
@@ -1140,7 +1132,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
             )
 
     # ============================================================
-    # 4️⃣ SINON -> LOGIQUE IA CLASSIQUE
+    # 4️⃣ FALLBACK IA CLASSIQUE
     # ============================================================
 
     dossier_context = ""
@@ -1194,6 +1186,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
         subject=data.get("subject", f"Re: {req.subject}"),
         raw_ai_text=raw,
     )
+
 
 # --- CONFIG FASTAPI ---
 app = FastAPI(title="CipherFlow SaaS Multi-Agence")
