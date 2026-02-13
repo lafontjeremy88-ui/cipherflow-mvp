@@ -1824,29 +1824,19 @@ async def webhook_process_email(
     x_watcher_secret: str = Header(None),
 ):
     # ============================================================
-    # 0) SÉCURITÉ – le webhook ne doit pas être appelable par n’importe qui
+    # 0) SÉCURITÉ
     # ============================================================
     if (not x_watcher_secret) or not secrets.compare_digest(
         x_watcher_secret, WATCHER_SECRET
     ):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    # Limitation taille email (sécurité / perf)
     if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
         logger.warning("[SECURITY] Email content too large, truncated")
         req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
 
     # ============================================================
-    # 1) INITIALISATION DES VARIABLES CRITIQUES (OBLIGATOIRE)
-    # ============================================================
-    # La réponse existe TOUJOURS, même si l’IA plante
-    reponse = EmailReplyResponse(
-        reply="",
-        subject=req.subject,
-    )
-
-    # ============================================================
-    # 2) ROUTAGE MULTI-AGENCE
+    # 1) ROUTAGE MULTI-AGENCE
     # ============================================================
     recipient = req.to_email.lower().strip() if req.to_email else ""
     target_agency = None
@@ -1863,7 +1853,6 @@ async def webhook_process_email(
             logger.error(f"[ALIAS] Error: {e}")
 
     if not target_agency:
-        logger.warning("⚠️ Pas d'alias détecté, fallback agence par défaut")
         target_agency = db.query(Agency).order_by(Agency.id.asc()).first()
 
     if not target_agency:
@@ -1878,41 +1867,7 @@ async def webhook_process_email(
     comp_name = settings.company_name if settings else target_agency.name
 
     # ============================================================
-    # 3) FILTRAGE MÉTIER SIMPLE
-    # ============================================================
-    if req.filter_decision in ("ignore", "process_light"):
-        new_email = EmailAnalysis(
-            agency_id=agency_id,
-            sender_email=req.from_email,
-            subject=req.subject,
-            raw_email_text=req.content,
-            summary="Email ignoré ou traité en mode léger",
-            category="Autre",
-            urgency="Faible",
-            is_devis=False,
-            filter_score=req.filter_score,
-            filter_decision=req.filter_decision,
-            filter_reasons=json.dumps(req.filter_reasons or []),
-        )
-        db.add(new_email)
-        db.commit()
-        db.refresh(new_email)
-
-        return EmailProcessResponse(
-            analyse=EmailAnalyseResponse(
-                is_devis=False,
-                category="Autre",
-                urgency="Faible",
-                summary=new_email.summary,
-                suggested_title=req.subject,
-            ),
-            reponse=reponse,
-            send_status=req.filter_decision,
-            email_id=new_email.id,
-        )
-
-    # ============================================================
-    # 4) TRAITEMENT & STOCKAGE DES PIÈCES JOINTES (IA = best effort)
+    # 2) TRAITEMENT DES PIÈCES JOINTES
     # ============================================================
     attachment_summary_text = ""
     attachment_file_ids: List[int] = []
@@ -1926,7 +1881,6 @@ async def webhook_process_email(
                 file_data = base64.b64decode(att.content_base64)
                 file_hash = hashlib.sha256(file_data).hexdigest()
 
-                # Déduplication stricte
                 existing_file = (
                     db.query(FileAnalysis)
                     .filter(
@@ -1949,16 +1903,14 @@ async def webhook_process_email(
                 with open(tmp_path, "wb") as f:
                     f.write(file_data)
 
-                # Analyse IA document → best effort
                 try:
                     doc_analysis = await analyze_document_logic(
                         str(tmp_path), safe_filename
                     )
-                except Exception as e:
-                    logger.error(f"[DOC-IA] Analyse échouée: {e}")
+                except Exception:
                     doc_analysis = {
                         "type": "Document",
-                        "summary": "Analyse différée (quota ou erreur IA)",
+                        "summary": "Analyse différée",
                         "date": "",
                         "amount": "0",
                     }
@@ -1993,64 +1945,22 @@ async def webhook_process_email(
                 logger.error(f"[PJ] Erreur traitement PJ : {e}")
 
     # ============================================================
-    # 5) ANALYSE IA DE L’EMAIL (best effort)
+    # 3) ANALYSE EMAIL
     # ============================================================
-    try:
-        analyse = await analyze_email_logic(
-            EmailAnalyseRequest(
-                from_email=req.from_email,
-                subject=req.subject,
-                content=req.content,
-            ),
-            comp_name,
-            db,
-            agency_id,
-            attachment_summary=attachment_summary_text,
-        )
-    except Exception as e:
-        logger.error(f"[EMAIL-IA] Analyse échouée: {e}")
-        analyse = EmailAnalyseResponse(
-            is_devis=False,
-            category="Autre",
-            urgency="Normale",
-            summary="Email reçu",
-            suggested_title=req.subject,
-            raw_ai_text="",
-        )
-
-    # ============================================================
-    # 6) GÉNÉRATION DE LA RÉPONSE IA (OBLIGATOIRE + BACKUP)
-    # ============================================================
-    try:
-        reponse = await generate_reply_logic(
-            EmailReplyRequest(
-                from_email=req.from_email,
-                subject=req.subject,
-                content=req.content,
-                summary=analyse.summary,
-                category=analyse.category,
-                urgency=analyse.urgency,
-                tenant_status=None,
-                missing_docs=[],
-                duplicate_docs=[],
-            ),
-            comp_name,
-            settings.tone if settings else "pro",
-            settings.signature if settings else "Team",
-        )
-    except Exception as e:
-        logger.error(f"[REPLY-IA] Échec génération réponse : {e}")
-        reponse = EmailReplyResponse(
+    analyse = await analyze_email_logic(
+        EmailAnalyseRequest(
+            from_email=req.from_email,
             subject=req.subject,
-            reply=(
-                "Bonjour,\n\n"
-                "Nous avons bien reçu votre message et revenons vers vous rapidement.\n\n"
-                "Cordialement."
-            ),
-        )
+            content=req.content,
+        ),
+        comp_name,
+        db,
+        agency_id,
+        attachment_summary=attachment_summary_text,
+    )
 
     # ============================================================
-    # 7) ENREGISTREMENT FINAL DE L’EMAIL (TOUJOURS)
+    # 4) ENREGISTREMENT EMAIL
     # ============================================================
     new_email = EmailAnalysis(
         agency_id=agency_id,
@@ -2062,19 +1972,19 @@ async def webhook_process_email(
         urgency=analyse.urgency,
         summary=analyse.summary,
         suggested_title=analyse.suggested_title,
-        suggested_response_text=reponse.reply,
         raw_ai_output=analyse.raw_ai_text,
-        filter_score=req.filter_score,
-        filter_decision=req.filter_decision,
-        filter_reasons=json.dumps(req.filter_reasons or []),
     )
     db.add(new_email)
     db.commit()
     db.refresh(new_email)
 
     # ============================================================
-    # 8) DOSSIER LOCATAIRE & LIENS (best effort)
+    # 5) DOSSIER LOCATAIRE + CONTEXTE
     # ============================================================
+    tenant_status_for_reply: Optional[str] = None
+    missing_docs_for_reply: List[str] = []
+    duplicate_docs_for_reply: List[str] = []
+
     if should_attach_to_tenant_file(analyse, attachment_file_ids):
         try:
             tf = ensure_tenant_file_for_email(
@@ -2082,19 +1992,71 @@ async def webhook_process_email(
                 agency_id=agency_id,
                 email_address=req.from_email.lower(),
             )
+
             if tf:
-                ensure_email_link(
-                    db=db,
-                    tenant_file_id=tf.id,
-                    email_analysis_id=new_email.id,
-                )
+                ensure_email_link(db, tf.id, new_email.id)
+
                 if attachment_file_ids:
-                    attach_files_to_tenant_file(db, tf, attachment_file_ids)
+                    attach_result = attach_files_to_tenant_file(
+                        db, tf, attachment_file_ids
+                    )
+                    checklist = attach_result.get("checklist") or {}
+                    duplicate_codes = attach_result.get("duplicate_doc_types") or []
+                else:
+                    checklist = recompute_tenant_file_status(db, tf)
+                    duplicate_codes = []
+
+                DOC_LABELS = {
+                    "id": "Pièce d'identité",
+                    "payslip": "Bulletin de paie",
+                    "tax": "Avis d'imposition",
+                }
+
+                missing_docs_for_reply = [
+                    DOC_LABELS.get(code, code)
+                    for code in checklist.get("missing", [])
+                ]
+
+                duplicate_docs_for_reply = [
+                    DOC_LABELS.get(code, code)
+                    for code in duplicate_codes
+                ]
+
+                tenant_status_for_reply = (
+                    tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+                )
+
         except Exception as e:
             logger.error(f"[TENANT] Erreur rattachement dossier : {e}")
 
     # ============================================================
-    # 9) ENVOI EMAIL SI DEMANDÉ
+    # 6) GÉNÉRATION RÉPONSE (MAINTENANT AVEC CONTEXTE)
+    # ============================================================
+    reponse = await generate_reply_logic(
+        EmailReplyRequest(
+            from_email=req.from_email,
+            subject=req.subject,
+            content=req.content,
+            summary=analyse.summary,
+            category=analyse.category,
+            urgency=analyse.urgency,
+            tenant_status=tenant_status_for_reply,
+            missing_docs=missing_docs_for_reply,
+            duplicate_docs=duplicate_docs_for_reply,
+        ),
+        comp_name,
+        settings.tone if settings else "pro",
+        settings.signature if settings else "Team",
+    )
+
+    # ============================================================
+    # 7) SAUVEGARDE RÉPONSE
+    # ============================================================
+    new_email.suggested_response_text = reponse.reply
+    db.commit()
+
+    # ============================================================
+    # 8) ENVOI
     # ============================================================
     if req.send_email:
         send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
@@ -2105,6 +2067,7 @@ async def webhook_process_email(
         send_status="sent" if req.send_email else "not_sent",
         email_id=new_email.id,
     )
+
 
 
 # ============================================================
