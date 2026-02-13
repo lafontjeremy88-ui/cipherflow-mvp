@@ -1013,7 +1013,7 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
 
     if req.tenant_status:
         try:
-            normalized_status = req.tenant_status.strip().upper()
+            normalized_status = req.tenant_status.strip()
             tenant_status_enum = TenantFileStatus(normalized_status)
         except Exception:
             logger.warning(
