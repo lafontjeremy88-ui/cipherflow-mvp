@@ -69,6 +69,9 @@ from app.database.models import (
 )
 from app.auth import get_password_hash, verify_password, create_access_token
 from app.pdf_service import generate_pdf_bytes
+from redis import Redis
+from rq import Queue
+from app.tasks import process_email_job
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -1193,6 +1196,16 @@ async def generate_reply_logic(req, company_name: str, tone: str, signature: str
     )
 
 
+# ================================
+# 🔴 REDIS QUEUE CONFIG
+# ================================
+
+REDIS_URL = os.getenv("REDIS_URL")
+redis_conn = Redis.from_url(REDIS_URL)
+email_queue = Queue("emails", connection=redis_conn)
+
+
+
 # --- CONFIG FASTAPI ---
 app = FastAPI(title="CipherFlow SaaS Multi-Agence")
 
@@ -1812,30 +1825,22 @@ async def logout(
 
 # ============================================================
 # --- WEBHOOK EMAIL (ROUTAGE MULTI-AGENCE) ---
-# (le reste de ton fichier est inchangé)
 # ============================================================
 
-@app.post("/webhook/email", response_model=EmailProcessResponse)
+@app.post("/webhook/email")
 async def webhook_process_email(
     req: EmailProcessRequest,
     db: Session = Depends(get_db),
     x_watcher_secret: str = Header(None),
 ):
-    # ============================================================
-    # 0) SÉCURITÉ
-    # ============================================================
+
+    # 1️⃣ Sécurité
     if (not x_watcher_secret) or not secrets.compare_digest(
         x_watcher_secret, WATCHER_SECRET
     ):
         raise HTTPException(status_code=401, detail="Invalid Secret")
 
-    if req.content and len(req.content.encode("utf-8")) > MAX_EMAIL_CONTENT_SIZE:
-        logger.warning("[SECURITY] Email content too large, truncated")
-        req.content = req.content[:MAX_EMAIL_CONTENT_SIZE]
-
-    # ============================================================
-    # 1) ROUTAGE MULTI-AGENCE
-    # ============================================================
+    # 2️⃣ Routing multi-agence (on garde ton code existant)
     recipient = req.to_email.lower().strip() if req.to_email else ""
     target_agency = None
 
@@ -1862,209 +1867,25 @@ async def webhook_process_email(
         .filter(AppSettings.agency_id == agency_id)
         .first()
     )
-    comp_name = settings.company_name if settings else target_agency.name
 
-    # ============================================================
-    # 2) TRAITEMENT DES PIÈCES JOINTES
-    # ============================================================
-    attachment_summary_text = ""
-    attachment_file_ids: List[int] = []
-
-    if req.attachments:
-        uploads_dir = Path("uploads")
-        uploads_dir.mkdir(exist_ok=True)
-
-        for att in req.attachments[:MAX_ATTACHMENTS_PER_EMAIL]:
-            try:
-                file_data = base64.b64decode(att.content_base64)
-                file_hash = hashlib.sha256(file_data).hexdigest()
-
-                existing_file = (
-                    db.query(FileAnalysis)
-                    .filter(
-                        FileAnalysis.agency_id == agency_id,
-                        FileAnalysis.file_hash == file_hash,
-                    )
-                    .first()
-                )
-
-                if existing_file:
-                    doc_type_code = map_doc_type(existing_file.file_type or "")
-                    if is_relevant_for_tenant_file(doc_type_code):
-                        attachment_file_ids.append(existing_file.id)
-                        attachment_summary_text += f"- PJ: {att.filename}\n"
-                    continue
-
-                safe_filename = f"{agency_id}_{int(time.time())}_{att.filename}"
-                tmp_path = uploads_dir / f"tmp_{safe_filename}"
-
-                with open(tmp_path, "wb") as f:
-                    f.write(file_data)
-
-                try:
-                    doc_analysis = await analyze_document_logic(
-                        str(tmp_path), safe_filename
-                    )
-                except Exception:
-                    doc_analysis = {
-                        "type": "Document",
-                        "summary": "Analyse différée",
-                        "date": "",
-                        "amount": "0",
-                    }
-
-                encrypted_bytes = encrypt_bytes(file_data)
-                final_path = uploads_dir / safe_filename
-                with open(final_path, "wb") as f:
-                    f.write(encrypted_bytes)
-
-                os.remove(tmp_path)
-
-                new_file = FileAnalysis(
-                    filename=safe_filename,
-                    file_type=doc_analysis.get("type", "Autre"),
-                    sender=req.from_email,
-                    extracted_date=str(doc_analysis.get("date", "")),
-                    amount=str(doc_analysis.get("amount", "0")),
-                    summary=str(doc_analysis.get("summary", "")),
-                    agency_id=agency_id,
-                    file_hash=file_hash,
-                )
-
-                db.add(new_file)
-                db.commit()
-                db.refresh(new_file)
-
-                if is_relevant_for_tenant_file(map_doc_type(new_file.file_type)):
-                    attachment_file_ids.append(new_file.id)
-                    attachment_summary_text += f"- PJ: {att.filename}\n"
-
-            except Exception as e:
-                logger.error(f"[PJ] Erreur traitement PJ : {e}")
-
-    # ============================================================
-    # 3) ANALYSE EMAIL
-    # ============================================================
-    analyse = await analyze_email_logic(
-        EmailAnalyseRequest(
-            from_email=req.from_email,
-            subject=req.subject,
-            content=req.content,
-        ),
-        comp_name,
-        db,
-        agency_id,
-        attachment_summary=attachment_summary_text,
+    # 3️⃣ On enqueue le job (ET ON STOPPE ICI)
+    email_queue.enqueue(
+        process_email_job,
+        {
+            "agency_id": agency_id,
+            "from_email": req.from_email,
+            "subject": req.subject,
+            "content": req.content,
+            "attachments": [a.dict() for a in req.attachments],
+            "send_email": req.send_email,
+            "company_name": settings.company_name if settings else target_agency.name,
+            "tone": settings.tone if settings else "pro",
+            "signature": settings.signature if settings else "Team",
+        },
+        job_timeout=600,
     )
 
-    # ============================================================
-    # 4) ENREGISTREMENT EMAIL
-    # ============================================================
-    new_email = EmailAnalysis(
-        agency_id=agency_id,
-        sender_email=req.from_email,
-        subject=req.subject,
-        raw_email_text=req.content,
-        is_devis=analyse.is_devis,
-        category=analyse.category,
-        urgency=analyse.urgency,
-        summary=analyse.summary,
-        suggested_title=analyse.suggested_title,
-        raw_ai_output=analyse.raw_ai_text,
-    )
-    db.add(new_email)
-    db.commit()
-    db.refresh(new_email)
-
-    # ============================================================
-    # 5) DOSSIER LOCATAIRE + CONTEXTE
-    # ============================================================
-    tenant_status_for_reply: Optional[str] = None
-    missing_docs_for_reply: List[str] = []
-    duplicate_docs_for_reply: List[str] = []
-
-    if should_attach_to_tenant_file(analyse, attachment_file_ids):
-        try:
-            tf = ensure_tenant_file_for_email(
-                db=db,
-                agency_id=agency_id,
-                email_address=req.from_email.lower(),
-            )
-
-            if tf:
-                ensure_email_link(db, tf.id, new_email.id)
-
-                if attachment_file_ids:
-                    attach_result = attach_files_to_tenant_file(
-                        db, tf, attachment_file_ids
-                    )
-                    checklist = attach_result.get("checklist") or {}
-                    duplicate_codes = attach_result.get("duplicate_doc_types") or []
-                else:
-                    checklist = recompute_tenant_file_status(db, tf)
-                    duplicate_codes = []
-
-                DOC_LABELS = {
-                    "id": "Pièce d'identité",
-                    "payslip": "Bulletin de paie",
-                    "tax": "Avis d'imposition",
-                }
-
-                missing_docs_for_reply = [
-                    DOC_LABELS.get(code, code)
-                    for code in checklist.get("missing", [])
-                ]
-
-                duplicate_docs_for_reply = [
-                    DOC_LABELS.get(code, code)
-                    for code in duplicate_codes
-                ]
-
-                tenant_status_for_reply = (
-                    tf.status.value if hasattr(tf.status, "value") else str(tf.status)
-                )
-
-        except Exception as e:
-            logger.error(f"[TENANT] Erreur rattachement dossier : {e}")
-
-    # ============================================================
-    # 6) GÉNÉRATION RÉPONSE (MAINTENANT AVEC CONTEXTE)
-    # ============================================================
-    reponse = await generate_reply_logic(
-        EmailReplyRequest(
-            from_email=req.from_email,
-            subject=req.subject,
-            content=req.content,
-            summary=analyse.summary,
-            category=analyse.category,
-            urgency=analyse.urgency,
-            tenant_status=tenant_status_for_reply,
-            missing_docs=missing_docs_for_reply,
-            duplicate_docs=duplicate_docs_for_reply,
-        ),
-        comp_name,
-        settings.tone if settings else "pro",
-        settings.signature if settings else "Team",
-    )
-
-    # ============================================================
-    # 7) SAUVEGARDE RÉPONSE
-    # ============================================================
-    new_email.suggested_response_text = reponse.reply
-    db.commit()
-
-    # ============================================================
-    # 8) ENVOI
-    # ============================================================
-    if req.send_email:
-        send_email_via_resend(req.from_email, reponse.subject, reponse.reply)
-
-    return EmailProcessResponse(
-        analyse=analyse,
-        reponse=reponse,
-        send_status="sent" if req.send_email else "not_sent",
-        email_id=new_email.id,
-    )
+    return {"status": "queued"}
 
 
 
