@@ -1,4 +1,4 @@
-import base64
+import asyncio
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 
@@ -9,9 +9,9 @@ from app.database import models
 def process_email_job(payload: Dict[str, Any]):
     """
     Job RQ qui traite un email complet :
-    - Analyse IA
+    - Analyse IA (async)
     - Création EmailAnalysis
-    - Génération réponse
+    - Génération réponse (async)
     """
 
     db: Session = SessionLocal()
@@ -31,14 +31,16 @@ def process_email_job(payload: Dict[str, Any]):
         send_email = payload.get("send_email", False)
 
         # =============================
-        # 1️⃣ ANALYSE EMAIL
+        # 1️⃣ ANALYSE EMAIL (ASYNC)
         # =============================
-        analyse = analyze_email_logic(
-            payload,
-            payload.get("company_name"),
-            db,
-            agency_id,
-            attachment_summary="",
+        analyse = asyncio.run(
+            analyze_email_logic(
+                payload,
+                payload.get("company_name"),
+                db,
+                agency_id,
+                attachment_summary="",
+            )
         )
 
         # =============================
@@ -62,13 +64,15 @@ def process_email_job(payload: Dict[str, Any]):
         db.refresh(new_email)
 
         # =============================
-        # 3️⃣ GENERATE REPLY
+        # 3️⃣ GENERATE REPLY (ASYNC)
         # =============================
-        response = generate_reply_logic(
-            payload,
-            payload.get("company_name"),
-            payload.get("tone", "pro"),
-            payload.get("signature", "Team"),
+        response = asyncio.run(
+            generate_reply_logic(
+                payload,
+                payload.get("company_name"),
+                payload.get("tone", "pro"),
+                payload.get("signature", "Team"),
+            )
         )
 
         new_email.suggested_response_text = response.reply
@@ -78,6 +82,7 @@ def process_email_job(payload: Dict[str, Any]):
 
     except Exception as e:
         print(f"[WORKER ERROR] {e}")
+        db.rollback()
 
     finally:
         db.close()
