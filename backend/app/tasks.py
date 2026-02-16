@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.database.models import *
 from app.main import (
-    analyze_email_logic,
     analyze_document_logic,
     generate_reply_logic,
     ensure_tenant_file_for_email,
@@ -17,6 +16,11 @@ import base64
 import hashlib
 import time
 from pathlib import Path
+
+def process_email_job(email_id: int):
+    from app.main import analyze_email_logic  # ← import ici
+
+    analyze_email_logic(email_id)
 
 
 def process_email_job(payload: dict):
