@@ -2,7 +2,7 @@ import os
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import *
+from app.database.models import *
 from app.main import (
     analyze_email_logic,
     analyze_document_logic,
