@@ -1,6 +1,6 @@
 import os
 from redis import Redis
-from rq import Worker, Queue, Connection
+from rq import Worker
 
 # Connexion Redis
 redis_url = os.getenv("REDIS_URL")
@@ -10,7 +10,6 @@ if not redis_url:
 redis_conn = Redis.from_url(redis_url)
 
 if __name__ == "__main__":
-    with Connection(redis_conn):
-        worker = Worker(["emails"])
-        print("🚀 RQ Worker started — listening on 'emails'")
-        worker.work()
+    print("🚀 RQ Worker started — listening on 'emails'")
+    worker = Worker(["emails"], connection=redis_conn)
+    worker.work()
