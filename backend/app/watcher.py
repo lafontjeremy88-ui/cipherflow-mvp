@@ -24,7 +24,7 @@ import logging
 import base64
 from enum import Enum
 
-
+print("WATCHER STARTING")
 # ============================================================
 # 🛡️ ANTI-BOUCLE — éviter de retraiter les emails CipherFlow
 # ============================================================
