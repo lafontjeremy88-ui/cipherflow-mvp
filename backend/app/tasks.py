@@ -1,57 +1,50 @@
-import os
-from typing import List, Optional
-from sqlalchemy.orm import Session
-from app.database import SessionLocal
-from app.database.models import *
-from app.main import (
-    analyze_document_logic,
-    generate_reply_logic,
-    ensure_tenant_file_for_email,
-    ensure_email_link,
-    attach_files_to_tenant_file,
-    recompute_tenant_file_status,
-    should_attach_to_tenant_file,
-)
 import base64
-import hashlib
-import time
-from pathlib import Path
+from typing import Dict, Any
+from sqlalchemy.orm import Session
 
-def process_email_job(email_id: int):
-    from app.main import analyze_email_logic  # ← import ici
-
-    analyze_email_logic(email_id)
+from app.database import SessionLocal
+from app.database import models
 
 
-def process_email_job(payload: dict):
+def process_email_job(payload: Dict[str, Any]):
+    """
+    Job RQ qui traite un email complet :
+    - Analyse IA
+    - Création EmailAnalysis
+    - Génération réponse
+    """
+
     db: Session = SessionLocal()
 
     try:
-        # On retransforme le dict en objet simple
-        req = payload
+        # 🔁 Import local pour éviter circular import
+        from app.main import (
+            analyze_email_logic,
+            generate_reply_logic,
+        )
 
-        agency_id = req["agency_id"]
-        from_email = req["from_email"]
-        subject = req["subject"]
-        content = req["content"]
-        attachments = req.get("attachments", [])
-        send_email = req.get("send_email", False)
+        agency_id = payload["agency_id"]
+        from_email = payload["from_email"]
+        subject = payload["subject"]
+        content = payload["content"]
+        attachments = payload.get("attachments", [])
+        send_email = payload.get("send_email", False)
 
         # =============================
-        # 1) ANALYSE EMAIL
+        # 1️⃣ ANALYSE EMAIL
         # =============================
         analyse = analyze_email_logic(
-            req,
-            req.get("company_name"),
+            payload,
+            payload.get("company_name"),
             db,
             agency_id,
-            attachment_summary=""
+            attachment_summary="",
         )
 
         # =============================
-        # 2) SAVE EMAIL
+        # 2️⃣ SAVE EMAIL EN BASE
         # =============================
-        new_email = EmailAnalysis(
+        new_email = models.EmailAnalysis(
             agency_id=agency_id,
             sender_email=from_email,
             subject=subject,
@@ -69,17 +62,19 @@ def process_email_job(payload: dict):
         db.refresh(new_email)
 
         # =============================
-        # 3) GENERATE REPLY
+        # 3️⃣ GENERATE REPLY
         # =============================
-        reponse = generate_reply_logic(
-            req,
-            req.get("company_name"),
-            req.get("tone", "pro"),
-            req.get("signature", "Team"),
+        response = generate_reply_logic(
+            payload,
+            payload.get("company_name"),
+            payload.get("tone", "pro"),
+            payload.get("signature", "Team"),
         )
 
-        new_email.suggested_response_text = reponse.reply
+        new_email.suggested_response_text = response.reply
         db.commit()
+
+        print(f"✅ Email {new_email.id} processed successfully")
 
     except Exception as e:
         print(f"[WORKER ERROR] {e}")
