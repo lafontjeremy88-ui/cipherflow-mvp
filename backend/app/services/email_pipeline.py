@@ -11,6 +11,7 @@ def run_email_pipeline(payload: Dict[str, Any]):
     db: Session = SessionLocal()
 
     try:
+        # 🔁 Import local pour éviter circular import
         from app.main import (
             analyze_email_logic,
             generate_reply_logic,
@@ -20,6 +21,8 @@ def run_email_pipeline(payload: Dict[str, Any]):
             attach_files_to_tenant_file,
             recompute_tenant_file_status,
             should_attach_to_tenant_file,
+            EmailAnalyseRequest,
+            EmailReplyRequest,
         )
 
         agency_id = payload["agency_id"]
@@ -29,11 +32,17 @@ def run_email_pipeline(payload: Dict[str, Any]):
         attachments = payload.get("attachments", [])
 
         # =====================================================
-        # 1️⃣ ANALYSE EMAIL (IA)
+        # 1️⃣ RECONSTRUCTION OBJET ANALYSE (IMPORTANT)
         # =====================================================
+        analyse_request = EmailAnalyseRequest(
+            from_email=from_email,
+            subject=subject,
+            content=content,
+        )
+
         analyse = asyncio.run(
             analyze_email_logic(
-                payload,
+                analyse_request,
                 payload.get("company_name"),
                 db,
                 agency_id,
@@ -81,24 +90,20 @@ def run_email_pipeline(payload: Dict[str, Any]):
                 file_analyses.append(file_analysis)
 
         # =====================================================
-        # 4️⃣ DÉCISION DOSSIER LOCATAIRE
+        # 4️⃣ DOSSIER LOCATAIRE (AUTO / CONDITIONNEL)
         # =====================================================
         tenant_file = ensure_tenant_file_for_email(db, email)
 
         if tenant_file:
 
-            # =====================================================
             # 5️⃣ LIER EMAIL ↔ DOSSIER
-            # =====================================================
             ensure_email_link(
                 db=db,
                 tenant_file_id=tenant_file.id,
                 email_analysis_id=email.id,
             )
 
-            # =====================================================
             # 6️⃣ ATTACHER DOCUMENTS
-            # =====================================================
             for file_analysis in file_analyses:
                 if should_attach_to_tenant_file(file_analysis):
                     attach_files_to_tenant_file(
@@ -107,17 +112,24 @@ def run_email_pipeline(payload: Dict[str, Any]):
                         file_analysis_id=file_analysis.id,
                     )
 
-            # =====================================================
             # 7️⃣ RECALCUL CHECKLIST
-            # =====================================================
             recompute_tenant_file_status(db, tenant_file.id)
 
         # =====================================================
-        # 8️⃣ GÉNÉRATION RÉPONSE
+        # 8️⃣ GÉNÉRATION RÉPONSE INTELLIGENTE
         # =====================================================
+        reply_request = EmailReplyRequest(
+            from_email=from_email,
+            subject=subject,
+            content=content,
+            summary=analyse.summary,
+            category=analyse.category,
+            urgency=analyse.urgency,
+        )
+
         response = asyncio.run(
             generate_reply_logic(
-                payload,
+                reply_request,
                 payload.get("company_name"),
                 payload.get("tone", "pro"),
                 payload.get("signature", "Team"),
