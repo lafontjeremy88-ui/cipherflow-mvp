@@ -1,103 +1,16 @@
-import asyncio
 from typing import Dict, Any
-from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
-from app.database import models
+from app.services.email_pipeline import run_email_pipeline
 
 
 def process_email_job(payload: Dict[str, Any]):
     """
-    Job RQ qui traite un email complet :
-    - Analyse IA (async)
-    - Création EmailAnalysis
-    - Génération réponse (async)
+    RQ Worker entry point.
+    Ne contient AUCUNE logique métier.
+    Délègue entièrement au pipeline.
     """
 
-    db: Session = SessionLocal()
-
     try:
-        # 🔁 Import local pour éviter circular import
-        from app.main import (
-            analyze_email_logic,
-            generate_reply_logic,
-            EmailAnalyseRequest,
-            EmailReplyRequest,
-        )
-
-        agency_id = payload["agency_id"]
-        from_email = payload["from_email"]
-        subject = payload["subject"]
-        content = payload["content"]
-
-        # =============================
-        # 1️⃣ Reconstruction objet analyse
-        # =============================
-        analyse_request = EmailAnalyseRequest(
-            from_email=from_email,
-            subject=subject,
-            content=content,
-        )
-
-        analyse = asyncio.run(
-            analyze_email_logic(
-                analyse_request,
-                payload.get("company_name"),
-                db,
-                agency_id,
-                attachment_summary="",
-            )
-        )
-
-        # =============================
-        # 2️⃣ SAVE EMAIL EN BASE
-        # =============================
-        new_email = models.EmailAnalysis(
-            agency_id=agency_id,
-            sender_email=from_email,
-            subject=subject,
-            raw_email_text=content,
-            is_devis=analyse.is_devis,
-            category=analyse.category,
-            urgency=analyse.urgency,
-            summary=analyse.summary,
-            suggested_title=analyse.suggested_title,
-            raw_ai_output=analyse.raw_ai_text,
-        )
-
-        db.add(new_email)
-        db.commit()
-        db.refresh(new_email)
-
-        # =============================
-        # 3️⃣ Reconstruction objet reply
-        # =============================
-        reply_request = EmailReplyRequest(
-            from_email=from_email,
-            subject=subject,
-            content=content,
-            summary=analyse.summary,
-            category=analyse.category,
-            urgency=analyse.urgency,
-        )
-
-        response = asyncio.run(
-            generate_reply_logic(
-                reply_request,
-                payload.get("company_name"),
-                payload.get("tone", "pro"),
-                payload.get("signature", "Team"),
-            )
-        )
-
-        new_email.suggested_response_text = response.reply
-        db.commit()
-
-        print(f"✅ Email {new_email.id} processed successfully")
-
+        run_email_pipeline(payload)
     except Exception as e:
-        print(f"[WORKER ERROR] {e}")
-        db.rollback()
-
-    finally:
-        db.close()
+        print(f"❌ WORKER FATAL ERROR: {e}")

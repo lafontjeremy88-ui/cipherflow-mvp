@@ -288,7 +288,7 @@ try:
 except Exception as e:
     print(f"Erreur Config Gemini: {e}")
 
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
