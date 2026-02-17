@@ -915,7 +915,7 @@ async def analyze_document_logic(
             contents=[uploaded_file, prompt]
         )
 
-        parsed = extract_json_from_text(res.text)
+        parsed = extract_json_from_text(res.text) or {}
 
         # 🔥 Sécurisation minimale
         return {

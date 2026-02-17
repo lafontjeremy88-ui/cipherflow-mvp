@@ -2,8 +2,7 @@ import asyncio
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 
-from app.database import models
-from app.database import SessionLocal
+from app.database import models, SessionLocal
 
 
 def run_email_pipeline(payload: Dict[str, Any]):
@@ -11,7 +10,6 @@ def run_email_pipeline(payload: Dict[str, Any]):
     db: Session = SessionLocal()
 
     try:
-        # 🔁 Import local pour éviter circular import
         from app.main import (
             analyze_email_logic,
             generate_reply_logic,
@@ -31,9 +29,10 @@ def run_email_pipeline(payload: Dict[str, Any]):
         content = payload["content"]
         attachments = payload.get("attachments", [])
 
-        # =====================================================
-        # 1️⃣ RECONSTRUCTION OBJET ANALYSE (IMPORTANT)
-        # =====================================================
+        # ===============================
+        # 1️⃣ ANALYSE EMAIL
+        # ===============================
+
         analyse_request = EmailAnalyseRequest(
             from_email=from_email,
             subject=subject,
@@ -50,9 +49,10 @@ def run_email_pipeline(payload: Dict[str, Any]):
             )
         )
 
-        # =====================================================
+        # ===============================
         # 2️⃣ SAVE EMAIL
-        # =====================================================
+        # ===============================
+
         email = models.EmailAnalysis(
             agency_id=agency_id,
             sender_email=from_email,
@@ -70,54 +70,69 @@ def run_email_pipeline(payload: Dict[str, Any]):
         db.commit()
         db.refresh(email)
 
-        file_analyses = []
+        attachment_file_ids = []
 
-        # =====================================================
+        # ===============================
         # 3️⃣ ANALYSE DES PIÈCES
-        # =====================================================
-        for attachment in attachments:
+        # ===============================
 
-            file_analysis = asyncio.run(
-                analyze_document_logic(
-                    attachment,
-                    db,
-                    agency_id,
-                    email.id
-                )
+        for att in attachments:
+
+            file_path = att.get("file_path")
+            filename = att.get("filename")
+
+            if not file_path or not filename:
+                continue
+
+            doc_analysis = asyncio.run(
+                analyze_document_logic(file_path, filename)
             )
 
-            if file_analysis:
-                file_analyses.append(file_analysis)
+            new_file = models.FileAnalysis(
+                filename=filename,
+                file_type=doc_analysis.get("type", "Autre"),
+                sender=from_email,
+                extracted_date=doc_analysis.get("date", ""),
+                amount=doc_analysis.get("amount", "0"),
+                summary=doc_analysis.get("summary", ""),
+                agency_id=agency_id,
+            )
 
-        # =====================================================
-        # 4️⃣ DOSSIER LOCATAIRE (AUTO / CONDITIONNEL)
-        # =====================================================
-        tenant_file = ensure_tenant_file_for_email(db, email)
+            db.add(new_file)
+            db.commit()
+            db.refresh(new_file)
 
-        if tenant_file:
+            attachment_file_ids.append(new_file.id)
 
-            # 5️⃣ LIER EMAIL ↔ DOSSIER
-            ensure_email_link(
+        # ===============================
+        # 4️⃣ DOSSIER LOCATAIRE
+        # ===============================
+
+        if should_attach_to_tenant_file(analyse, attachment_file_ids):
+
+            tf = ensure_tenant_file_for_email(
                 db=db,
-                tenant_file_id=tenant_file.id,
-                email_analysis_id=email.id,
+                agency_id=agency_id,
+                email_address=from_email.lower(),
             )
 
-            # 6️⃣ ATTACHER DOCUMENTS
-            for file_analysis in file_analyses:
-                if should_attach_to_tenant_file(file_analysis):
+            if tf:
+
+                ensure_email_link(db, tf.id, email.id)
+
+                if attachment_file_ids:
                     attach_files_to_tenant_file(
                         db=db,
-                        tenant_file_id=tenant_file.id,
-                        file_analysis_id=file_analysis.id,
+                        tenant_file_id=tf.id,
+                        file_ids=attachment_file_ids,
                     )
 
-            # 7️⃣ RECALCUL CHECKLIST
-            recompute_tenant_file_status(db, tenant_file.id)
+                recompute_tenant_file_status(db, tf.id)
 
-        # =====================================================
-        # 8️⃣ GÉNÉRATION RÉPONSE INTELLIGENTE
-        # =====================================================
+        # ===============================
+        # 5️⃣ GÉNÉRATION RÉPONSE
+        # ===============================
+
         reply_request = EmailReplyRequest(
             from_email=from_email,
             subject=subject,
@@ -136,7 +151,7 @@ def run_email_pipeline(payload: Dict[str, Any]):
             )
         )
 
-        email.suggested_response_text = response.reply
+        email.suggested_response_text = response.reply or ""
         db.commit()
 
         print(f"✅ Pipeline terminé pour email {email.id}")
