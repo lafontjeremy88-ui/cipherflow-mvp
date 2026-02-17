@@ -1,16 +1,8 @@
 import os
-import sys
-from pathlib import Path
-
-# 🔥 Ajoute le backend au PYTHONPATH
-BASE_DIR = Path(__file__).resolve().parent
-BACKEND_DIR = BASE_DIR.parent  # remonte d’un niveau si besoin
-
-sys.path.append(str(BACKEND_DIR))
-
 from redis import Redis
-from rq import Worker, Queue
+from rq import Worker
 
+# Connexion Redis
 redis_url = os.getenv("REDIS_URL")
 if not redis_url:
     raise RuntimeError("REDIS_URL not set")
