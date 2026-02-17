@@ -21,21 +21,27 @@ def process_email_job(payload: Dict[str, Any]):
         from app.main import (
             analyze_email_logic,
             generate_reply_logic,
+            EmailAnalyseRequest,
+            EmailReplyRequest,
         )
 
         agency_id = payload["agency_id"]
         from_email = payload["from_email"]
         subject = payload["subject"]
         content = payload["content"]
-        attachments = payload.get("attachments", [])
-        send_email = payload.get("send_email", False)
 
         # =============================
-        # 1️⃣ ANALYSE EMAIL (ASYNC)
+        # 1️⃣ Reconstruction objet analyse
         # =============================
+        analyse_request = EmailAnalyseRequest(
+            from_email=from_email,
+            subject=subject,
+            content=content,
+        )
+
         analyse = asyncio.run(
             analyze_email_logic(
-                payload,
+                analyse_request,
                 payload.get("company_name"),
                 db,
                 agency_id,
@@ -64,11 +70,20 @@ def process_email_job(payload: Dict[str, Any]):
         db.refresh(new_email)
 
         # =============================
-        # 3️⃣ GENERATE REPLY (ASYNC)
+        # 3️⃣ Reconstruction objet reply
         # =============================
+        reply_request = EmailReplyRequest(
+            from_email=from_email,
+            subject=subject,
+            content=content,
+            summary=analyse.summary,
+            category=analyse.category,
+            urgency=analyse.urgency,
+        )
+
         response = asyncio.run(
             generate_reply_logic(
-                payload,
+                reply_request,
                 payload.get("company_name"),
                 payload.get("tone", "pro"),
                 payload.get("signature", "Team"),
