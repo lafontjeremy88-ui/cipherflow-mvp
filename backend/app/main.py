@@ -1330,7 +1330,7 @@ class EmailHistoryItem(BaseModel):
     urgency: str
     is_devis: bool
     raw_email_text: str
-    suggested_response_text: str
+    suggested_response_text: str | None = None
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
 
@@ -1352,7 +1352,7 @@ class EmailDetailResponse(BaseModel):
     category: str
     urgency: str
     is_devis: bool
-    suggested_response_text: str
+    suggested_response_text: str | None = None
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
 
