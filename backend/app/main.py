@@ -869,11 +869,29 @@ def detect_file_kind(filename: str, content_type: str | None = None) -> str:
 
 
 # --- IA LOGIQUE ---
-async def analyze_document_logic(file_path: str, filename: str):
+async def analyze_document_logic(
+    file_path: str,
+    filename: str,
+    db: Session,
+    agency_id: int,
+):
+    """
+    Analyse un document via Gemini.
+    Compatible pipeline multi-agence.
+    """
+
     if not client:
-        return {"summary": "IA non configurée"}
+        return {
+            "summary": "IA non configurée",
+            "type": "Autre",
+            "sender": "",
+            "date": "",
+            "amount": "0",
+        }
+
     try:
         uploaded_file = client.files.upload(file=file_path)
+
         while uploaded_file.state.name == "PROCESSING":
             time.sleep(1)
             uploaded_file = client.files.get(name=uploaded_file.name)
@@ -884,19 +902,33 @@ async def analyze_document_logic(file_path: str, filename: str):
         prompt = (
             "Tu es un expert en vérification de dossiers locataires. "
             "Analyse ce document et retourne un JSON strict :\n"
-            "- type: 'Bulletin de paie', 'Avis d'imposition', 'Pièce d'identité', 'Quittance', 'Facture', 'Autre'.\n"
+            "- type: 'Bulletin de paie', 'Avis d'imposition', "
+            "'Pièce d'identité', 'Quittance', 'Facture', 'Autre'.\n"
             "- sender: Emetteur (ex: Entreprise, DGFIP).\n"
             "- date: DD/MM/YYYY.\n"
             "- amount: Montant principal ou '0'.\n"
             "- summary: Synthèse courte."
         )
 
-        res = client.models.generate_content(model=MODEL_NAME, contents=[uploaded_file, prompt])
-        return extract_json_from_text(res.text)
+        res = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[uploaded_file, prompt]
+        )
+
+        parsed = extract_json_from_text(res.text)
+
+        # 🔥 Sécurisation minimale
+        return {
+            "summary": parsed.get("summary", ""),
+            "type": parsed.get("type", "Autre"),
+            "sender": parsed.get("sender", ""),
+            "date": parsed.get("date", ""),
+            "amount": parsed.get("amount", "0"),
+        }
 
     except Exception as e:
         print(f"Erreur analyse doc: {e}")
-        # ✅ Fallback : on se base sur le nom du fichier
+
         guessed_type_label = guess_label_from_filename(filename)
 
         return {
@@ -906,7 +938,6 @@ async def analyze_document_logic(file_path: str, filename: str):
             "date": "",
             "amount": "0",
         }
-
 async def analyze_email_logic(
     req,
     company_name: str,
