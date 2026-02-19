@@ -1,19 +1,11 @@
 # app/services/email_service.py
-"""
-Logique d'analyse email via Gemini.
-Entrée  : texte brut de l'email
-Sortie  : dict structuré (category, urgency, summary, suggested_response, etc.)
-
-Ce service ne touche PAS à la DB.
-Il reçoit des données, appelle Gemini, retourne un résultat.
-"""
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
 
 from app.core.config import settings
 
@@ -21,21 +13,20 @@ log = logging.getLogger(__name__)
 
 # ── Configuration Gemini ───────────────────────────────────────────────────────
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-_model = genai.GenerativeModel(settings.GEMINI_MODEL)
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_MODEL = settings.GEMINI_MODEL
 
 
 # ── Résultats typés ────────────────────────────────────────────────────────────
 
 @dataclass
 class EmailAnalysisResult:
-    category: str = "other"
+    category: str = "autre"
     urgency: str = "normal"
     is_devis: bool = False
     summary: str = ""
     suggested_title: str = ""
     raw_ai_text: str = ""
-    # Nom du candidat extrait de l'email (pour le dossier locataire)
     candidate_name: Optional[str] = None
 
 
@@ -54,15 +45,10 @@ async def analyze_email(
     company_name: str = "Agence",
     attachment_summary: str = "",
 ) -> EmailAnalysisResult:
-    """
-    Analyse un email entrant via Gemini.
-    Retourne un EmailAnalysisResult structuré.
-    """
 
     attachments_block = (
         f"\n\nPièces jointes reçues :\n{attachment_summary}"
-        if attachment_summary
-        else ""
+        if attachment_summary else ""
     )
 
     prompt = f"""
@@ -90,11 +76,13 @@ Règles :
 - candidate_name : cherche le nom dans la signature ou le contenu
 """
 
+    raw = ""
     try:
-        response = await _model.generate_content_async(prompt)
+        response = _client.models.generate_content(
+            model=_MODEL,
+            contents=[prompt],
+        )
         raw = response.text.strip()
-
-        # Nettoyage éventuel des balises markdown
         clean = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean)
 
@@ -113,7 +101,7 @@ Règles :
         return EmailAnalysisResult(
             summary="Analyse IA indisponible (JSON invalide)",
             suggested_title=subject,
-            raw_ai_text=raw if "raw" in dir() else "",
+            raw_ai_text=raw,
         )
     except Exception as e:
         log.error(f"[email_service] Erreur Gemini : {e}")
@@ -136,9 +124,6 @@ async def generate_reply(
     tone: str = "pro",
     signature: str = "L'équipe",
 ) -> EmailReplyResult:
-    """
-    Génère une réponse email intelligente via Gemini.
-    """
 
     tone_map = {
         "pro": "professionnel et courtois",
@@ -169,7 +154,10 @@ Instructions :
 """
 
     try:
-        response = await _model.generate_content_async(prompt)
+        response = _client.models.generate_content(
+            model=_MODEL,
+            contents=[prompt],
+        )
         raw = response.text.strip()
         return EmailReplyResult(reply=raw, raw_ai_text=raw)
 
