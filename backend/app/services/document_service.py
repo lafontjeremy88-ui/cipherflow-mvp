@@ -1,12 +1,4 @@
 # app/services/document_service.py
-"""
-Analyse des pièces jointes via Gemini Vision.
-Entrée  : bytes du fichier + nom + type MIME
-Sortie  : dict structuré (doc_type, quality, summary, etc.)
-
-Ce service ne touche PAS à la DB.
-Une PJ qui échoue ne tue pas les autres.
-"""
 
 import base64
 import json
@@ -14,17 +6,17 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 from app.database.models import TenantDocType, DocQuality
 
 log = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-_model = genai.GenerativeModel(settings.GEMINI_MODEL)
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_MODEL = settings.GEMINI_MODEL
 
-# Types MIME supportés par Gemini Vision
 SUPPORTED_MIME_TYPES = {
     "application/pdf",
     "image/jpeg",
@@ -35,8 +27,6 @@ SUPPORTED_MIME_TYPES = {
     "image/heif",
 }
 
-
-# ── Résultat typé ──────────────────────────────────────────────────────────────
 
 @dataclass
 class DocumentAnalysisResult:
@@ -51,19 +41,12 @@ class DocumentAnalysisResult:
     error: Optional[str] = None
 
 
-# ── Analyse document ───────────────────────────────────────────────────────────
-
 async def analyze_document(
     file_bytes: bytes,
     filename: str,
     content_type: str = "application/pdf",
 ) -> DocumentAnalysisResult:
-    """
-    Analyse une pièce jointe via Gemini Vision.
-    Retourne un DocumentAnalysisResult même en cas d'erreur (success=False).
-    """
 
-    # Vérification type MIME supporté
     mime = content_type.lower()
     if mime not in SUPPORTED_MIME_TYPES:
         log.warning(f"[document_service] Type non supporté : {mime} ({filename})")
@@ -94,32 +77,29 @@ Règles doc_type :
 - work_contract : contrat de travail, promesse d'embauche
 - bank : RIB, relevé bancaire
 - other : tout le reste
-
-Règles quality :
-- ok : document lisible et complet
-- unclear : partiellement lisible ou tronqué
-- invalid : illisible, mauvaise qualité, document non reconnaissable
 """
 
+    raw = ""
     try:
         b64 = base64.b64encode(file_bytes).decode("utf-8")
 
-        response = await _model.generate_content_async([
-            {"mime_type": mime, "data": b64},
-            prompt,
-        ])
+        response = _client.models.generate_content(
+            model=_MODEL,
+            contents=[
+                types.Part.from_bytes(data=file_bytes, mime_type=mime),
+                prompt,
+            ],
+        )
 
         raw = response.text.strip()
         clean = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean)
 
-        # Validation doc_type
         valid_types = {e.value for e in TenantDocType}
         doc_type = data.get("doc_type", "other")
         if doc_type not in valid_types:
             doc_type = TenantDocType.OTHER.value
 
-        # Validation quality
         valid_qualities = {e.value for e in DocQuality}
         quality = data.get("quality", "ok")
         if quality not in valid_qualities:
