@@ -789,21 +789,19 @@ export default function EmailHistory() {
                 )}
 
                 {/* Réponse proposée */}
-                {suggestedResponse && (
-                  <div
-                    className="card"
-                    style={{ marginBottom: 12, padding: 12 }}
-                  >
-                    <div className="card-header">
-                      <h3 className="card-title">Réponse proposée</h3>
-                      <div className="row">
+                <div
+                  className="card"
+                  style={{ marginBottom: 12, padding: 12 }}
+                >
+                  <div className="card-header">
+                    <h3 className="card-title">Réponse proposée</h3>
+                    <div className="row">
+                      {suggestedResponse && (
                         <button
                           type="button"
                           className="btn btn-primary"
                           onClick={handleSendSuggestedResponse}
-                          disabled={
-                            sending || deleting || hasReplied
-                          }
+                          disabled={sending || deleting || hasReplied}
                         >
                           {hasReplied
                             ? "Réponse déjà envoyée"
@@ -811,28 +809,32 @@ export default function EmailHistory() {
                             ? "Envoi…"
                             : "Envoyer la réponse"}
                         </button>
+                      )}
 
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={handleDeleteEmail}
-                          disabled={sending || deleting}
-                        >
-                          {deleting
-                            ? "Suppression…"
-                            : "Supprimer de la liste"}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={handleDeleteEmail}
+                        disabled={sending || deleting}
+                      >
+                        {deleting ? "Suppression…" : "Supprimer de la liste"}
+                      </button>
                     </div>
+                  </div>
 
+                  {suggestedResponse ? (
                     <pre
                       className="email-body"
                       style={{ maxHeight: 220 }}
                     >
                       {suggestedResponse}
                     </pre>
-                  </div>
-                )}
+                  ) : (
+                    <div className="muted" style={{ padding: "8px 0" }}>
+                      Aucune réponse IA générée pour cet email.
+                    </div>
+                  )}
+                </div>
 
                 {/* Email brut */}
                 {showRaw && (
