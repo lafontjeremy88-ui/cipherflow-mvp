@@ -1,5 +1,5 @@
 import json
-from app import models
+from app.database import models
 
 DEFAULT_RETENTION_CONFIG = {
     "emails_days": 365,
@@ -22,3 +22,33 @@ def create_default_settings_for_agency(db, agency: models.Agency):
     db.commit()
     db.refresh(settings)
     return settings
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
