@@ -1,13 +1,14 @@
 # app/api/file_routes.py
-"""
-Routes fichiers : view, download, delete.
-"""
 
+import json
 import mimetypes
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
@@ -18,8 +19,25 @@ from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, Te
 router = APIRouter(tags=["Fichiers"])
 
 
+# ── Schemas ────────────────────────────────────────────────────────────────────
+
+class FileHistoryItem(BaseModel):
+    id: int
+    filename: str
+    file_type: Optional[str] = None
+    sender: Optional[str] = None
+    extracted_date: Optional[str] = None
+    amount: Optional[str] = None
+    summary: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
 def _compute_checklist_simple(doc_types: list) -> dict:
-    """Version simplifiée pour le recalcul après suppression."""
     from app.database.models import TenantDocType
     required = [TenantDocType.ID, TenantDocType.PAYSLIP, TenantDocType.TAX]
     required_set = set(required)
@@ -31,6 +49,23 @@ def _compute_checklist_simple(doc_types: list) -> dict:
         "received": [dt.value for dt in sorted(received_set, key=lambda d: order.get(d, 99))],
         "missing": [dt.value for dt in sorted(missing_set, key=lambda d: order.get(d, 99))],
     }
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+
+@router.get("/api/files/history", response_model=List[FileHistoryItem])
+async def get_files_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Liste tous les fichiers analysés pour l'agence."""
+    files = (
+        db.query(FileAnalysis)
+        .filter(FileAnalysis.agency_id == current_user.agency_id)
+        .order_by(FileAnalysis.id.desc())
+        .all()
+    )
+    return files
 
 
 @router.get("/api/files/view/{file_id}")
@@ -113,7 +148,6 @@ async def delete_file(
     if not f:
         raise HTTPException(404, "Introuvable")
 
-    # Dossiers impactés
     tenant_ids = [
         row[0] for row in
         db.query(TenantDocumentLink.tenant_file_id)
@@ -123,7 +157,6 @@ async def delete_file(
         TenantDocumentLink.file_analysis_id == f.id
     ).delete(synchronize_session=False)
 
-    # Recalcul checklist pour chaque dossier impacté
     for tid in tenant_ids:
         tf = db.query(TenantFile).filter(TenantFile.id == tid).first()
         if not tf:
@@ -133,7 +166,6 @@ async def delete_file(
             tf.checklist_json = None
             tf.status = TenantFileStatus.NEW
         else:
-            import json
             checklist = _compute_checklist_simple([l.doc_type for l in remaining])
             tf.checklist_json = json.dumps(checklist)
             tf.status = TenantFileStatus.TO_VALIDATE if not checklist["missing"] else TenantFileStatus.INCOMPLETE
