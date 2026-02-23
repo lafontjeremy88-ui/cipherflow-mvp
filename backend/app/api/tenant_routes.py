@@ -287,6 +287,50 @@ async def upload_document_for_tenant(
     }
 
 
+@router.post("/{tenant_id}/attach-document/{file_id}")
+async def attach_document_to_tenant(
+    tenant_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    aid = current_user.agency_id
+
+    tf = db.query(TenantFile).filter(
+        TenantFile.id == tenant_id,
+        TenantFile.agency_id == aid,
+    ).first()
+    if not tf:
+        raise HTTPException(404, "Dossier introuvable")
+
+    fa = db.query(FileAnalysis).filter(
+        FileAnalysis.id == file_id,
+        FileAnalysis.agency_id == aid,
+    ).first()
+    if not fa:
+        raise HTTPException(404, "Document introuvable")
+
+    # Vérifie si le lien existe déjà
+    existing = db.query(TenantDocumentLink).filter(
+        TenantDocumentLink.tenant_file_id == tf.id,
+        TenantDocumentLink.file_analysis_id == fa.id,
+    ).first()
+    if existing:
+        return {"status": "already_linked", "tenant_id": tf.id, "file_id": fa.id}
+
+    attach_files_to_tenant_file(db=db, tenant_file=tf, file_ids=[fa.id])
+    db.refresh(tf)
+    recompute_checklist(db, tf)
+
+    checklist = json.loads(tf.checklist_json) if tf.checklist_json else None
+    return {
+        "status": "linked",
+        "tenant_id": tf.id,
+        "file_id": fa.id,
+        "new_status": _tf_status(tf),
+        "checklist": checklist,
+    }
+
 @router.delete("/{tenant_id}/documents/{file_id}")
 async def detach_document_from_tenant(
     tenant_id: int,
