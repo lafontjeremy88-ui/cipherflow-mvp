@@ -39,10 +39,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-from app.database.models import AgencyEmailConfig  # noqa
-from app.database.database import Base, engine
-Base.metadata.create_all(bind=engine)
-
 # ── Rate limiting (slowapi) ────────────────────────────────────────────────────
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
