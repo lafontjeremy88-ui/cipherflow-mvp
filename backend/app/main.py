@@ -1,12 +1,4 @@
 # app/main.py
-"""
-Point d'entrée FastAPI — CipherFlow.
-
-FIX P1 : CORS restreint (suppression du wildcard *.vercel.app).
-FIX P1 : Retention worker activé par défaut (ENABLE_RETENTION_WORKER=true).
-FIX P1 : Intégration slowapi pour rate limiting (login, forgot-password).
-FIX P0 : CSS debug retiré → voir src/index.css.
-"""
 
 import logging
 import os
@@ -14,7 +6,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.api.auth_routes import router as auth_router
 from app.api.email_routes import router as email_router
@@ -22,7 +13,6 @@ from app.api.file_routes import router as file_router
 from app.api.invoice_routes import router as invoice_router
 from app.api.settings_routes import router as settings_router
 from app.api.tenant_routes import router as tenant_router
-from app.core.config import settings as app_settings
 from app.google_oauth import router as google_oauth_router, attach_oauth
 from app.services.retention_service import retention_worker
 
@@ -33,14 +23,12 @@ ENABLE_RETENTION = os.getenv("ENABLE_RETENTION_WORKER", "true").strip().lower() 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Tâches de démarrage / arrêt."""
     if ENABLE_RETENTION:
         import asyncio
-        task = asyncio.create_task(retention_worker())
+        asyncio.create_task(retention_worker())
         log.info("[startup] Retention worker RGPD démarré ✅")
     else:
-        log.warning("[startup] Retention worker RGPD désactivé (ENABLE_RETENTION_WORKER=false)")
-
+        log.warning("[startup] Retention worker RGPD désactivé")
     yield
 
 
@@ -54,9 +42,9 @@ app = FastAPI(
 # ── Rate limiting (slowapi) ────────────────────────────────────────────────────
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
-    from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
     from slowapi.middleware import SlowAPIMiddleware
+    from slowapi.util import get_remote_address
 
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
@@ -67,15 +55,16 @@ except ImportError:
     log.warning("[startup] slowapi non installé — rate limiting désactivé")
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# FIX P1 : liste explicite, plus de wildcard *.vercel.app
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://cipherflow-mvp.vercel.app",
+    "https://cipherflow.company",
 ]
 
-extra_origins = os.getenv("EXTRA_ALLOWED_ORIGINS", "")
-if extra_origins:
-    ALLOWED_ORIGINS.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
+extra = os.getenv("EXTRA_ALLOWED_ORIGINS", "")
+if extra:
+    ALLOWED_ORIGINS.extend([o.strip() for o in extra.split(",") if o.strip()])
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,7 +84,8 @@ WATCHER_SECRET = os.getenv("WATCHER_SECRET", "")
 @app.post("/webhook/email")
 async def email_webhook(request: Request):
     import hmac
-    import secrets
+    import redis
+    from rq import Queue
 
     auth = request.headers.get("X-Watcher-Secret", "")
     if WATCHER_SECRET and not hmac.compare_digest(auth, WATCHER_SECRET):
@@ -104,16 +94,13 @@ async def email_webhook(request: Request):
     payload = await request.json()
 
     from app.tasks import process_email_job
-    from app.database.database import SessionLocal
-    from rq import Queue
-    import redis
 
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     r = redis.from_url(redis_url)
-    q = Queue(connection=r)
+    q = Queue("emails", connection=r)
     job = q.enqueue(process_email_job, payload)
 
-    log.info(f"[webhook] Job RQ enqueued : {job.id}")
+    log.info(f"[webhook] Job enqueued sur queue 'emails' : {job.id}")
     return {"status": "queued", "job_id": job.id}
 
 
