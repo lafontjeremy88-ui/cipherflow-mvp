@@ -212,7 +212,7 @@ async def get_settings(
         "company_name": s.company_name,
         "tone": s.tone,
         "signature": s.signature,
-        "send_email": s.send_email,
+        "send_email": getattr(s, "send_email", None),
         "retention_config": retention,
     }
 
@@ -238,7 +238,8 @@ async def update_settings(
     if payload.signature is not None:
         s.signature = payload.signature.strip()
     if payload.send_email is not None:
-        s.send_email = payload.send_email
+        if hasattr(s, "send_email"):
+            s.send_email = payload.send_email
     if payload.retention_config_json is not None:
         # Validation JSON avant stockage
         try:
