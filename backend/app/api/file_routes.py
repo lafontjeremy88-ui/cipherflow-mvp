@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
-from app.services.storage_service import download_file, delete_file as r2_delete
+from app.services.storage_service import download_file as r2_download, delete_file as r2_delete
 from app.database.database import get_db
 from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, TenantFileStatus, User
 
@@ -79,7 +79,7 @@ def view_file(
         raise HTTPException(404, "Fichier introuvable")
 
     try:
-        raw_bytes = download_file(f.filename)
+        raw_bytes = r2_download(f.filename)
     except Exception:
         raise HTTPException(404, "Fichier introuvable dans le stockage")
 
@@ -109,7 +109,7 @@ async def download_file(
         raise HTTPException(404, "Fichier introuvable ou accès refusé")
 
     try:
-        raw_bytes = download_file(f.filename)
+        raw_bytes = r2_download(f.filename)
     except Exception:
         raise HTTPException(404, "Fichier introuvable dans le stockage")
 
