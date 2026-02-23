@@ -1,131 +1,76 @@
 """
-WATCHER — CipherFlow
-====================
-
-Rôle :
-- Surveille une boîte email via IMAP
-- Filtre intelligemment les emails AVANT l’IA
-- Envoie uniquement les emails à forte valeur métier au backend
-
-Principe clé :
-❌ Pas d’IA ici
-❌ Pas de logique métier complexe côté backend
-✅ Barrière métier explicable, déterministe et robuste
+WATCHER MULTI-TENANT — CipherFlow
+==================================
+- Interroge le backend toutes les X secondes pour récupérer les configs actives
+- Surveille chaque boîte email dans un thread dédié
+- Chaque agence peut activer/désactiver son watcher depuis l'interface
 """
 
-import time
-import imaplib
+import base64
 import email
+import imaplib
+import logging
+import os
+import threading
+import time
 from email.header import decode_header
 from email.utils import parseaddr
-import requests
-import os
-import logging
-import base64
 from enum import Enum
 
+import requests
+
 print("WATCHER STARTING")
-# ============================================================
-# 🛡️ ANTI-BOUCLE — éviter de retraiter les emails CipherFlow
-# ============================================================
-
-def is_cipherflow_email(msg):
-    """
-    Détecte les emails envoyés par CipherFlow lui-même.
-    Le backend ajoute un header X-CipherFlow-Origin à ses emails.
-    """
-    return bool(msg.get("X-CipherFlow-Origin"))
-
-
-# ============================================================
-# 🧠 DÉCISION MÉTIER — résultat final du watcher
-# ============================================================
-
-class FilterDecision(str, Enum):
-    """
-    Décision finale prise par le watcher AVANT toute IA.
-    """
-    PROCESS_FULL = "process_full"     # pipeline complet
-    PROCESS_LIGHT = "process_light"   # réservé pour évolution future
-    IGNORE = "ignore"                 # email ignoré (audit only)
-
-
-# ============================================================
-# ⚙️ CONFIGURATION GLOBALE
-# ============================================================
 
 logging.basicConfig(level=logging.INFO, format="[WATCHER] %(message)s")
 log = logging.getLogger("watcher")
 
-IMAP_SERVER = os.getenv("IMAP_HOST", "imap.gmail.com")
-EMAIL_USER = os.getenv("IMAP_USER", "")
-EMAIL_PASS = os.getenv("IMAP_PASSWORD", "")
-
 BACKEND_URL = os.getenv("BACKEND_URL", "").rstrip("/")
-API_URL = f"{BACKEND_URL}/webhook/email"
-
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "")
-
 AUTO_SEND = os.getenv("AUTO_SEND", "true").lower() == "true"
 MAX_EMAILS_PER_LOOP = int(os.getenv("MAX_EMAILS_PER_LOOP", "3"))
 PAUSE_BETWEEN_EMAILS_SEC = float(os.getenv("PAUSE_BETWEEN_EMAILS_SEC", "2"))
-POLL_INTERVAL_SEC = float(os.getenv("POLL_INTERVAL_SEC", "10"))
+POLL_INTERVAL_SEC = float(os.getenv("POLL_INTERVAL_SEC", "30"))
+CONFIG_REFRESH_INTERVAL = float(os.getenv("CONFIG_REFRESH_INTERVAL", "60"))
 
-
-# ============================================================
-# 🔇 BLACKLIST TECHNIQUE (niveau 0)
-# ============================================================
-
-BLACKLIST = [
-    # Technique / infra
-    "railway", "google", "postmaster",
-    "mailer-daemon", "daemon", "notification",
-    "resend",
-
-    # No-reply
-    "no-reply", "noreply",
-
-    # Newsletters / marketing
-    "newsletter",
-    "unsubscribe",
-    "se désabonner",
-    "se desabonner",
-    "mailchimp",
-    "sendinblue",
-    "sg-mkt",
-    "emailing",
-]
-
-# Vérification stricte de la configuration au démarrage
 missing = []
-if not EMAIL_USER:
-    missing.append("IMAP_USER")
-if not EMAIL_PASS:
-    missing.append("IMAP_PASSWORD")
 if not BACKEND_URL:
     missing.append("BACKEND_URL")
 if not WATCHER_SECRET:
     missing.append("WATCHER_SECRET")
-
 if missing:
     raise RuntimeError(f"Variables manquantes: {', '.join(missing)}")
 
+WEBHOOK_URL = f"{BACKEND_URL}/webhook/email"
+CONFIGS_URL = f"{BACKEND_URL}/watcher/configs"
+
 
 # ============================================================
-# 🔧 HELPERS TECHNIQUES
+# 🧠 DÉCISION MÉTIER
 # ============================================================
+
+class FilterDecision(str, Enum):
+    PROCESS_FULL = "process_full"
+    PROCESS_LIGHT = "process_light"
+    IGNORE = "ignore"
+
+
+BLACKLIST = [
+    "railway", "google", "postmaster", "mailer-daemon", "daemon",
+    "notification", "resend", "no-reply", "noreply", "newsletter",
+    "unsubscribe", "se désabonner", "se desabonner", "mailchimp",
+    "sendinblue", "sg-mkt", "emailing",
+]
+
+
+def is_cipherflow_email(msg):
+    return bool(msg.get("X-CipherFlow-Origin"))
+
 
 def decode_mime_header(value: str) -> str:
-    """
-    Décode proprement un header MIME (Subject, To, etc.)
-    pour éviter les caractères encodés illisibles.
-    """
     if not value:
         return ""
-
     decoded_list = decode_header(value)
     out = ""
-
     for decoded_bytes, charset in decoded_list:
         if isinstance(decoded_bytes, bytes):
             try:
@@ -134,15 +79,10 @@ def decode_mime_header(value: str) -> str:
                 out += decoded_bytes.decode("latin-1", errors="ignore")
         else:
             out += str(decoded_bytes)
-
     return out.strip()
 
 
-def get_plain_text_body(msg: email.message.Message) -> str:
-    """
-    Extrait uniquement le texte lisible (text/plain).
-    Ignore HTML et pièces jointes.
-    """
+def get_plain_text_body(msg) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             if (
@@ -150,44 +90,23 @@ def get_plain_text_body(msg: email.message.Message) -> str:
                 and "attachment" not in str(part.get("Content-Disposition", "")).lower()
             ):
                 payload = part.get_payload(decode=True) or b""
-                return payload.decode(
-                    part.get_content_charset() or "utf-8",
-                    errors="ignore",
-                )
+                return payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
     else:
         payload = msg.get_payload(decode=True) or b""
-        return payload.decode(
-            msg.get_content_charset() or "utf-8",
-            errors="ignore",
-        )
-
+        return payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
     return ""
 
 
-def get_attachments_for_api(msg):
-    """
-    Extrait les pièces jointes et les prépare pour l’API backend :
-    - filename
-    - content_base64
-    - content_type
-    """
+def get_attachments(msg):
     attachments = []
-
     for part in msg.walk():
         if part.get_content_maintype() == "multipart":
             continue
-
-        if (
-            "attachment" in str(part.get("Content-Disposition", "")).lower()
-            or part.get_filename()
-        ):
-            filename = part.get_filename()
+        if "attachment" in str(part.get("Content-Disposition", "")).lower() or part.get_filename():
+            filename = decode_mime_header(part.get_filename() or "")
             if not filename:
                 continue
-
-            filename = decode_mime_header(filename)
             payload = part.get_payload(decode=True)
-
             if payload:
                 attachments.append({
                     "filename": filename,
@@ -195,66 +114,36 @@ def get_attachments_for_api(msg):
                     "content_type": part.get_content_type(),
                 })
                 log.info(f"   📎 PJ trouvée : {filename}")
-
     return attachments
 
 
-def is_blacklisted(sender: str, subject: str, body: str) -> bool:
-    """
-    Filtre technique niveau 0.
-    Rejette immédiatement newsletters, no-reply, emails infra.
-    """
-    s = (sender or "").lower()
-    sub = (subject or "").lower()
-    b = (body or "").lower()
-
-    for word in BLACKLIST:
-        if word in s or word in sub or word in b:
-            return True
-
-    return False
+def is_blacklisted(sender, subject, body) -> bool:
+    text = f"{sender} {subject} {body}".lower()
+    return any(word in text for word in BLACKLIST)
 
 
-# ============================================================
-# 🧠 BARRIÈRE MÉTIER — SCORE EXPLICABLE
-# ============================================================
-
-def compute_business_score(sender: str, subject: str, body: str, attachments: list):
-    """
-    Calcule un score métier explicable (0–100).
-    Plus le score est élevé, plus l’email est pertinent.
-    """
+def compute_score(sender, subject, body, attachments):
     score = 0
     reasons = []
-
     text = f"{sender} {subject} {body}".lower()
 
-    # 📎 Pièces jointes = signal fort
     if attachments:
         score += 40
         reasons.append("attachments_present")
 
-    # 🏠 Mots-clés métier immobilier
-    keywords = [
-        "dossier", "location", "locataire",
-        "bulletin", "fiche de paie",
-        "avis", "impôt", "imposition",
-        "pièce", "identité",
-    ]
+    keywords = ["dossier", "location", "locataire", "bulletin", "fiche de paie",
+                "avis", "impôt", "imposition", "pièce", "identité"]
     for kw in keywords:
         if kw in text:
             score += 10
             reasons.append(f"keyword:{kw}")
             break
 
-    # ❌ Marketing
-    marketing = ["promo", "offre", "réduction", "newsletter"]
-    for kw in marketing:
+    for kw in ["promo", "offre", "réduction", "newsletter"]:
         if kw in text:
             score -= 30
             reasons.append(f"marketing:{kw}")
 
-    # 📭 Email très court sans PJ
     if len(body.strip()) < 40 and not attachments:
         score -= 15
         reasons.append("short_body_no_attachment")
@@ -262,10 +151,7 @@ def compute_business_score(sender: str, subject: str, body: str, attachments: li
     return score, reasons
 
 
-def decide_email_action(score: int) -> FilterDecision:
-    """
-    Traduit le score en décision métier claire.
-    """
+def decide(score: int) -> FilterDecision:
     if score >= 40:
         return FilterDecision.PROCESS_FULL
     if score >= 15:
@@ -274,92 +160,79 @@ def decide_email_action(score: int) -> FilterDecision:
 
 
 # ============================================================
-# 🚀 PIPELINE PRINCIPAL — UN EMAIL
+# 🚀 TRAITEMENT D'UN EMAIL
 # ============================================================
 
-def process_one_email(msg):
-    """
-    Pipeline complet pour un email :
-    - anti-boucle
-    - blacklist technique
-    - scoring métier
-    - décision
-    - envoi au backend si pertinent
-    """
-
-    # 🛡️ Anti-boucle
+def process_one_email(msg, agency_id: int, to_email: str = ""):
     if is_cipherflow_email(msg):
-        log.info("🔁 Ignoré (email CipherFlow)")
         return
 
     subject = decode_mime_header(msg.get("Subject", ""))
-    real_sender = msg.get("From", "") or ""
+    sender = msg.get("From", "") or ""
     body = get_plain_text_body(msg).strip() or "Pas de contenu texte"
 
-    # 🔇 Blacklist technique
-    if is_blacklisted(real_sender, subject, body):
-        log.info(f"🚫 Ignoré (Blacklist) — {subject}")
+    if is_blacklisted(sender, subject, body):
+        log.info(f"🚫 Ignoré (Blacklist) agency={agency_id} — {subject}")
         return
 
-    # 📎 Pièces jointes
-    attachments = get_attachments_for_api(msg)
+    attachments = get_attachments(msg)
+    score, reasons = compute_score(sender, subject, body, attachments)
+    decision = decide(score)
 
-    # 🧠 Score métier
-    score, reasons = compute_business_score(
-        sender=real_sender,
-        subject=subject,
-        body=body,
-        attachments=attachments,
-    )
-
-    decision = decide_email_action(score)
-    log.info(f"🧠 Score={score} | Décision={decision} | Raisons={reasons}")
+    log.info(f"🧠 Score={score} | Décision={decision} | agency={agency_id} | Raisons={reasons}")
 
     if decision == FilterDecision.IGNORE:
-        log.info("🚫 Ignoré (faible valeur métier)")
         return
 
-    # 📬 Préparation payload backend
-    _, sender_email = parseaddr(real_sender)
-    recipient = decode_mime_header(msg.get("Delivered-To") or msg.get("To") or "")
+    _, sender_email = parseaddr(sender)
+    recipient = to_email or decode_mime_header(msg.get("Delivered-To") or msg.get("To") or "")
 
     payload = {
-        "from_email": sender_email or real_sender,
+        "from_email": sender_email or sender,
         "to_email": recipient,
         "subject": subject,
         "content": body,
         "send_email": AUTO_SEND,
         "attachments": attachments,
-
-        # 🧠 Décision métier explicite
+        "agency_id": agency_id,
         "filter_score": score,
         "filter_decision": decision.value,
         "filter_reasons": reasons,
     }
 
-    headers = {"x-watcher-secret": WATCHER_SECRET}
-
     try:
-        resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
+        resp = requests.post(
+            WEBHOOK_URL,
+            json=payload,
+            headers={"x-watcher-secret": WATCHER_SECRET},
+            timeout=60,
+        )
         if resp.status_code == 200:
-            log.info("✅ Transmis au backend")
+            log.info(f"✅ Transmis au backend agency={agency_id}")
         else:
-            log.info(f"⚠️ Backend erreur {resp.status_code} — {resp.text[:200]}")
+            log.warning(f"⚠️ Backend {resp.status_code} — {resp.text[:200]}")
     except Exception as e:
-        log.info(f"❌ Erreur requête backend: {e}")
+        log.error(f"❌ Erreur envoi backend : {e}")
 
 
 # ============================================================
-# 👀 BOUCLE IMAP — SURVEILLANCE CONTINUE
+# 👀 BOUCLE IMAP PAR AGENCE
 # ============================================================
 
-def watch_emails():
-    log.info("👀 WATCHER DÉMARRÉ — IMAP (UNSEEN)")
+def watch_agency(config: dict, stop_event: threading.Event):
+    agency_id = config["agency_id"]
+    imap_host = config["imap_host"]
+    imap_port = config.get("imap_port", 993)
+    imap_user = config["imap_user"]
+    imap_password = config["imap_password"]
+    to_email = config.get("from_email", imap_user)
 
-    while True:
+    log.info(f"👀 Watcher démarré — agency={agency_id} user={imap_user}")
+
+    while not stop_event.is_set():
         try:
-            mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-            mail.login(EMAIL_USER, EMAIL_PASS)
+            mail = imaplib.IMAP4_SSL(imap_host, imap_port)
+            mail.login(imap_user, imap_password)
             mail.select("inbox")
 
             status, messages = mail.search(None, "UNSEEN")
@@ -370,16 +243,88 @@ def watch_emails():
                 if res == "OK":
                     for part in msg_data:
                         if isinstance(part, tuple):
-                            process_one_email(email.message_from_bytes(part[1]))
+                            process_one_email(
+                                email.message_from_bytes(part[1]),
+                                agency_id=agency_id,
+                                to_email=to_email,
+                            )
                 time.sleep(PAUSE_BETWEEN_EMAILS_SEC)
 
             mail.logout()
 
         except Exception as e:
-            log.info(f"⚠️ Erreur watcher: {e}")
+            log.warning(f"⚠️ Erreur IMAP agency={agency_id}: {e}")
 
-        time.sleep(POLL_INTERVAL_SEC)
+        stop_event.wait(POLL_INTERVAL_SEC)
+
+    log.info(f"🛑 Watcher arrêté — agency={agency_id}")
+
+
+# ============================================================
+# 🔄 GESTIONNAIRE MULTI-TENANT
+# ============================================================
+
+def fetch_configs() -> list:
+    """Récupère la liste des configs actives depuis le backend."""
+    try:
+        resp = requests.get(
+            CONFIGS_URL,
+            params={"secret": WATCHER_SECRET},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        log.warning(f"⚠️ Impossible de récupérer les configs : {resp.status_code}")
+    except Exception as e:
+        log.error(f"❌ Erreur fetch configs : {e}")
+    return []
+
+
+def run_multi_tenant_watcher():
+    """
+    Boucle principale : toutes les CONFIG_REFRESH_INTERVAL secondes,
+    compare les configs actives avec les threads en cours et
+    démarre/arrête les watchers par agence.
+    """
+    log.info("🚀 Watcher multi-tenant démarré")
+
+    # agency_id → (thread, stop_event)
+    active_watchers: dict = {}
+
+    while True:
+        configs = fetch_configs()
+        active_ids = {c["agency_id"] for c in configs}
+
+        # Arrêter les watchers dont la config a été désactivée
+        for agency_id in list(active_watchers.keys()):
+            if agency_id not in active_ids:
+                log.info(f"🛑 Désactivation watcher agency={agency_id}")
+                stop_event = active_watchers[agency_id][1]
+                stop_event.set()
+                active_watchers[agency_id][0].join(timeout=5)
+                del active_watchers[agency_id]
+
+        # Démarrer les nouveaux watchers
+        for config in configs:
+            agency_id = config["agency_id"]
+            if agency_id not in active_watchers:
+                if not config.get("imap_host") or not config.get("imap_user") or not config.get("imap_password"):
+                    log.warning(f"⚠️ Config incomplète agency={agency_id} — skipping")
+                    continue
+
+                stop_event = threading.Event()
+                t = threading.Thread(
+                    target=watch_agency,
+                    args=(config, stop_event),
+                    daemon=True,
+                    name=f"watcher-{agency_id}",
+                )
+                t.start()
+                active_watchers[agency_id] = (t, stop_event)
+                log.info(f"▶️ Watcher démarré agency={agency_id}")
+
+        time.sleep(CONFIG_REFRESH_INTERVAL)
 
 
 if __name__ == "__main__":
-    watch_emails()
+    run_multi_tenant_watcher()

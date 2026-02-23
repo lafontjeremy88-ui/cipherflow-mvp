@@ -1,10 +1,4 @@
 # app/api/settings_routes.py
-"""
-Routes paramètres agence, compte utilisateur et suppression RGPD.
-
-FIX P0 : delete_my_account en mode purge supprime désormais les fichiers
-         depuis Cloudflare R2 (plus os.remove sur disque — fuite RGPD corrigée).
-"""
 
 import json
 import logging
@@ -16,10 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
-from app.core.security_utils import clear_refresh_cookie
 from app.database.database import get_db
 from app.database.models import (
-    Agency, AppSettings, EmailAnalysis, FileAnalysis,
+    Agency, AgencyEmailConfig, AppSettings, EmailAnalysis, FileAnalysis,
     Invoice, RefreshToken, TenantDocumentLink, TenantEmailLink,
     TenantFile, User, UserRole,
 )
@@ -27,6 +20,33 @@ from app.services.storage_service import delete_file as r2_delete
 
 router = APIRouter(tags=["Settings"])
 log = logging.getLogger(__name__)
+
+
+# ── Helpers chiffrement mot de passe IMAP ─────────────────────────────────────
+
+def _encrypt_password(password: str) -> str:
+    """Chiffre le mot de passe IMAP avec Fernet avant stockage."""
+    from app.core.config import settings as app_settings
+    key = (app_settings.FERNET_KEY or "").strip()
+    if not key:
+        return password  # dev sans chiffrement
+    from cryptography.fernet import Fernet
+    f = Fernet(key.encode() if isinstance(key, str) else key)
+    return f.encrypt(password.encode()).decode()
+
+
+def _decrypt_password(encrypted: str) -> str:
+    """Déchiffre le mot de passe IMAP."""
+    from app.core.config import settings as app_settings
+    key = (app_settings.FERNET_KEY or "").strip()
+    if not key:
+        return encrypted
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(key.encode() if isinstance(key, str) else key)
+        return f.decrypt(encrypted.encode()).decode()
+    except Exception:
+        return ""
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -58,6 +78,15 @@ class AgencySettingsUpdate(BaseModel):
     signature: Optional[str] = None
     send_email: Optional[bool] = None
     retention_config_json: Optional[str] = None
+
+
+class EmailConfigUpdate(BaseModel):
+    enabled: bool = False
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = 993
+    imap_user: Optional[str] = None
+    imap_password: Optional[str] = None   # reçu en clair, stocké chiffré
+    from_email: Optional[str] = None
 
 
 # ── Compte utilisateur ─────────────────────────────────────────────────────────
@@ -93,7 +122,6 @@ async def update_me(
     if payload.preferred_language is not None:
         current_user.preferred_language = payload.preferred_language.strip().lower()
 
-    # Modification du nom de l'agence — réservée aux admins
     if payload.agency_name is not None:
         is_admin = current_user.role in (UserRole.AGENCY_ADMIN, UserRole.SUPER_ADMIN)
         if not is_admin:
@@ -104,7 +132,6 @@ async def update_me(
 
     db.commit()
     db.refresh(current_user)
-
     agency = db.query(Agency).filter(Agency.id == current_user.agency_id).first()
     return AccountMeResponse(
         email=current_user.email,
@@ -124,18 +151,9 @@ async def delete_my_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_db),
 ):
-    """
-    Suppression de compte.
-
-    - mode=soft  : désactivation + anonymisation
-    - mode=purge : suppression complète des données RGPD
-
-    FIX P0 : le mode purge supprime maintenant les fichiers depuis R2.
-    """
     aid = current_user.agency_id
 
     if mode == "purge":
-        # ── Fichiers R2 ────────────────────────────────────────────────────────
         files = db.query(FileAnalysis).filter(FileAnalysis.agency_id == aid).all()
         deleted_r2 = 0
         for f in files:
@@ -145,35 +163,30 @@ async def delete_my_account(
                     deleted_r2 += 1
                 except Exception as e:
                     log.warning(f"[delete_account] R2 delete échoué ({f.filename}) : {e}")
-        log.info(f"[delete_account] agency={aid} : {deleted_r2} fichiers supprimés de R2")
 
-        # ── Cascade DB ─────────────────────────────────────────────────────────
         db.query(TenantDocumentLink).filter(
             TenantDocumentLink.tenant_file_id.in_(
                 db.query(TenantFile.id).filter(TenantFile.agency_id == aid)
             )
         ).delete(synchronize_session=False)
-
         db.query(TenantEmailLink).filter(
             TenantEmailLink.tenant_file_id.in_(
                 db.query(TenantFile.id).filter(TenantFile.agency_id == aid)
             )
         ).delete(synchronize_session=False)
-
         db.query(TenantFile).filter(TenantFile.agency_id == aid).delete(synchronize_session=False)
         db.query(FileAnalysis).filter(FileAnalysis.agency_id == aid).delete(synchronize_session=False)
         db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).delete(synchronize_session=False)
         db.query(Invoice).filter(Invoice.agency_id == aid).delete(synchronize_session=False)
         db.query(AppSettings).filter(AppSettings.agency_id == aid).delete(synchronize_session=False)
+        db.query(AgencyEmailConfig).filter(AgencyEmailConfig.agency_id == aid).delete(synchronize_session=False)
         db.query(RefreshToken).filter(RefreshToken.user_id == current_user.id).delete(synchronize_session=False)
         db.query(User).filter(User.agency_id == aid).delete(synchronize_session=False)
         db.query(Agency).filter(Agency.id == aid).delete(synchronize_session=False)
         db.commit()
-
         return {"status": "purged", "r2_files_deleted": deleted_r2}
 
     else:
-        # soft : désactivation + anonymisation du compte
         current_user.email = f"deleted_{current_user.id}@cipherflow.invalid"
         current_user.hashed_password = ""
         current_user.first_name = None
@@ -200,11 +213,7 @@ async def get_settings(
     retention = {}
     if s.retention_config_json:
         try:
-            retention = (
-                json.loads(s.retention_config_json)
-                if isinstance(s.retention_config_json, str)
-                else s.retention_config_json
-            )
+            retention = json.loads(s.retention_config_json) if isinstance(s.retention_config_json, str) else s.retention_config_json
         except Exception:
             retention = {}
 
@@ -241,7 +250,6 @@ async def update_settings(
         if hasattr(s, "send_email"):
             s.send_email = payload.send_email
     if payload.retention_config_json is not None:
-        # Validation JSON avant stockage
         try:
             parsed = json.loads(payload.retention_config_json)
             s.retention_config_json = json.dumps(parsed)
@@ -250,3 +258,114 @@ async def update_settings(
 
     db.commit()
     return {"status": "updated"}
+
+
+# ── Configuration email IMAP (watcher multi-tenant) ───────────────────────────
+
+@router.get("/settings/email-config")
+async def get_email_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Retourne la config IMAP de l'agence (sans le mot de passe)."""
+    config = db.query(AgencyEmailConfig).filter(
+        AgencyEmailConfig.agency_id == current_user.agency_id
+    ).first()
+
+    if not config:
+        return {
+            "enabled": False,
+            "imap_host": "",
+            "imap_port": 993,
+            "imap_user": "",
+            "from_email": "",
+            "has_password": False,
+        }
+
+    return {
+        "enabled": config.enabled,
+        "imap_host": config.imap_host or "",
+        "imap_port": config.imap_port or 993,
+        "imap_user": config.imap_user or "",
+        "from_email": config.from_email or "",
+        "has_password": bool(config.imap_password_encrypted),
+    }
+
+
+@router.patch("/settings/email-config")
+async def update_email_config(
+    payload: EmailConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Met à jour la configuration IMAP de l'agence.
+    Le mot de passe est chiffré avec Fernet avant stockage.
+    """
+    is_admin = current_user.role in (UserRole.AGENCY_ADMIN, UserRole.SUPER_ADMIN)
+    if not is_admin:
+        raise HTTPException(403, "Réservé aux admins.")
+
+    aid = current_user.agency_id
+    config = db.query(AgencyEmailConfig).filter(
+        AgencyEmailConfig.agency_id == aid
+    ).first()
+
+    if not config:
+        config = AgencyEmailConfig(agency_id=aid)
+        db.add(config)
+
+    config.enabled = payload.enabled
+    if payload.imap_host is not None:
+        config.imap_host = payload.imap_host.strip()
+    if payload.imap_port is not None:
+        config.imap_port = payload.imap_port
+    if payload.imap_user is not None:
+        config.imap_user = payload.imap_user.strip()
+    if payload.imap_password:
+        config.imap_password_encrypted = _encrypt_password(payload.imap_password)
+    if payload.from_email is not None:
+        config.from_email = payload.from_email.strip()
+
+    config.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"status": "updated", "enabled": config.enabled}
+
+
+@router.get("/watcher/configs")
+async def get_watcher_configs(
+    secret: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Endpoint appelé par le watcher pour récupérer toutes les configs actives.
+    Protégé par WATCHER_SECRET (pas de JWT — appelé par le service watcher).
+    """
+    from app.core.config import settings as app_settings
+    if secret != app_settings.WATCHER_SECRET:
+        raise HTTPException(403, "Non autorisé")
+
+    configs = db.query(AgencyEmailConfig).filter(
+        AgencyEmailConfig.enabled == True
+    ).all()
+
+    result = []
+    for c in configs:
+        password = ""
+        if c.imap_password_encrypted:
+            try:
+                password = _decrypt_password(c.imap_password_encrypted)
+            except Exception:
+                pass
+
+        result.append({
+            "agency_id": c.agency_id,
+            "imap_host": c.imap_host or "",
+            "imap_port": c.imap_port or 993,
+            "imap_user": c.imap_user or "",
+            "imap_password": password,
+            "from_email": c.from_email or c.imap_user or "",
+        })
+
+    return result
