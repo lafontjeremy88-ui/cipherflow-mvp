@@ -86,12 +86,36 @@ async def email_webhook(request: Request):
     import hmac
     import redis
     from rq import Queue
+    from app.database.database import SessionLocal
+    from app.database.models import Agency
 
     auth = request.headers.get("X-Watcher-Secret", "")
     if WATCHER_SECRET and not hmac.compare_digest(auth, WATCHER_SECRET):
         raise HTTPException(403, "Webhook non autorisé")
 
     payload = await request.json()
+
+    # ── Résolution agency_id depuis to_email ──────────────────────────────────
+    # Le watcher n'envoie pas agency_id — on le résout ici avant d'enqueuer
+    if "agency_id" not in payload:
+        db = SessionLocal()
+        try:
+            to_email = payload.get("to_email", "")
+            # Format attendu : contact+alias@domaine.com → alias
+            alias = to_email.split("@")[0].split("+")[-1] if to_email else ""
+            agency = None
+            if alias:
+                agency = db.query(Agency).filter(Agency.email_alias == alias).first()
+            # Fallback : première agence en base
+            if not agency:
+                agency = db.query(Agency).order_by(Agency.id.asc()).first()
+            payload["agency_id"] = agency.id if agency else 1
+            log.info(f"[webhook] agency_id résolu : {payload['agency_id']} (alias='{alias}')")
+        except Exception as e:
+            log.error(f"[webhook] Erreur résolution agency_id : {e}")
+            payload["agency_id"] = 1
+        finally:
+            db.close()
 
     from app.tasks import process_email_job
 
@@ -100,7 +124,7 @@ async def email_webhook(request: Request):
     q = Queue("emails", connection=r)
     job = q.enqueue(process_email_job, payload)
 
-    log.info(f"[webhook] Job enqueued sur queue 'emails' : {job.id}")
+    log.info(f"[webhook] Job enqueued sur queue 'emails' : {job.id} | agency_id={payload.get('agency_id')}")
     return {"status": "queued", "job_id": job.id}
 
 
