@@ -1,18 +1,11 @@
 # app/api/email_routes.py
-"""
-Routes emails : historique, détail, suppression, envoi manuel.
-
-FIX P0 : ajout de POST /email/process pour EmailProcessor.jsx
-         Lance le pipeline complet (analyse + réponse suggérée) sans passer
-         par la file RQ — résultat retourné directement en JSON.
-"""
 
 import json
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -76,6 +69,7 @@ class SendEmailRequest(BaseModel):
 class ProcessEmailRequest(BaseModel):
     """Payload pour l'analyse manuelle d'un email depuis l'interface."""
     from_email: str
+    to_email: str = ""
     subject: str
     content: str
     send_email: bool = False
@@ -116,7 +110,7 @@ async def get_stats(
         "kpis": {
             "total_emails": total,
             "high_urgency": high,
-            "tenant_files": tenant_count,  # FIX: renommé de "invoices" → "tenant_files"
+            "tenant_files": tenant_count,
         },
         "charts": {"distribution": [{"name": c[0], "value": c[1]} for c in cat_stats]},
         "recents": [
@@ -142,7 +136,9 @@ async def get_history(
         return []
 
     email_ids = [e.id for e in emails]
-    links = db.query(TenantEmailLink).filter(TenantEmailLink.email_analysis_id.in_(email_ids)).all()
+    links = db.query(TenantEmailLink).filter(
+        TenantEmailLink.email_analysis_id.in_(email_ids)
+    ).all()
     email_to_tenant = {}
     for link in links:
         if link.email_analysis_id not in email_to_tenant:
@@ -224,77 +220,53 @@ async def process_email_manual(
     current_user: User = Depends(get_current_user_db),
 ):
     """
-    FIX P0 : Route manquante pour EmailProcessor.jsx.
+    Analyse manuelle d'un email depuis l'interface.
 
-    Lance le pipeline complet directement (sans RQ) et retourne
-    l'analyse + la réponse suggérée en JSON.
-    Permet à l'agent de tester le traitement d'un email depuis l'interface.
+    Appelle le vrai pipeline complet (run_email_pipeline) :
+    - Analyse IA de l'email et des pièces jointes
+    - Création du dossier locataire si nécessaire
+    - Attachement des documents au dossier
+    - Mise à jour de la checklist
+    - Génération de la réponse suggérée
+    - Sauvegarde en base (EmailAnalysis)
+
+    Equivalent au traitement automatique via le watcher,
+    mais déclenché manuellement depuis l'UI.
     """
-    from app.database.models import AppSettings
-    from app.services.email_service import analyze_email, generate_reply
+    from app.services.email_pipeline import run_email_pipeline
 
-    aid = current_user.agency_id
+    payload = {
+        "from_email": req.from_email,
+        "to_email": req.to_email,
+        "subject": req.subject,
+        "content": req.content,
+        "attachments": req.attachments,
+        "agency_id": current_user.agency_id,
+        "send_email": req.send_email,
+        "filter_score": 100,
+        "filter_decision": "process_full",
+        "filter_reasons": ["manual_analysis"],
+    }
 
-    # Récupère les paramètres de l'agence
-    agency_settings = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
-    company_name = agency_settings.company_name if agency_settings else "Agence"
-    tone = agency_settings.tone if agency_settings else "pro"
-    signature = agency_settings.signature if agency_settings else "L'équipe"
-
-    # ── Analyse des pièces jointes ─────────────────────────────────────────────
-    attachment_summary = ""
-    if req.attachments:
-        import base64
-        from app.services.document_service import analyze_document
-
-        for att in req.attachments[:5]:  # max 5 PJ en mode manuel
-            try:
-                raw_bytes = base64.b64decode(att.get("content_base64", ""))
-                if not raw_bytes:
-                    continue
-                doc_result = await analyze_document(
-                    file_bytes=raw_bytes,
-                    filename=att.get("filename", "document"),
-                    content_type=att.get("content_type", "application/pdf"),
-                )
-                attachment_summary += f"- {att.get('filename')} ({doc_result.doc_type}) : {doc_result.summary[:100]}\n"
-            except Exception as e:
-                attachment_summary += f"- {att.get('filename', '?')} : erreur analyse ({e})\n"
-
-    # ── Analyse email ──────────────────────────────────────────────────────────
-    email_result = await analyze_email(
-        from_email=req.from_email,
-        subject=req.subject,
-        content=req.content,
-        company_name=company_name,
-        attachment_summary=attachment_summary,
-    )
-
-    # ── Génération réponse ─────────────────────────────────────────────────────
-    reply_result = await generate_reply(
-        from_email=req.from_email,
-        subject=req.subject,
-        content=req.content,
-        summary=email_result.summary,
-        category=email_result.category,
-        urgency=email_result.urgency,
-        company_name=company_name,
-        tone=tone,
-        signature=signature,
-    )
+    try:
+        result = await run_email_pipeline(payload)
+    except Exception as e:
+        raise HTTPException(500, f"Erreur pipeline : {e}")
 
     return {
         "analyse": {
-            "category": email_result.category,
-            "urgency": email_result.urgency,
-            "is_devis": email_result.is_devis,
-            "summary": email_result.summary,
-            "suggested_title": email_result.suggested_title,
-            "candidate_name": email_result.candidate_name,
+            "category": result.get("category"),
+            "urgency": result.get("urgency"),
+            "is_devis": result.get("is_devis"),
+            "summary": result.get("summary"),
+            "suggested_title": result.get("suggested_title"),
+            "candidate_name": result.get("candidate_name"),
         },
         "reponse": {
             "subject": f"Re: {req.subject}",
-            "reply": reply_result.reply,
+            "reply": result.get("reply"),
         },
-        "attachments_summary": attachment_summary or None,
+        "tenant_file_id": result.get("tenant_file_id"),
+        "files_attached": result.get("files_attached", []),
+        "email_id": result.get("email_id"),
     }
