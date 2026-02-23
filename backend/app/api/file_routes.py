@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
+from app.services.storage_service import download_file, delete_file as r2_delete
 from app.database.database import get_db
 from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, TenantFileStatus, User
 
@@ -50,14 +51,6 @@ def _compute_checklist_simple(doc_types: list) -> dict:
     }
 
 
-def _get_upload_path(filename: str) -> Path:
-    """Retourne le chemin absolu du fichier uploadé."""
-    from app.core.config import settings
-    return Path(settings.UPLOAD_DIR) / filename
-
-
-# ── Routes ─────────────────────────────────────────────────────────────────────
-
 @router.get("/api/files/history", response_model=List[FileHistoryItem])
 async def get_files_history(
     db: Session = Depends(get_db),
@@ -85,11 +78,10 @@ def view_file(
     if not f:
         raise HTTPException(404, "Fichier introuvable")
 
-    file_path = _get_upload_path(f.filename)
-    if not file_path.exists():
-        raise HTTPException(404, "Fichier manquant sur le disque")
-
-    raw_bytes = file_path.read_bytes()
+    try:
+        raw_bytes = download_file(f.filename)
+    except Exception:
+        raise HTTPException(404, "Fichier introuvable dans le stockage")
 
     # Détection du vrai type MIME depuis le nom original (sans le préfixe agence_timestamp_)
     original_name = "_".join(f.filename.split("_")[2:]) if f.filename.count("_") >= 2 else f.filename
@@ -116,11 +108,10 @@ async def download_file(
     if not f:
         raise HTTPException(404, "Fichier introuvable ou accès refusé")
 
-    file_path = _get_upload_path(f.filename)
-    if not file_path.exists():
-        raise HTTPException(404, "Fichier introuvable")
-
-    raw_bytes = file_path.read_bytes()
+    try:
+        raw_bytes = download_file(f.filename)
+    except Exception:
+        raise HTTPException(404, "Fichier introuvable dans le stockage")
 
     original_name = "_".join(f.filename.split("_")[2:]) if f.filename.count("_") >= 2 else f.filename
     mime_type, _ = mimetypes.guess_type(original_name)
@@ -180,12 +171,10 @@ async def delete_file(
             tf.checklist_json = json.dumps(checklist)
             tf.status = TenantFileStatus.TO_VALIDATE if not checklist["missing"] else TenantFileStatus.INCOMPLETE
 
-    file_path = _get_upload_path(f.filename)
-    if file_path.exists():
-        try:
-            file_path.unlink()
-        except OSError:
-            pass
+    try:
+        r2_delete(f.filename)
+    except Exception:
+        pass  # fichier déjà absent de R2, on continue
 
     db.delete(f)
     db.commit()

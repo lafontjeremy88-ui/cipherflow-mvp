@@ -35,6 +35,7 @@ from app.database import models
 from app.database.models import TenantDocType
 from app.services.email_service import analyze_email, generate_reply
 from app.services.document_service import analyze_document
+from app.services.storage_service import upload_file
 from app.services.tenant_service import (
     ensure_tenant_file,
     ensure_email_link,
@@ -268,11 +269,10 @@ async def _process_attachment(
         content_type=content_type,
     )
 
-    # ── Écriture sur disque ────────────────────────────────────────────────────
+    # ── Upload vers Cloudflare R2 ──────────────────────────────────────────────
     safe_name = f"{agency_id}_{int(time.time())}_{filename}"
-    file_path = UPLOAD_DIR / safe_name
-    file_path.write_bytes(raw_bytes)
-    log.info(f"[pipeline] Fichier écrit sur disque : {file_path}")
+    upload_file(raw_bytes, safe_name, content_type)
+    log.info(f"[pipeline] Fichier uploadé dans R2 : {safe_name}")
 
     # Sauvegarde FileAnalysis en DB
     new_file = models.FileAnalysis(

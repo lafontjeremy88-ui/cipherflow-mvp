@@ -25,6 +25,7 @@ fpdf2
 pillow
 python-bidi
 arabic-reshaper
+boto3>=1.34.0
 
 # --- Templates ---
 jinja2

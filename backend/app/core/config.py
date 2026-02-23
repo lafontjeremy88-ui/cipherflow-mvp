@@ -43,6 +43,13 @@ class Settings:
     # ── Uploads ────────────────────────────────────────────
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
 
+    # ── Cloudflare R2 (stockage fichiers) ─────────────────
+    R2_ACCOUNT_ID: str = os.getenv("R2_ACCOUNT_ID", "")
+    R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
+    R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
+    R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "cipherflow-uploads")
+    R2_ENDPOINT_URL: str = os.getenv("R2_ENDPOINT_URL", "")
+
     # ── Validation prod ────────────────────────────────────
     def validate(self):
         if self.ENV in ("prod", "production"):
@@ -52,6 +59,9 @@ class Settings:
                 "DATABASE_URL": self.DATABASE_URL,
                 "REDIS_URL": self.REDIS_URL,
                 "GEMINI_API_KEY": self.GEMINI_API_KEY,
+                "R2_ACCESS_KEY_ID": self.R2_ACCESS_KEY_ID,
+                "R2_SECRET_ACCESS_KEY": self.R2_SECRET_ACCESS_KEY,
+                "R2_ENDPOINT_URL": self.R2_ENDPOINT_URL,
             }
             missing = [k for k, v in required.items() if not v]
             if missing:
