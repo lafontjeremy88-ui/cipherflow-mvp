@@ -71,12 +71,8 @@ except ImportError:
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
-    "https://cipherflow-mvp.vercel.app",         # frontend prod
-    "https://cipherflow-mvp-git-main-your-name.vercel.app",  # ← adapter à ton URL Vercel exacte
-    "https://cipherflow.company",
 ]
 
-# Permet d'ajouter des origines supplémentaires via variable d'environnement
 extra_origins = os.getenv("EXTRA_ALLOWED_ORIGINS", "")
 if extra_origins:
     ALLOWED_ORIGINS.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
