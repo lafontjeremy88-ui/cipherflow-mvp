@@ -7,6 +7,7 @@ python-multipart>=0.0.9
 python-dotenv
 httpx
 requests
+cryptography
 
 # --- Security & Auth ---
 python-jose[cryptography]
