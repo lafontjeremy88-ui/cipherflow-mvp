@@ -246,12 +246,11 @@ async def upload_document_for_tenant(
 
     # Analyse IA
     from app.services.document_service import analyze_document
-    import asyncio
-    doc_result = asyncio.run(analyze_document(
+    doc_result = await analyze_document(
         file_bytes=file_bytes,
         filename=file.filename,
         content_type=file.content_type or "application/pdf",
-    ))
+    )
 
     # ── FIX P0 : Upload vers R2 (plus de disque local) ─────────────────────
     safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
