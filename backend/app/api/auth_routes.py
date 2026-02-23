@@ -2,6 +2,8 @@
 """
 Routes d'authentification CipherFlow.
 register / verify-email / login / token / refresh / logout / forgot-reset password
+
+FIX P1 : rate limiting sur /auth/login et /auth/forgot-password via slowapi.
 """
 
 import json
@@ -11,7 +13,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -40,6 +42,32 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 ADMIN_BYPASS_EMAIL = os.getenv("ADMIN_BYPASS_EMAIL", "").strip().lower()
 ACCESS_TOKEN_MINUTES = 15
 REFRESH_TOKEN_DAYS = 30
+
+
+# ── Rate limiting (slowapi) ────────────────────────────────────────────────────
+# Installation : pip install slowapi
+# En cas d'absence de slowapi, les routes fonctionnent sans limitation.
+
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+
+    _limiter = Limiter(key_func=get_remote_address)
+
+    def rate_limit(limit_string: str):
+        """Décorateur de rate limit si slowapi est disponible."""
+        return _limiter.limit(limit_string)
+
+    SLOWAPI_AVAILABLE = True
+except ImportError:
+    SLOWAPI_AVAILABLE = False
+
+    def rate_limit(limit_string: str):
+        """No-op si slowapi n'est pas installé."""
+        def decorator(func):
+            return func
+        return decorator
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -158,7 +186,9 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
 
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@rate_limit("5/minute")
+def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """FIX P1 : limité à 5 requêtes/minute par IP."""
     ok_msg = {"message": "Si un compte existe, tu recevras un email de réinitialisation."}
     user = db.query(User).filter(User.email == payload.email.strip().lower()).first()
     if not user:
@@ -210,7 +240,9 @@ def reset_password(payload: ResetPasswordRequest, response: Response, db: Sessio
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+@rate_limit("10/minute")
+async def login(request: Request, req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    """FIX P1 : limité à 10 requêtes/minute par IP."""
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(400, "Identifiants incorrects")

@@ -1,4 +1,8 @@
 # app/app/google_oauth.py
+"""
+FIX P2 : JWT_SECRET_KEY et JWT_ALGO lus depuis config.py (source unique de vérité)
+         au lieu de os.getenv() dupliqué.
+"""
 import os
 from datetime import datetime, timedelta
 from typing import Optional
@@ -6,20 +10,18 @@ from urllib.parse import urlencode
 
 from jose import jwt
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
 from starlette.middleware.sessions import SessionMiddleware
+
+from app.core.config import settings
 
 router = APIRouter(prefix="/auth/google", tags=["auth-google"])
 
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rstrip("/")
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
-JWT_ALGO = os.getenv("JWT_ALGO", "HS256")
-OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET", "change-me")  # doit être rempli en prod
 
-# Scopes minimum
 SCOPES = "openid email profile"
 
 oauth = OAuth()
@@ -33,24 +35,17 @@ oauth.register(
 
 
 def attach_oauth(app):
-    """
-    A appeler dans main.py:
-      from app.google_oauth import router, attach_oauth
-      attach_oauth(app)
-      app.include_router(router)
-    """
-    # Obligatoire pour stocker l'état OAuth (anti-CSRF)
-    # IMPORTANT: mets une valeur stable en env: OAUTH_STATE_SECRET
     app.add_middleware(
         SessionMiddleware,
-        secret_key=OAUTH_STATE_SECRET,
+        secret_key=settings.OAUTH_STATE_SECRET,
         same_site="lax",
         https_only=True,
     )
 
 
 def create_jwt(email: str, sub: str, name: Optional[str] = None, picture: Optional[str] = None) -> str:
-    if not JWT_SECRET_KEY:
+    """Utilise settings.JWT_SECRET_KEY — source unique de vérité."""
+    if not settings.JWT_SECRET_KEY:
         raise RuntimeError("JWT_SECRET_KEY manquant côté backend")
 
     now = datetime.utcnow()
@@ -63,19 +58,13 @@ def create_jwt(email: str, sub: str, name: Optional[str] = None, picture: Option
         "exp": int((now + timedelta(days=7)).timestamp()),
         "iss": "cipherflow",
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGO)
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
 
 
 @router.get("/login")
 async def google_login(request: Request):
-    # IMPORTANT: l'URL de callback doit être celle côté Railway (celle déclarée dans Google Console)
     backend_base = str(request.base_url).rstrip("/")
     redirect_uri = f"{backend_base}/auth/google/callback"
-
-    # Force une page Google “propre” quand nécessaire (optionnel)
-    # params = {"prompt": "select_account"}
-    # return await oauth.google.authorize_redirect(request, redirect_uri, **params)
-
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
@@ -85,7 +74,6 @@ async def google_callback(request: Request):
         token = await oauth.google.authorize_access_token(request)
         userinfo = token.get("userinfo")
 
-        # Fallback si userinfo pas présent
         if not userinfo:
             userinfo = await oauth.google.userinfo(token=token)
 
@@ -99,12 +87,9 @@ async def google_callback(request: Request):
 
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
-        # ✅ REDIRECTION PRO : route dédiée callback côté front
-        # -> ton front lit token=... puis stocke et redirige vers /dashboard
         redirect_to = f"{FRONTEND_URL}/oauth/callback?{urlencode({'token': cf_token})}"
         return RedirectResponse(url=redirect_to, status_code=302)
 
     except Exception as e:
-        # En cas d'erreur, renvoie vers login avec un flag
         err_url = f"{FRONTEND_URL}/?oauth_error=1"
         return RedirectResponse(url=err_url, status_code=302)

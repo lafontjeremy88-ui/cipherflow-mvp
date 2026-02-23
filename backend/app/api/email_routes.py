@@ -1,6 +1,10 @@
 # app/api/email_routes.py
 """
 Routes emails : historique, détail, suppression, envoi manuel.
+
+FIX P0 : ajout de POST /email/process pour EmailProcessor.jsx
+         Lance le pipeline complet (analyse + réponse suggérée) sans passer
+         par la file RQ — résultat retourné directement en JSON.
 """
 
 import json
@@ -69,6 +73,15 @@ class SendEmailRequest(BaseModel):
     email_id: Optional[int] = None
 
 
+class ProcessEmailRequest(BaseModel):
+    """Payload pour l'analyse manuelle d'un email depuis l'interface."""
+    from_email: str
+    subject: str
+    content: str
+    send_email: bool = False
+    attachments: list = []
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard/stats")
@@ -83,7 +96,10 @@ async def get_stats(
         (func.lower(EmailAnalysis.urgency).contains("haut")) |
         (func.lower(EmailAnalysis.urgency).contains("urg")),
     ).count()
-    inv = db.query(Invoice).filter(Invoice.agency_id == aid).count()
+
+    from app.database.models import TenantFile
+    tenant_count = db.query(TenantFile).filter(TenantFile.agency_id == aid).count()
+
     cat_stats = (
         db.query(EmailAnalysis.category, func.count(EmailAnalysis.id))
         .filter(EmailAnalysis.agency_id == aid)
@@ -97,7 +113,11 @@ async def get_stats(
         .limit(5).all()
     )
     return {
-        "kpis": {"total_emails": total, "high_urgency": high, "invoices": inv},
+        "kpis": {
+            "total_emails": total,
+            "high_urgency": high,
+            "tenant_files": tenant_count,  # FIX: renommé de "invoices" → "tenant_files"
+        },
         "charts": {"distribution": [{"name": c[0], "value": c[1]} for c in cat_stats]},
         "recents": [
             {"id": r.id, "subject": r.subject, "category": r.category,
@@ -195,3 +215,86 @@ async def send_mail_ep(
         db.commit()
 
     return {"status": "sent"}
+
+
+@router.post("/email/process")
+async def process_email_manual(
+    req: ProcessEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    FIX P0 : Route manquante pour EmailProcessor.jsx.
+
+    Lance le pipeline complet directement (sans RQ) et retourne
+    l'analyse + la réponse suggérée en JSON.
+    Permet à l'agent de tester le traitement d'un email depuis l'interface.
+    """
+    from app.database.models import AppSettings
+    from app.services.email_service import analyze_email, generate_reply
+
+    aid = current_user.agency_id
+
+    # Récupère les paramètres de l'agence
+    agency_settings = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
+    company_name = agency_settings.company_name if agency_settings else "Agence"
+    tone = agency_settings.tone if agency_settings else "pro"
+    signature = agency_settings.signature if agency_settings else "L'équipe"
+
+    # ── Analyse des pièces jointes ─────────────────────────────────────────────
+    attachment_summary = ""
+    if req.attachments:
+        import base64
+        from app.services.document_service import analyze_document
+
+        for att in req.attachments[:5]:  # max 5 PJ en mode manuel
+            try:
+                raw_bytes = base64.b64decode(att.get("content_base64", ""))
+                if not raw_bytes:
+                    continue
+                doc_result = await analyze_document(
+                    file_bytes=raw_bytes,
+                    filename=att.get("filename", "document"),
+                    content_type=att.get("content_type", "application/pdf"),
+                )
+                attachment_summary += f"- {att.get('filename')} ({doc_result.doc_type}) : {doc_result.summary[:100]}\n"
+            except Exception as e:
+                attachment_summary += f"- {att.get('filename', '?')} : erreur analyse ({e})\n"
+
+    # ── Analyse email ──────────────────────────────────────────────────────────
+    email_result = await analyze_email(
+        from_email=req.from_email,
+        subject=req.subject,
+        content=req.content,
+        company_name=company_name,
+        attachment_summary=attachment_summary,
+    )
+
+    # ── Génération réponse ─────────────────────────────────────────────────────
+    reply_result = await generate_reply(
+        from_email=req.from_email,
+        subject=req.subject,
+        content=req.content,
+        summary=email_result.summary,
+        category=email_result.category,
+        urgency=email_result.urgency,
+        company_name=company_name,
+        tone=tone,
+        signature=signature,
+    )
+
+    return {
+        "analyse": {
+            "category": email_result.category,
+            "urgency": email_result.urgency,
+            "is_devis": email_result.is_devis,
+            "summary": email_result.summary,
+            "suggested_title": email_result.suggested_title,
+            "candidate_name": email_result.candidate_name,
+        },
+        "reponse": {
+            "subject": f"Re: {req.subject}",
+            "reply": reply_result.reply,
+        },
+        "attachments_summary": attachment_summary or None,
+    }

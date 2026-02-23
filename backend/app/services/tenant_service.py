@@ -8,6 +8,9 @@ Logique métier des dossiers locataires.
 
 Toutes les fonctions prennent une session DB en paramètre.
 Ce service est synchrone (compatible RQ worker).
+
+FIX: checklist_json stocké au format {required, received, missing}
+     unifié avec file_routes.py pour que le frontend lise correctement.
 """
 
 import json
@@ -30,11 +33,11 @@ from app.database.models import (
 log = logging.getLogger(__name__)
 
 # Documents obligatoires pour un dossier complet
-REQUIRED_DOC_TYPES = {
+REQUIRED_DOC_TYPES = [
     TenantDocType.ID.value,
     TenantDocType.PAYSLIP.value,
     TenantDocType.TAX.value,
-}
+]
 
 
 # ── Normalisation email ────────────────────────────────────────────────────────
@@ -73,7 +76,6 @@ def ensure_tenant_file(
     )
 
     if tenant_file:
-        # Mise à jour du nom si on l'a maintenant
         if candidate_name and not tenant_file.candidate_name:
             tenant_file.candidate_name = candidate_name
             db.commit()
@@ -102,10 +104,6 @@ def ensure_email_link(
     tenant_file_id: int,
     email_analysis_id: int,
 ) -> None:
-    """
-    Crée le lien email ↔ dossier si inexistant.
-    Idempotent.
-    """
     existing = (
         db.query(TenantEmailLink)
         .filter(
@@ -132,22 +130,13 @@ def attach_files_to_tenant_file(
     tenant_file: TenantFile,
     file_ids: List[int],
 ) -> None:
-    """
-    Attache des FileAnalysis à un dossier locataire.
-    Règles :
-    - Un doc_type ne peut exister qu'une fois dans un dossier
-    - Les doublons (file_analysis_id déjà lié) sont ignorés
-    """
     if not file_ids:
         return
 
-    # Types déjà présents dans le dossier
     existing_types = {
         link.doc_type.value
         for link in tenant_file.document_links
     }
-
-    # IDs déjà liés
     existing_file_ids = {
         link.file_analysis_id
         for link in tenant_file.document_links
@@ -165,12 +154,10 @@ def attach_files_to_tenant_file(
 
         doc_type = file_analysis.file_type or TenantDocType.OTHER.value
 
-        # Normalisation : si file_type ne correspond pas à un TenantDocType valide
         valid_types = {e.value for e in TenantDocType}
         if doc_type not in valid_types:
             doc_type = TenantDocType.OTHER.value
 
-        # Un seul doc par type (sauf OTHER qui peut être multiple)
         if doc_type != TenantDocType.OTHER.value and doc_type in existing_types:
             log.info(f"[tenant_service] Type déjà présent ({doc_type}), ignoré : file_id={file_id}")
             continue
@@ -192,42 +179,51 @@ def attach_files_to_tenant_file(
 # ── Checklist & statut ─────────────────────────────────────────────────────────
 
 def _empty_checklist() -> dict:
+    """
+    Format unifié attendu par le frontend :
+    { required: [...], received: [], missing: [...] }
+    """
     return {
-        doc_type: {"received": False, "file_id": None}
-        for doc_type in REQUIRED_DOC_TYPES
+        "required": REQUIRED_DOC_TYPES,
+        "received": [],
+        "missing": REQUIRED_DOC_TYPES[:],
     }
 
 
 def recompute_checklist(db: Session, tenant_file: TenantFile) -> None:
     """
     Recalcule la checklist et le statut du dossier.
-    Appelé après chaque attachement de document.
+
+    Format de sortie unifié (compatible frontend + file_routes.py) :
+    {
+      "required": ["id", "payslip", "tax"],
+      "received": ["id"],
+      "missing": ["payslip", "tax"]
+    }
     """
-    # Types reçus dans le dossier
-    received_types = {
-        link.doc_type.value: link.file_analysis_id
+    # Types reçus dans le dossier (parmi les obligatoires uniquement)
+    received = [
+        link.doc_type.value
         for link in tenant_file.document_links
         if link.doc_type.value in REQUIRED_DOC_TYPES
-    }
+    ]
 
-    checklist = {}
-    for doc_type in REQUIRED_DOC_TYPES:
-        file_id = received_types.get(doc_type)
-        checklist[doc_type] = {
-            "received": file_id is not None,
-            "file_id": file_id,
-        }
+    missing = [dt for dt in REQUIRED_DOC_TYPES if dt not in received]
+
+    checklist = {
+        "required": REQUIRED_DOC_TYPES,
+        "received": received,
+        "missing": missing,
+    }
 
     tenant_file.checklist_json = json.dumps(checklist)
 
     # Calcul statut
-    all_received = all(v["received"] for v in checklist.values())
-
     if tenant_file.status == TenantFileStatus.VALIDATED:
         pass  # Ne pas rétrograder un dossier validé
-    elif all_received:
+    elif not missing:
         tenant_file.status = TenantFileStatus.TO_VALIDATE
-    elif any(v["received"] for v in checklist.values()):
+    elif received:
         tenant_file.status = TenantFileStatus.INCOMPLETE
     else:
         tenant_file.status = TenantFileStatus.NEW
@@ -235,5 +231,5 @@ def recompute_checklist(db: Session, tenant_file: TenantFile) -> None:
     db.commit()
     log.info(
         f"[tenant_service] Checklist recalculée dossier_id={tenant_file.id} "
-        f"statut={tenant_file.status.value} reçus={list(received_types.keys())}"
+        f"statut={tenant_file.status.value} reçus={received}"
     )

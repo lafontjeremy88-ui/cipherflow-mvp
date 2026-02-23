@@ -1,6 +1,9 @@
 # app/api/tenant_routes.py
 """
 Routes dossiers locataires : CRUD + upload document + détachement.
+
+FIX P0: upload_document_for_tenant écrit désormais dans Cloudflare R2
+        au lieu du disque local (cohérence avec le pipeline email).
 """
 
 import hashlib
@@ -15,12 +18,12 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
-from app.core.security_utils import decrypt_bytes, encrypt_bytes
 from app.database.database import get_db
 from app.database.models import (
     DocQuality, FileAnalysis, TenantDocumentLink,
     TenantEmailLink, TenantFile, TenantFileStatus, User,
 )
+from app.services.storage_service import upload_file as r2_upload
 from app.services.tenant_service import (
     attach_files_to_tenant_file,
     recompute_checklist,
@@ -207,6 +210,10 @@ async def upload_document_for_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_db),
 ):
+    """
+    Upload un document pour un dossier locataire.
+    FIX P0 : stockage dans Cloudflare R2 (plus de disque local).
+    """
     aid = current_user.agency_id
     tf = db.query(TenantFile).filter(
         TenantFile.id == tenant_id, TenantFile.agency_id == aid,
@@ -217,7 +224,7 @@ async def upload_document_for_tenant(
     file_bytes = await file.read()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    # Anti-doublon
+    # Anti-doublon par hash
     existing = db.query(FileAnalysis).filter(
         FileAnalysis.agency_id == aid,
         FileAnalysis.file_hash == file_hash,
@@ -229,8 +236,13 @@ async def upload_document_for_tenant(
         recompute_checklist(db, tf)
         checklist = json.loads(tf.checklist_json) if tf.checklist_json else {}
         missing = [DOC_LABELS.get(c, c) for c in checklist.get("missing", [])]
-        return {"status": "uploaded", "file_id": existing.id, "tenant_id": tf.id,
-                "missing_docs": missing, "from_cache": True}
+        return {
+            "status": "uploaded",
+            "file_id": existing.id,
+            "tenant_id": tf.id,
+            "missing_docs": missing,
+            "from_cache": True,
+        }
 
     # Analyse IA
     from app.services.document_service import analyze_document
@@ -241,10 +253,10 @@ async def upload_document_for_tenant(
         content_type=file.content_type or "application/pdf",
     ))
 
+    # ── FIX P0 : Upload vers R2 (plus de disque local) ─────────────────────
     safe_name = f"{aid}_{int(time.time())}_{Path(file.filename).name}"
-    uploads_dir = Path("uploads")
-    uploads_dir.mkdir(exist_ok=True)
-    (uploads_dir / safe_name).write_bytes(encrypt_bytes(file_bytes))
+    content_type = file.content_type or "application/octet-stream"
+    r2_upload(file_bytes, safe_name, content_type)
 
     new_file = FileAnalysis(
         filename=safe_name,

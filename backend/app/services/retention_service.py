@@ -1,7 +1,9 @@
 # app/services/retention_service.py
 """
 Nettoyage RGPD périodique.
-Extrait de main.py — ne doit pas y retourner.
+
+FIX P0 : suppression des fichiers dans Cloudflare R2 (plus os.remove sur disque).
+FIX P1 : activé par défaut via ENABLE_RETENTION_WORKER=true en prod.
 """
 
 import asyncio
@@ -9,12 +11,12 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from app.database.database import SessionLocal
 from app.database.models import (
     Agency, AppSettings, EmailAnalysis, FileAnalysis, TenantFile
 )
+from app.services.storage_service import delete_file as r2_delete
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +32,11 @@ def get_retention_config(db, agency_id: int) -> dict:
     s = db.query(AppSettings).filter(AppSettings.agency_id == agency_id).first()
     if s and s.retention_config_json:
         try:
-            stored = json.loads(s.retention_config_json) if isinstance(s.retention_config_json, str) else s.retention_config_json
+            stored = (
+                json.loads(s.retention_config_json)
+                if isinstance(s.retention_config_json, str)
+                else s.retention_config_json
+            )
             if isinstance(stored, dict):
                 cfg.update(stored)
         except Exception as e:
@@ -41,58 +47,72 @@ def get_retention_config(db, agency_id: int) -> dict:
 def run_retention_cleanup(db) -> None:
     now = datetime.utcnow()
 
-    # Nettoyage fichiers tmp
-    uploads_dir = Path("uploads")
-    if uploads_dir.exists():
-        for p in uploads_dir.glob("tmp_*"):
-            try:
-                if (now - datetime.utcfromtimestamp(p.stat().st_mtime)) > timedelta(hours=1):
-                    p.unlink()
-            except Exception:
-                pass
-
     for agency in db.query(Agency).all():
         cfg = get_retention_config(db, agency.id)
 
-        # Emails
+        # ── Emails ────────────────────────────────────────────────────────────
         cutoff = now - timedelta(days=int(cfg["emails_days"]))
-        db.query(EmailAnalysis).filter(
-            EmailAnalysis.agency_id == agency.id,
-            EmailAnalysis.created_at < cutoff,
-        ).delete(synchronize_session=False)
+        deleted_emails = (
+            db.query(EmailAnalysis)
+            .filter(
+                EmailAnalysis.agency_id == agency.id,
+                EmailAnalysis.created_at < cutoff,
+            )
+            .delete(synchronize_session=False)
+        )
+        if deleted_emails:
+            log.info(f"[retention] agency={agency.id} : {deleted_emails} emails supprimés")
 
-        # FileAnalysis
+        # ── FileAnalysis + fichiers R2 ─────────────────────────────────────────
         cutoff = now - timedelta(days=int(cfg["file_analyses_days"]))
-        old_files = db.query(FileAnalysis).filter(
-            FileAnalysis.agency_id == agency.id,
-            FileAnalysis.created_at < cutoff,
-        ).all()
+        old_files = (
+            db.query(FileAnalysis)
+            .filter(
+                FileAnalysis.agency_id == agency.id,
+                FileAnalysis.created_at < cutoff,
+            )
+            .all()
+        )
+
         for f in old_files:
-            path = os.path.join("uploads", f.filename)
-            if os.path.exists(path):
+            # FIX P0 : suppression dans R2 (plus os.remove)
+            if f.filename:
                 try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                    r2_delete(f.filename)
+                    log.info(f"[retention] Fichier supprimé de R2 : {f.filename}")
+                except Exception as e:
+                    log.warning(f"[retention] R2 delete échoué ({f.filename}) : {e}")
             db.delete(f)
 
-        # Anonymisation dossiers fermés
+        if old_files:
+            log.info(f"[retention] agency={agency.id} : {len(old_files)} fichiers supprimés")
+
+        # ── Anonymisation dossiers fermés ──────────────────────────────────────
         cutoff = now - timedelta(days=int(cfg["tenant_files_days_after_closure"]))
-        for tf in db.query(TenantFile).filter(
-            TenantFile.agency_id == agency.id,
-            TenantFile.is_closed == True,
-            TenantFile.closed_at < cutoff,
-        ).all():
+        anonymized = 0
+        for tf in (
+            db.query(TenantFile)
+            .filter(
+                TenantFile.agency_id == agency.id,
+                TenantFile.is_closed == True,
+                TenantFile.closed_at < cutoff,
+            )
+            .all()
+        ):
             tf.candidate_email = None
             tf.candidate_name = None
             tf.risk_level = None
+            anonymized += 1
+
+        if anonymized:
+            log.info(f"[retention] agency={agency.id} : {anonymized} dossiers anonymisés")
 
     db.commit()
     log.info("[retention] Cleanup RGPD terminé")
 
 
 async def retention_worker() -> None:
-    """Tourne en tâche de fond, toutes les 6 heures."""
+    """Tourne en tâche de fond toutes les 6 heures."""
     while True:
         db = SessionLocal()
         try:
