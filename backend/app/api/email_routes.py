@@ -1,7 +1,11 @@
 # app/api/email_routes.py
 
+import base64
+import hashlib
 import json
+import time
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,7 +17,7 @@ from app.api.deps import get_current_user_db
 from app.core.security_utils import send_email_via_resend
 from app.database.database import get_db
 from app.database.models import (
-    AppSettings, EmailAnalysis, FileAnalysis, Invoice,
+    AppSettings, EmailAnalysis, FileAnalysis,
     TenantEmailLink, User,
 )
 
@@ -67,7 +71,6 @@ class SendEmailRequest(BaseModel):
 
 
 class ProcessEmailRequest(BaseModel):
-    """Payload pour l'analyse manuelle d'un email depuis l'interface."""
     from_email: str
     to_email: str = ""
     subject: str
@@ -76,7 +79,7 @@ class ProcessEmailRequest(BaseModel):
     attachments: list = []
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────────
+# ── Dashboard stats ────────────────────────────────────────────────────────────
 
 @router.get("/dashboard/stats")
 async def get_stats(
@@ -114,12 +117,17 @@ async def get_stats(
         },
         "charts": {"distribution": [{"name": c[0], "value": c[1]} for c in cat_stats]},
         "recents": [
-            {"id": r.id, "subject": r.subject, "category": r.category,
-             "urgency": r.urgency, "date": r.created_at.strftime("%d/%m %H:%M") if r.created_at else ""}
+            {
+                "id": r.id, "subject": r.subject, "category": r.category,
+                "urgency": r.urgency,
+                "date": r.created_at.strftime("%d/%m %H:%M") if r.created_at else "",
+            }
             for r in recents
         ],
     }
 
+
+# ── Historique ─────────────────────────────────────────────────────────────────
 
 @router.get("/email/history", response_model=List[EmailHistoryItem])
 async def get_history(
@@ -186,6 +194,8 @@ async def delete_history(
     return {"status": "deleted"}
 
 
+# ── Envoi email ────────────────────────────────────────────────────────────────
+
 @router.post("/email/send")
 async def send_mail_ep(
     req: SendEmailRequest,
@@ -213,6 +223,8 @@ async def send_mail_ep(
     return {"status": "sent"}
 
 
+# ── Analyse manuelle — pipeline complet inline ────────────────────────────────
+
 @router.post("/email/process")
 async def process_email_manual(
     req: ProcessEmailRequest,
@@ -220,53 +232,183 @@ async def process_email_manual(
     current_user: User = Depends(get_current_user_db),
 ):
     """
-    Analyse manuelle d'un email depuis l'interface.
-
-    Appelle le vrai pipeline complet (run_email_pipeline) :
-    - Analyse IA de l'email et des pièces jointes
-    - Création du dossier locataire si nécessaire
-    - Attachement des documents au dossier
-    - Mise à jour de la checklist
-    - Génération de la réponse suggérée
-    - Sauvegarde en base (EmailAnalysis)
-
-    Equivalent au traitement automatique via le watcher,
-    mais déclenché manuellement depuis l'UI.
+    Pipeline complet inline — identique au watcher automatique :
+    1. Analyse IA pièces jointes + upload R2
+    2. Analyse email (catégorie, urgence, résumé)
+    3. Génération réponse suggérée
+    4. Sauvegarde EmailAnalysis en base
+    5. Création/récupération dossier locataire
+    6. Attachement documents + recalcul checklist
+    7. Envoi email si activé
     """
-    from app.services.email_pipeline import run_email_pipeline
+    from app.services.document_service import analyze_document
+    from app.services.email_service import analyze_email, generate_reply
+    from app.services.storage_service import upload_file as r2_upload
+    from app.services.tenant_service import (
+        ensure_tenant_file, ensure_email_link,
+        attach_files_to_tenant_file, recompute_checklist,
+    )
 
-    payload = {
-        "from_email": req.from_email,
-        "to_email": req.to_email,
-        "subject": req.subject,
-        "content": req.content,
-        "attachments": req.attachments,
-        "agency_id": current_user.agency_id,
-        "send_email": req.send_email,
-        "filter_score": 100,
-        "filter_decision": "process_full",
-        "filter_reasons": ["manual_analysis"],
-    }
+    aid = current_user.agency_id
 
-    try:
-        result = await run_email_pipeline(payload)
-    except Exception as e:
-        raise HTTPException(500, f"Erreur pipeline : {e}")
+    # Paramètres agence
+    agency_settings = db.query(AppSettings).filter(AppSettings.agency_id == aid).first()
+    company_name = getattr(agency_settings, "company_name", None) or "Agence"
+    tone = getattr(agency_settings, "tone", None) or "pro"
+    signature = getattr(agency_settings, "signature", None) or "L'équipe"
+    send_email_flag = req.send_email and getattr(agency_settings, "send_email", False)
+
+    # ── 1. Pièces jointes ──────────────────────────────────────────────────────
+    attachment_summary = ""
+    saved_file_ids = []
+
+    for att in req.attachments[:10]:
+        try:
+            raw_bytes = base64.b64decode(att.get("content_base64", ""))
+            if not raw_bytes:
+                continue
+
+            filename = att.get("filename", "document")
+            content_type = att.get("content_type", "application/octet-stream")
+
+            doc_result = await analyze_document(
+                file_bytes=raw_bytes,
+                filename=filename,
+                content_type=content_type,
+            )
+            attachment_summary += (
+                f"- {filename} ({doc_result.doc_type}) : {doc_result.summary[:120]}\n"
+            )
+
+            file_hash = hashlib.sha256(raw_bytes).hexdigest()
+            existing = db.query(FileAnalysis).filter(
+                FileAnalysis.agency_id == aid,
+                FileAnalysis.file_hash == file_hash,
+            ).first()
+
+            if existing:
+                saved_file_ids.append(existing.id)
+                continue
+
+            safe_name = f"{aid}_{int(time.time())}_{Path(filename).name}"
+            r2_upload(raw_bytes, safe_name, content_type)
+
+            new_file = FileAnalysis(
+                filename=safe_name,
+                file_type=doc_result.doc_type,
+                sender=req.from_email,
+                extracted_date=doc_result.extracted_date,
+                amount=doc_result.amount,
+                summary=doc_result.summary,
+                agency_id=aid,
+                file_hash=file_hash,
+            )
+            db.add(new_file)
+            db.commit()
+            db.refresh(new_file)
+            saved_file_ids.append(new_file.id)
+
+        except Exception as e:
+            attachment_summary += f"- {att.get('filename', '?')} : erreur ({e})\n"
+
+    # ── 2. Analyse email ───────────────────────────────────────────────────────
+    email_result = await analyze_email(
+        from_email=req.from_email,
+        subject=req.subject,
+        content=req.content,
+        company_name=company_name,
+        attachment_summary=attachment_summary,
+    )
+
+    # ── 3. Réponse suggérée ────────────────────────────────────────────────────
+    reply_result = await generate_reply(
+        from_email=req.from_email,
+        subject=req.subject,
+        content=req.content,
+        summary=email_result.summary,
+        category=email_result.category,
+        urgency=email_result.urgency,
+        company_name=company_name,
+        tone=tone,
+        signature=signature,
+    )
+
+    # ── 4. Sauvegarde EmailAnalysis ────────────────────────────────────────────
+    email_record = EmailAnalysis(
+        agency_id=aid,
+        sender_email=req.from_email,
+        subject=req.subject,
+        raw_email_text=req.content,
+        summary=email_result.summary,
+        category=email_result.category,
+        urgency=email_result.urgency,
+        is_devis=email_result.is_devis,
+        suggested_response_text=reply_result.reply,
+        reply_sent=False,
+    )
+    db.add(email_record)
+    db.commit()
+    db.refresh(email_record)
+
+    # ── 5. Dossier locataire ───────────────────────────────────────────────────
+    tenant_file_id = None
+    checklist = None
+
+    is_tenant_email = email_result.category in (
+        "dossier_locataire", "candidature", "document", "piece_jointe"
+    )
+
+    if is_tenant_email and req.from_email:
+        tenant_file = ensure_tenant_file(
+            db=db,
+            agency_id=aid,
+            candidate_email=req.from_email,
+            candidate_name=getattr(email_result, "candidate_name", None),
+        )
+        if tenant_file:
+            ensure_email_link(db, tenant_file.id, email_record.id)
+
+            if saved_file_ids:
+                attach_files_to_tenant_file(db, tenant_file, saved_file_ids)
+                db.refresh(tenant_file)
+                recompute_checklist(db, tenant_file)
+                checklist = (
+                    json.loads(tenant_file.checklist_json)
+                    if tenant_file.checklist_json else None
+                )
+
+            tenant_file_id = tenant_file.id
+
+    # ── 6. Envoi email si activé ───────────────────────────────────────────────
+    if send_email_flag and reply_result.reply:
+        try:
+            send_email_via_resend(
+                req.from_email,
+                f"Re: {req.subject}",
+                reply_result.reply,
+            )
+            email_record.reply_sent = True
+            email_record.reply_sent_at = datetime.utcnow()
+            db.commit()
+        except Exception:
+            pass
 
     return {
         "analyse": {
-            "category": result.get("category"),
-            "urgency": result.get("urgency"),
-            "is_devis": result.get("is_devis"),
-            "summary": result.get("summary"),
-            "suggested_title": result.get("suggested_title"),
-            "candidate_name": result.get("candidate_name"),
+            "category": email_result.category,
+            "urgency": email_result.urgency,
+            "is_devis": email_result.is_devis,
+            "summary": email_result.summary,
+            "suggested_title": getattr(email_result, "suggested_title", None),
+            "candidate_name": getattr(email_result, "candidate_name", None),
         },
         "reponse": {
             "subject": f"Re: {req.subject}",
-            "reply": result.get("reply"),
+            "reply": reply_result.reply,
         },
-        "tenant_file_id": result.get("tenant_file_id"),
-        "files_attached": result.get("files_attached", []),
-        "email_id": result.get("email_id"),
+        "email_id": email_record.id,
+        "tenant_file_id": tenant_file_id,
+        "files_saved": saved_file_ids,
+        "checklist": checklist,
+        "attachments_summary": attachment_summary or None,
     }
