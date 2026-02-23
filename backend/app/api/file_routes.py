@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
-from app.core.security_utils import decrypt_bytes
 from app.database.database import get_db
 from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, TenantFileStatus, User
 
@@ -51,6 +50,12 @@ def _compute_checklist_simple(doc_types: list) -> dict:
     }
 
 
+def _get_upload_path(filename: str) -> Path:
+    """Retourne le chemin absolu du fichier uploadé."""
+    from app.core.config import settings
+    return Path(settings.UPLOAD_DIR) / filename
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.get("/api/files/history", response_model=List[FileHistoryItem])
@@ -58,7 +63,6 @@ async def get_files_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_db),
 ):
-    """Liste tous les fichiers analysés pour l'agence."""
     files = (
         db.query(FileAnalysis)
         .filter(FileAnalysis.agency_id == current_user.agency_id)
@@ -81,20 +85,21 @@ def view_file(
     if not f:
         raise HTTPException(404, "Fichier introuvable")
 
-    file_path = Path("uploads") / f.filename
+    file_path = _get_upload_path(f.filename)
     if not file_path.exists():
         raise HTTPException(404, "Fichier manquant sur le disque")
 
-    try:
-        decrypted = decrypt_bytes(file_path.read_bytes())
-    except Exception:
-        raise HTTPException(500, "Erreur lecture fichier")
+    raw_bytes = file_path.read_bytes()
 
-    mime_type, _ = mimetypes.guess_type(f.filename)
+    # Détection du vrai type MIME depuis le nom original (sans le préfixe agence_timestamp_)
+    original_name = "_".join(f.filename.split("_")[2:]) if f.filename.count("_") >= 2 else f.filename
+    mime_type, _ = mimetypes.guess_type(original_name)
+    mime_type = mime_type or "application/octet-stream"
+
     return Response(
-        content=decrypted,
-        media_type=mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{f.filename}"'},
+        content=raw_bytes,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'inline; filename="{original_name}"'},
     )
 
 
@@ -111,15 +116,20 @@ async def download_file(
     if not f:
         raise HTTPException(404, "Fichier introuvable ou accès refusé")
 
-    path = Path("uploads") / f.filename
-    if not path.exists():
+    file_path = _get_upload_path(f.filename)
+    if not file_path.exists():
         raise HTTPException(404, "Fichier introuvable")
 
-    decrypted = decrypt_bytes(path.read_bytes())
+    raw_bytes = file_path.read_bytes()
+
+    original_name = "_".join(f.filename.split("_")[2:]) if f.filename.count("_") >= 2 else f.filename
+    mime_type, _ = mimetypes.guess_type(original_name)
+    mime_type = mime_type or "application/octet-stream"
+
     return Response(
-        content=decrypted,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{f.filename}"'},
+        content=raw_bytes,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{original_name}"'},
     )
 
 
@@ -170,10 +180,10 @@ async def delete_file(
             tf.checklist_json = json.dumps(checklist)
             tf.status = TenantFileStatus.TO_VALIDATE if not checklist["missing"] else TenantFileStatus.INCOMPLETE
 
-    path = os.path.join("uploads", f.filename)
-    if os.path.exists(path):
+    file_path = _get_upload_path(f.filename)
+    if file_path.exists():
         try:
-            os.remove(path)
+            file_path.unlink()
         except OSError:
             pass
 

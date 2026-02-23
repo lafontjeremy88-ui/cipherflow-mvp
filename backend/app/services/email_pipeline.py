@@ -268,8 +268,13 @@ async def _process_attachment(
         content_type=content_type,
     )
 
-    # Sauvegarde FileAnalysis
+    # ── Écriture sur disque ────────────────────────────────────────────────────
     safe_name = f"{agency_id}_{int(time.time())}_{filename}"
+    file_path = UPLOAD_DIR / safe_name
+    file_path.write_bytes(raw_bytes)
+    log.info(f"[pipeline] Fichier écrit sur disque : {file_path}")
+
+    # Sauvegarde FileAnalysis en DB
     new_file = models.FileAnalysis(
         agency_id=agency_id,
         filename=safe_name,
