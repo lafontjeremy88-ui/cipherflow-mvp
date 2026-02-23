@@ -11,14 +11,24 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
+
 def _get_client():
     """Crée un client S3 compatible Cloudflare R2."""
     return boto3.client(
         "s3",
-        endpoint_url=settings.R2_ENDPOINT_URL,
-        aws_access_key_id=settings.R2_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-        config=Config(signature_version="s3v4"),
+        endpoint_url=settings.R2_ENDPOINT_URL.strip(),
+        aws_access_key_id=settings.R2_ACCESS_KEY_ID.strip(),
+        aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY.strip(),
+        config=Config(
+            signature_version="s3v4",
+            # Désactive le chunked transfer encoding — incompatible avec R2
+            s3={
+                "payload_signing_enabled": False,
+                "checksum_algorithm": None,
+            },
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
         region_name="auto",
     )
 
@@ -30,10 +40,11 @@ def upload_file(file_bytes: bytes, filename: str, content_type: str = "applicati
     """
     client = _get_client()
     client.put_object(
-        Bucket=settings.R2_BUCKET_NAME,
+        Bucket=settings.R2_BUCKET_NAME.strip(),
         Key=filename,
         Body=file_bytes,
         ContentType=content_type,
+        ContentLength=len(file_bytes),
     )
     log.info(f"[storage] Fichier uploadé dans R2 : {filename}")
     return filename
@@ -46,7 +57,7 @@ def download_file(filename: str) -> bytes:
     """
     client = _get_client()
     response = client.get_object(
-        Bucket=settings.R2_BUCKET_NAME,
+        Bucket=settings.R2_BUCKET_NAME.strip(),
         Key=filename,
     )
     file_bytes = response["Body"].read()
@@ -58,7 +69,7 @@ def delete_file(filename: str) -> None:
     """Supprime un fichier dans R2."""
     client = _get_client()
     client.delete_object(
-        Bucket=settings.R2_BUCKET_NAME,
+        Bucket=settings.R2_BUCKET_NAME.strip(),
         Key=filename,
     )
     log.info(f"[storage] Fichier supprimé de R2 : {filename}")
