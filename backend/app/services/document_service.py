@@ -56,10 +56,25 @@ async def analyze_document(
             error=f"MIME type {mime} not supported",
         )
 
-    prompt = """
-Tu es un assistant IA spécialisé dans l'analyse de documents immobiliers.
-Analyse ce document et réponds UNIQUEMENT en JSON valide, sans markdown.
+    # Indice basé sur le nom de fichier pour aider Gemini
+    filename_lower = filename.lower()
+    filename_hint = ""
+    if any(k in filename_lower for k in ["cni", "carte", "identite", "identity", "passeport", "passport", "sejour", "titre"]):
+        filename_hint = "INDICE IMPORTANT : Le nom du fichier indique une pièce d'identité (CNI/passeport/titre de séjour). Utilise doc_type=id sauf contradiction évidente.\n"
+    elif any(k in filename_lower for k in ["paie", "salaire", "payslip", "bulletin", "fiche"]):
+        filename_hint = "INDICE IMPORTANT : Le nom du fichier indique un bulletin de salaire. Utilise doc_type=payslip sauf contradiction évidente.\n"
+    elif any(k in filename_lower for k in ["impot", "tax", "fiscal", "avis", "dgfip"]):
+        filename_hint = "INDICE IMPORTANT : Le nom du fichier indique un avis d'imposition. Utilise doc_type=tax sauf contradiction évidente.\n"
+    elif any(k in filename_lower for k in ["contrat", "contract", "travail", "embauche", "cdi", "cdd"]):
+        filename_hint = "INDICE IMPORTANT : Le nom du fichier indique un contrat de travail. Utilise doc_type=work_contract sauf contradiction évidente.\n"
+    elif any(k in filename_lower for k in ["rib", "releve", "bancaire", "bank", "iban"]):
+        filename_hint = "INDICE IMPORTANT : Le nom du fichier indique un document bancaire. Utilise doc_type=bank sauf contradiction évidente.\n"
 
+    prompt = (
+        "Tu es un assistant IA spécialisé dans l'analyse de documents immobiliers.\n"
+        "Analyse ce document et réponds UNIQUEMENT en JSON valide, sans markdown.\n"
+        + filename_hint +
+        """
 Réponds avec ce JSON exact :
 {
   "doc_type": "id | payslip | tax | work_contract | bank | other",
@@ -70,14 +85,17 @@ Réponds avec ce JSON exact :
   "candidate_name": "Prénom Nom du titulaire du document si détecté, sinon null"
 }
 
-Règles doc_type :
-- id : carte d'identité, passeport, titre de séjour
-- payslip : bulletin de salaire, fiche de paie
-- tax : avis d'imposition, déclaration de revenus
-- work_contract : contrat de travail, promesse d'embauche
-- bank : RIB, relevé bancaire
+Règles doc_type (sois généreux dans la classification) :
+- id : carte nationale d'identité (CNI), passeport, titre de séjour, permis de conduire avec photo
+- payslip : bulletin de salaire, fiche de paie, attestation de salaire
+- tax : avis d'imposition, déclaration de revenus, avis de non-imposition
+- work_contract : contrat de travail, promesse d'embauche, attestation employeur, CDI, CDD
+- bank : RIB, relevé bancaire, IBAN
 - other : tout le reste
+
+En cas de doute, privilégie toujours la catégorie la plus spécifique plutôt que 'other'.
 """
+    )
 
     raw = ""
     try:
