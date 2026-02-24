@@ -430,7 +430,8 @@ def fetch_configs() -> list:
             # Filtre côté watcher : on ne garde que les agences avec OAuth Gmail
             return [
                 c for c in resp.json()
-                if c.get("gmail_refresh_token") and c.get("enabled")
+                if c.get("gmail_refresh_token")
+                # enabled ne bloque pas Gmail OAuth, seulement le watcher IMAP
             ]
         log.warning(f"⚠️ Impossible de récupérer les configs : {resp.status_code}")
     except Exception as e:
