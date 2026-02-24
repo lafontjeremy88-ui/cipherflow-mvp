@@ -125,7 +125,9 @@ async def gmail_connect(
 
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     log.info(f"[gmail_oauth] Redirection OAuth agency={agency_id}")
-    return RedirectResponse(url)
+    # Retourne l'URL pour que le frontend redirige lui-même
+    # (évite le problème d'auth header perdu lors d'une RedirectResponse)
+    return {"auth_url": url}
 
 
 @router.get("/callback")

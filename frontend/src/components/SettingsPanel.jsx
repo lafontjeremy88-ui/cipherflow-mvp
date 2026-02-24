@@ -165,8 +165,18 @@ function GmailConnectSection({ authFetch }) {
     load();
   }, [authFetch]);
 
-  const handleConnect = () => {
-    window.location.href = API_BASE + "/gmail/connect";
+  const handleConnect = async () => {
+    try {
+      const res = await authFetch(API_BASE + "/gmail/connect");
+      const data = await res.json();
+      if (data?.auth_url) {
+        window.location.href = data.auth_url;
+      } else {
+        setMessage({ type: "error", text: "Impossible d'obtenir l'URL de connexion Google." });
+      }
+    } catch (e) {
+      setMessage({ type: "error", text: "Erreur réseau lors de la connexion Gmail." });
+    }
   };
 
   const handleDisconnect = async () => {
