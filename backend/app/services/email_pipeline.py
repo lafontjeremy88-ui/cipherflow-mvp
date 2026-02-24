@@ -49,6 +49,40 @@ UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+# ── Normalisation email candidat ───────────────────────────────────────────────
+
+def _normalize_candidate_email(email: str) -> str:
+    """
+    Normalise un email pour garantir l'unicité du dossier locataire.
+
+    Règles appliquées :
+    - Lowercase complet
+    - Suppression des alias Gmail (+tag) : jean+candidature@gmail.com → jean@gmail.com
+    - Suppression des points dans la partie locale Gmail :
+      jean.dupont@gmail.com → jeandupont@gmail.com
+    - Trim des espaces
+
+    Exemple :
+      Jean.Dupont+candidature@Gmail.com → jeandupont@gmail.com
+    """
+    if not email:
+        return ""
+
+    email = email.strip().lower()
+    local, _, domain = email.partition("@")
+    if not domain:
+        return email
+
+    # Suppression alias +tag
+    local = local.split("+")[0]
+
+    # Suppression des points pour les domaines Gmail
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.replace(".", "")
+
+    return f"{local}@{domain}"
+
+
 # ── Entrée principale ──────────────────────────────────────────────────────────
 
 async def run_email_pipeline(payload: dict) -> None:
@@ -58,6 +92,7 @@ async def run_email_pipeline(payload: dict) -> None:
     """
 
     db = SessionLocal()
+    new_email = None  # permet de le marquer FAILED dans le except si créé avant l'erreur
 
     try:
         # ── Extraction payload ─────────────────────────────────────────────────
@@ -126,6 +161,7 @@ async def run_email_pipeline(payload: dict) -> None:
             filter_decision=payload.get("filter_decision"),
             filter_score=payload.get("filter_score"),
             filter_reasons=str(payload.get("filter_reasons", "")),
+            processing_status="processing",
         )
         db.add(new_email)
         db.commit()
@@ -138,13 +174,15 @@ async def run_email_pipeline(payload: dict) -> None:
             email_result.candidate_name
             or candidate_name_from_docs
         )
+        # Normalisation email pour garantir l'unicité du dossier (anti-doublon)
+        normalized_email = _normalize_candidate_email(from_email)
 
         tenant_file = None
         try:
             tenant_file = ensure_tenant_file(
                 db=db,
                 agency_id=agency_id,
-                candidate_email=from_email,
+                candidate_email=normalized_email,
                 candidate_name=candidate_name,
             )
         except Exception as e:
@@ -207,6 +245,12 @@ async def run_email_pipeline(payload: dict) -> None:
             except Exception as e:
                 log.error(f"[pipeline] Erreur envoi email : {e}")
 
+        # ── Marquer le pipeline comme SUCCESS ─────────────────────────────────
+        from datetime import datetime as _dt
+        new_email.processing_status = "success"
+        new_email.processed_at = _dt.utcnow()
+        db.commit()
+
         log.info(
             f"[pipeline] ✅ SUCCESS email_id={new_email.id} "
             f"dossier_id={tenant_file.id if tenant_file else 'N/A'} "
@@ -216,6 +260,19 @@ async def run_email_pipeline(payload: dict) -> None:
     except Exception as e:
         db.rollback()
         log.error(f"[pipeline] ❌ FATAL ERROR : {e}", exc_info=True)
+
+        # Si l'EmailAnalysis a été créé avant l'erreur, on le marque FAILED
+        try:
+            if new_email and new_email.id:
+                from datetime import datetime as _dt
+                new_email.processing_status = "failed"
+                new_email.processed_at = _dt.utcnow()
+                new_email.processing_error = str(e)[:1000]
+                db.add(new_email)
+                db.commit()
+        except Exception as inner_e:
+            log.error(f"[pipeline] Impossible de marquer l'email en FAILED : {inner_e}")
+
         raise
 
     finally:

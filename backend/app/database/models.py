@@ -188,6 +188,11 @@ class EmailAnalysis(Base):
     filter_decision = Column(String, nullable=True, index=True)
     filter_score = Column(Integer, nullable=True)
     filter_reasons = Column(Text, nullable=True)
+    # ── Tracking pipeline ──────────────────────────────────────────────────────
+    # Valeurs possibles : "pending" | "processing" | "success" | "failed"
+    processing_status = Column(String, default="pending", nullable=False, index=True)
+    processed_at = Column(DateTime, nullable=True)
+    processing_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
