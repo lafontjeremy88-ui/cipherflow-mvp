@@ -89,6 +89,12 @@ class AgencyEmailConfig(Base):
     # ── Email sortant (optionnel) ──────────────────────────
     from_email = Column(String, nullable=True)         # adresse affichée dans les réponses
 
+    # ── Gmail OAuth ────────────────────────────────────────
+    gmail_access_token  = Column(Text, nullable=True)
+    gmail_refresh_token = Column(Text, nullable=True)
+    gmail_token_expiry  = Column(DateTime, nullable=True)
+    gmail_email         = Column(String, nullable=True)  # adresse Gmail connectée
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
