@@ -58,7 +58,7 @@ TOKEN_UPDATE_URL = f"{BACKEND_URL}/watcher/update-token"  # endpoint pour MAJ to
 GOOGLE_TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
 
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",  # inclut readonly + marquer comme lu
     "https://www.googleapis.com/auth/gmail.send",
 ]
 

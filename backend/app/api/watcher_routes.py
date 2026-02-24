@@ -44,7 +44,8 @@ async def get_watcher_configs(
     configs = (
         db.query(models.AgencyEmailConfig)
         .filter(
-            models.AgencyEmailConfig.enabled == True,
+            # Le watcher Gmail s'active dès qu'un token existe
+            # Le champ enabled ne contrôle que le watcher IMAP
             models.AgencyEmailConfig.gmail_refresh_token.isnot(None),
         )
         .all()
