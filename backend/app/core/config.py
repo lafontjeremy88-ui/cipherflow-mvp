@@ -43,6 +43,12 @@ class Settings:
     # ── Uploads ────────────────────────────────────────────
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
 
+    # ── Google OAuth (Gmail) ──────────────────────────────
+    GOOGLE_OAUTH_CLIENT_ID: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+    GOOGLE_OAUTH_CLIENT_SECRET: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    GOOGLE_OAUTH_REDIRECT_URL: str = os.getenv("GOOGLE_OAUTH_REDIRECT_URL", "")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app")
+
     # ── Cloudflare R2 (stockage fichiers) ─────────────────
     R2_ACCOUNT_ID: str = os.getenv("R2_ACCOUNT_ID", "")
     R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
