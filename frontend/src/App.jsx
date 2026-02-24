@@ -100,9 +100,11 @@ function AppShell({ authFetch, onLogout }) {
             Analyse de documents
           </NavLink>
 
+          {/* 🔒 Quittances - brique prévue, cachée pour l'instant
           <NavLink to="/invoices" className={navItemClass}>
             Quittances
           </NavLink>
+          */}
 
           <NavLink to="/tenant-files" className={navItemClass}>
             Dossiers locataires
@@ -187,10 +189,12 @@ function AppShell({ authFetch, onLogout }) {
             element={<FileAnalyzer authFetch={authFetch} />}
           />
 
+          {/* 🔒 Quittances - brique prévue, cachée pour l'instant
           <Route
             path="/invoices"
             element={<InvoiceGenerator authFetch={authFetch} />}
           />
+          */}
 
           <Route
             path="/tenant-files"
