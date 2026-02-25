@@ -93,29 +93,52 @@ Règles doc_type :
 
     def _reencode_image(data_bytes: bytes) -> tuple[bytes, str]:
         """
-        Re-encode l'image via PIL pour réparer les fichiers corrompus
-        (ex: Gmail forwarding qui altère l'encodage).
+        Re-encode l'image via PIL pour réparer les fichiers corrompus.
         - Redimensionne à 2048x2048 max (limite Gemini)
         - Convertit en PNG propre
-        - Corrige le curseur du buffer (buf.seek(0))
-        Retourne (bytes, mime_type) de l'image nettoyée en PNG.
+        - Gère les formats HEIC/HEIF (iPhone) et autres formats non-standard
         """
+        from PIL import Image
+
+        # Diagnostic : log les premiers octets pour identifier le format réel
+        header = data_bytes[:12].hex() if len(data_bytes) >= 12 else data_bytes.hex()
+        log.info(f"[document_service] Diagnostic image header ({filename}): {header}")
+
+        buf_in = io.BytesIO(data_bytes)
+
+        # Tentative 1 : PIL standard (JPEG, PNG, WEBP...)
         try:
-            from PIL import Image
-            img = Image.open(io.BytesIO(data_bytes)).convert("RGB")
-
-            # FIX : redimensionner avant envoi à Gemini
-            # Les photos haute résolution (smartphone) dépassent les limites de l'API
-            # et causent l'erreur INVALID_ARGUMENT
+            buf_in.seek(0)
+            img = Image.open(buf_in).convert("RGB")
             img.thumbnail((2048, 2048), Image.LANCZOS)
-
-            buf = io.BytesIO()
-            img.save(buf, format="PNG", optimize=True)
-            buf.seek(0)  # FIX : repositionner le curseur après save()
-            return buf.getvalue(), "image/png"
+            buf_out = io.BytesIO()
+            img.save(buf_out, format="PNG", optimize=True)
+            buf_out.seek(0)
+            log.info(f"[document_service] PIL standard OK pour {filename}")
+            return buf_out.getvalue(), "image/png"
         except Exception as pil_err:
-            log.warning(f"[document_service] Re-encodage PIL échoué : {pil_err}")
-            return data_bytes, mime  # retourne l'original si PIL échoue
+            log.warning(f"[document_service] PIL standard échoué ({filename}): {pil_err}")
+
+        # Tentative 2 : pillow-heif pour HEIC/HEIF (photos iPhone)
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+            buf_in.seek(0)
+            img = Image.open(buf_in).convert("RGB")
+            img.thumbnail((2048, 2048), Image.LANCZOS)
+            buf_out = io.BytesIO()
+            img.save(buf_out, format="PNG", optimize=True)
+            buf_out.seek(0)
+            log.info(f"[document_service] PIL HEIF OK pour {filename}")
+            return buf_out.getvalue(), "image/png"
+        except ImportError:
+            log.warning(f"[document_service] pillow-heif non installé, HEIC non supporté")
+        except Exception as heif_err:
+            log.warning(f"[document_service] PIL HEIF échoué ({filename}): {heif_err}")
+
+        # Tentative 3 : retourner l'original (Gemini réessaiera)
+        log.warning(f"[document_service] Toutes tentatives PIL échouées pour {filename}, envoi original")
+        return data_bytes, mime
 
     def _parse_gemini_response(raw: str) -> DocumentAnalysisResult:
         """Parse le JSON Gemini et retourne un DocumentAnalysisResult."""
