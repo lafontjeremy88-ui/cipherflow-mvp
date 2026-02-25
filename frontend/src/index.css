@@ -439,7 +439,7 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 
 .eh-layout{
   display:grid;
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: 480px 1fr;
   gap: 18px;
   align-items:start;
 }
@@ -511,16 +511,31 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .eh-meta{
   display:flex;
   align-items:center;
-  gap:10px;
+  gap:6px;
   margin-top: 6px;
   color: var(--text-secondary);
   font-size: 0.9rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .eh-cat{
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Tronque l'email expéditeur si trop long, la catégorie reste toujours visible */
+.eh-from{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+  max-width: 220px;
 }
 
 .eh-cat-dot{

@@ -174,8 +174,13 @@ const goToCategory = (name) => {
     }
 
     load();
+
+    // Auto-refresh toutes les 60s pour garder les stats à jour sans rechargement manuel
+    const interval = setInterval(load, 60_000);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [doFetch]);
 

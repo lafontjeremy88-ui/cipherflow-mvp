@@ -326,6 +326,19 @@ async def _process_attachment(
         content_type=content_type,
     )
 
+    # FIX : vérifier que l'analyse Gemini a réussi avant de sauvegarder
+    # Sans ce check, un échec Gemini sauvegarde doc_type="other" silencieusement
+    # et la checklist ne se met jamais à jour
+    if not doc_result.success:
+        log.warning(
+            f"[pipeline] ⚠️ Analyse Gemini échouée pour {filename} "
+            f"(error={doc_result.error}) — "
+            f"le fichier sera sauvegardé avec doc_type='other', "
+            f"la checklist ne sera pas mise à jour pour ce document."
+        )
+        # On continue quand même pour sauvegarder le fichier en DB
+        # mais le type restera "other" et l'agent pourra le reclassifier manuellement
+
     # ── Upload vers Cloudflare R2 ──────────────────────────────────────────────
     safe_name = f"{agency_id}_{int(time.time())}_{filename}"
     upload_file(raw_bytes, safe_name, content_type)
@@ -347,7 +360,10 @@ async def _process_attachment(
     db.refresh(new_file)
 
     summary_line = f"{filename} ({doc_result.doc_type}) — {doc_result.summary[:80]}"
-    log.info(f"[pipeline] PJ traitée : {filename} → type={doc_result.doc_type} id={new_file.id}")
+    log.info(
+        f"[pipeline] PJ traitée : {filename} → "
+        f"type={doc_result.doc_type} success={doc_result.success} id={new_file.id}"
+    )
 
     return new_file.id, summary_line, doc_result.candidate_name
 

@@ -95,6 +95,7 @@ export default function TenantFilesPanel({ authFetch }) {
   const [selectedFileIdToAttach, setSelectedFileIdToAttach] = useState("");
   const [attachLoading, setAttachLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [analysingWorker, setAnalysingWorker] = useState(false); // ✅ worker RQ en cours
   const [deleteTenantLoading, setDeleteTenantLoading] = useState(false);
 
   const [error, setError] = useState("");
@@ -390,7 +391,8 @@ export default function TenantFilesPanel({ authFetch }) {
   };
 
   // ✅ Upload direct + lien au dossier via endpoint atomic
-  // ✅ Fix : backend renvoie {file_id, filename, doc_type, checklist}
+  // ✅ Fix polling : après upload, on attend que le worker RQ finisse l'analyse Gemini
+  //    avant de mettre à jour la checklist (le worker prend ~15-25s)
   const handleUploadForTenant = async (event) => {
     if (!authFetchOk) return;
 
@@ -448,7 +450,7 @@ export default function TenantFilesPanel({ authFetch }) {
         summary: "",
       });
 
-      // 1) UI immédiate
+      // 1) UI immédiate — le fichier apparaît tout de suite dans la liste
       setTenantDocuments((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
         const exists = arr.some((f) => String(getFileId(f)) === newFileIdStr);
@@ -462,7 +464,7 @@ export default function TenantFilesPanel({ authFetch }) {
         return exists ? arr : [newFile, ...arr];
       });
 
-      // 3) Met à jour le détail du dossier
+      // 3) Met à jour le détail du dossier avec la checklist reçue du backend
       setTenantDetail((prev) => {
         const base = { ...(prev || {}) };
         const prevIds = normalizeIds(base.file_ids);
@@ -483,12 +485,73 @@ export default function TenantFilesPanel({ authFetch }) {
         };
       });
 
-      // 4) Refresh source de vérité
+      // 4) Premier refresh immédiat
       await Promise.all([
         fetchTenantDetail(selectedTenantId),
         fetchFilesHistory(),
         fetchTenants(),
       ]);
+
+      // 5) Polling post-worker : le worker RQ analyse le fichier en ~15-25s
+      //    On re-poll toutes les 4s (max 45s) jusqu'à ce que la checklist se mette à jour
+      //    (i.e. au moins un doc est "received" OU le type du fichier n'est plus "Document")
+      const tenantIdSnapshot = selectedTenantId;
+      const POLL_INTERVAL_MS = 4_000;
+      const POLL_MAX_MS = 45_000;
+      const pollStart = Date.now();
+      setAnalysingWorker(true); // ✅ indicateur visuel
+
+      const poll = async () => {
+        if (Date.now() - pollStart > POLL_MAX_MS) {
+          setAnalysingWorker(false); // timeout
+          return;
+        }
+
+        try {
+          const r = await authFetch(`/tenant-files/${tenantIdSnapshot}`);
+          if (!r.ok) return;
+          const data = await r.json().catch(() => null);
+          if (!data) return;
+
+          // Checklist à jour = au moins 1 doc reçu OU le fichier n'est plus classé "Document"
+          const raw = data?.checklist_json ?? data?.checklist ?? null;
+          let cl = null;
+          if (raw) {
+            try { cl = typeof raw === "object" ? raw : JSON.parse(raw); } catch {}
+          }
+
+          const received = Array.isArray(cl?.received) ? cl.received : [];
+          const filesList = Array.isArray(data?.documents)
+            ? data.documents
+            : [];
+          const uploadedFile = filesList.find(
+            (f) => String(f?.id ?? f?.file_id) === newFileIdStr
+          );
+          const workerDone =
+            received.length > 0 ||
+            (uploadedFile && uploadedFile.file_type && uploadedFile.file_type !== "Document");
+
+          if (workerDone) {
+            // Worker fini → refresh complet final
+            setTenantDetail(data);
+            if (Array.isArray(data?.documents)) {
+              setTenantDocuments(uniqById(data.documents));
+            }
+            await Promise.all([fetchFilesHistory(), fetchTenants()]);
+            setAnalysingWorker(false); // ✅ analyse terminée
+          } else {
+            // Pas encore prêt → on replanifie
+            setTimeout(poll, POLL_INTERVAL_MS);
+          }
+        } catch {
+          // silencieux — on réessaiera au prochain tick
+          setTimeout(poll, POLL_INTERVAL_MS);
+        }
+      };
+
+      // Démarre le polling après un délai initial (le worker ne démarrera pas avant ~5s)
+      setTimeout(poll, 5_000);
+
     } catch (e) {
       console.error(e);
       setError(e?.message || "Erreur lors de l'upload du document pour ce dossier.");
@@ -987,6 +1050,25 @@ export default function TenantFilesPanel({ authFetch }) {
                   </label>
 
                   <span className="tf-muted">PDF, PNG, JPG – taille max 10 Mo</span>
+
+                  {/* ✅ Badge affiché pendant que le worker RQ analyse le document */}
+                  {analysingWorker && (
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 12px",
+                      borderRadius: 999,
+                      background: "rgba(109,94,248,0.15)",
+                      border: "1px solid rgba(109,94,248,0.4)",
+                      color: "rgba(167,139,250,1)",
+                      fontSize: "0.82rem",
+                      fontWeight: 700,
+                      animation: "pulse 1.6s ease-in-out infinite",
+                    }}>
+                      ✦ Analyse IA en cours…
+                    </span>
+                  )}
                 </div>
 
                 {unlinkedFiles.length > 0 && (

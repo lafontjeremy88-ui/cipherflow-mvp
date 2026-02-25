@@ -378,9 +378,12 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
             creds = build_credentials(config)
             creds = refresh_if_needed(creds, agency_id)
 
-            # Si refresh réussi, on met à jour la config locale
+            # Si refresh réussi, on met à jour la config locale (access_token + expiry)
+            # Sans cette MAJ, l'expiry reste l'ancienne date → boucle de refresh infinie
             if creds.token != config.get("gmail_access_token"):
                 config["gmail_access_token"] = creds.token
+            if creds.expiry:
+                config["gmail_token_expiry"] = creds.expiry.isoformat()
 
             service = build("gmail", "v1", credentials=creds)
 
