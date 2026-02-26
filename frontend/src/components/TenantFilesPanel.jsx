@@ -14,6 +14,9 @@ const DOC_LABELS = {
   payslip: "Fiche de paie",
   id: "Pièce d'identité",
   tax: "Avis d'impôt",
+  work_contract: "Contrat de travail",
+  address_proof: "Justificatif de domicile",
+  bank: "RIB",
 };
 
 function getDocLabel(code) {

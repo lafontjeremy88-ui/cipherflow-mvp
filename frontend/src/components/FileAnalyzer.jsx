@@ -88,7 +88,28 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDownload = async (id, filename) => {
+    if (!authFetch) return;
+    try {
+      const res = await authFetch(`${API_BASE}/api/files/download/${id}`);
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename || `document_${id}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      } else {
+        alert("Impossible de télécharger le fichier.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors du téléchargement.");
+    }
+  };
     if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
     try {
       const res = await authFetch(`${API_BASE}/api/files/${id}`, { method: "DELETE" });
@@ -336,15 +357,13 @@ const FileAnalysis = ({ token, authFetch }) => {
                             </button>
 
                             {/* BOUTON TÉLÉCHARGER */}
-                            <a 
-                              href={`${API_BASE}/api/files/download/${doc.id}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "8px", borderRadius: "6px", display: "inline-block" }}
+                            <button
+                              onClick={() => handleDownload(doc.id, doc.filename)}
+                              style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "inline-grid", placeItems: "center" }}
                               title="Télécharger"
                             >
                               <Download size={16} />
-                            </a>
+                            </button>
 
                             {/* BOUTON SUPPRIMER */}
                             <button 
