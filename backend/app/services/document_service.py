@@ -63,7 +63,7 @@ Analyse ce document et réponds UNIQUEMENT en JSON valide, sans markdown.
 
 Réponds avec ce JSON exact :
 {
-  "doc_type": "id | payslip | tax | work_contract | bank | other",
+  "doc_type": "id | payslip | tax | work_contract | address_proof | bank | other",
   "quality": "ok | unclear | invalid",
   "summary": "Description courte du document (2-3 phrases)",
   "extracted_date": "Date du document au format YYYY-MM ou YYYY-MM-DD si trouvée, sinon vide",
@@ -75,9 +75,10 @@ Règles doc_type :
 - id : carte d'identité, passeport, titre de séjour
 - payslip : bulletin de salaire, fiche de paie
 - tax : avis d'imposition, déclaration de revenus
-- work_contract : contrat de travail, promesse d'embauche
-- bank : RIB, relevé bancaire
-- other : tout le reste
+- work_contract : contrat de travail, promesse d'embauche, attestation employeur
+- address_proof : justificatif de domicile (quittance de loyer, facture EDF/eau/gaz/téléphone, attestation d'hébergement)
+- bank : RIB, relevé bancaire, relevé de compte
+- other : tout le reste (photo, dessin, document non reconnu, etc.)
 """
 
     def _call_gemini(data_bytes: bytes, data_mime: str) -> str:

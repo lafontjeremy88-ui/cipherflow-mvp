@@ -33,6 +33,7 @@ class TenantDocType(str, enum.Enum):
     PAYSLIP = "payslip"
     TAX = "tax"
     WORK_CONTRACT = "work_contract"
+    ADDRESS_PROOF = "address_proof"
     BANK = "bank"
     OTHER = "other"
 

@@ -10,19 +10,14 @@ Ordre d'exécution :
   5. Lien email ↔ dossier
   6. Attachement documents ↔ dossier
   7. Recalcul checklist
-  8. Génération réponse
+  8. Génération réponse (avec état réel du dossier)
   9. Sauvegarde réponse + envoi éventuel
-
-Principes :
-- Chaque étape est wrappée individuellement
-- Une PJ qui échoue ne tue pas le pipeline
-- Session DB ouverte ici, fermée dans finally
-- Aucun import depuis main.py
 """
 
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import time
@@ -52,50 +47,25 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # ── Normalisation email candidat ───────────────────────────────────────────────
 
 def _normalize_candidate_email(email: str) -> str:
-    """
-    Normalise un email pour garantir l'unicité du dossier locataire.
-
-    Règles appliquées :
-    - Lowercase complet
-    - Suppression des alias Gmail (+tag) : jean+candidature@gmail.com → jean@gmail.com
-    - Suppression des points dans la partie locale Gmail :
-      jean.dupont@gmail.com → jeandupont@gmail.com
-    - Trim des espaces
-
-    Exemple :
-      Jean.Dupont+candidature@Gmail.com → jeandupont@gmail.com
-    """
     if not email:
         return ""
-
     email = email.strip().lower()
     local, _, domain = email.partition("@")
     if not domain:
         return email
-
-    # Suppression alias +tag
     local = local.split("+")[0]
-
-    # Suppression des points pour les domaines Gmail
     if domain in ("gmail.com", "googlemail.com"):
         local = local.replace(".", "")
-
     return f"{local}@{domain}"
 
 
 # ── Entrée principale ──────────────────────────────────────────────────────────
 
 async def run_email_pipeline(payload: dict) -> None:
-    """
-    Point d'entrée du pipeline.
-    Appelé par le worker RQ via asyncio.run().
-    """
-
     db = SessionLocal()
-    new_email = None  # permet de le marquer FAILED dans le except si créé avant l'erreur
+    new_email = None
 
     try:
-        # ── Extraction payload ─────────────────────────────────────────────────
         agency_id: int = payload["agency_id"]
         from_email: str = payload.get("from_email", "").strip()
         subject: str = payload.get("subject", "(sans objet)")
@@ -129,9 +99,7 @@ async def run_email_pipeline(payload: dict) -> None:
                     attachment_summary += f"- {summary_line}\n"
                     if doc_candidate_name and not candidate_name_from_docs:
                         candidate_name_from_docs = doc_candidate_name
-
             except Exception as e:
-                # Une PJ qui échoue n'arrête pas le pipeline
                 log.error(f"[pipeline] PJ échouée ({att.get('filename', '?')}) : {e}")
 
         # ── ÉTAPE 2 : Analyse email ────────────────────────────────────────────
@@ -170,11 +138,7 @@ async def run_email_pipeline(payload: dict) -> None:
 
         # ── ÉTAPE 4 : Dossier locataire ────────────────────────────────────────
         log.info("[pipeline] Étape 4 : dossier locataire")
-        candidate_name = (
-            email_result.candidate_name
-            or candidate_name_from_docs
-        )
-        # Normalisation email pour garantir l'unicité du dossier (anti-doublon)
+        candidate_name = email_result.candidate_name or candidate_name_from_docs
         normalized_email = _normalize_candidate_email(from_email)
 
         tenant_file = None
@@ -191,20 +155,17 @@ async def run_email_pipeline(payload: dict) -> None:
         # ── ÉTAPES 5-7 : Liens et checklist ───────────────────────────────────
         if tenant_file:
 
-            # Étape 5 : Lien email ↔ dossier
             try:
                 ensure_email_link(db, tenant_file.id, new_email.id)
             except Exception as e:
                 log.error(f"[pipeline] Erreur lien email : {e}")
 
-            # Étape 6 : Attachement documents
             if attachment_ids:
                 try:
                     attach_files_to_tenant_file(db, tenant_file, attachment_ids)
                 except Exception as e:
                     log.error(f"[pipeline] Erreur attachement docs : {e}")
 
-            # Étape 7 : Recalcul checklist
             try:
                 db.refresh(tenant_file)
                 recompute_checklist(db, tenant_file)
@@ -213,6 +174,24 @@ async def run_email_pipeline(payload: dict) -> None:
 
         # ── ÉTAPE 8 : Génération réponse ───────────────────────────────────────
         log.info("[pipeline] Étape 8 : génération réponse")
+
+        # FIX Bug #2 : récupère l'état réel du dossier pour personnaliser la réponse
+        received_docs = []
+        missing_docs = []
+        payslip_required = 3
+        payslip_received = 0
+
+        if tenant_file:
+            try:
+                db.refresh(tenant_file)
+                checklist = json.loads(tenant_file.checklist_json or "{}")
+                received_docs = checklist.get("received", [])
+                missing_docs = checklist.get("missing", [])
+                payslip_required = checklist.get("payslip_required", 3)
+                payslip_received = checklist.get("payslip_received", 0)
+            except Exception as e:
+                log.warning(f"[pipeline] Impossible de lire la checklist : {e}")
+
         reply_result = await generate_reply(
             from_email=from_email,
             subject=subject,
@@ -223,6 +202,10 @@ async def run_email_pipeline(payload: dict) -> None:
             company_name=company_name,
             tone=tone,
             signature=signature,
+            received_docs=received_docs,
+            missing_docs=missing_docs,
+            payslip_required=payslip_required,
+            payslip_received=payslip_received,
         )
 
         # ── ÉTAPE 9 : Sauvegarde réponse ──────────────────────────────────────
@@ -230,7 +213,6 @@ async def run_email_pipeline(payload: dict) -> None:
         new_email.suggested_response_text = reply_result.reply
         db.commit()
 
-        # Envoi éventuel (Resend)
         if send_email and reply_result.reply:
             try:
                 await _send_reply(
@@ -245,7 +227,6 @@ async def run_email_pipeline(payload: dict) -> None:
             except Exception as e:
                 log.error(f"[pipeline] Erreur envoi email : {e}")
 
-        # ── Marquer le pipeline comme SUCCESS ─────────────────────────────────
         from datetime import datetime as _dt
         new_email.processing_status = "success"
         new_email.processed_at = _dt.utcnow()
@@ -261,7 +242,6 @@ async def run_email_pipeline(payload: dict) -> None:
         db.rollback()
         log.error(f"[pipeline] ❌ FATAL ERROR : {e}", exc_info=True)
 
-        # Si l'EmailAnalysis a été créé avant l'erreur, on le marque FAILED
         try:
             if new_email and new_email.id:
                 from datetime import datetime as _dt
@@ -287,16 +267,6 @@ async def _process_attachment(
     agency_id: int,
     from_email: str,
 ) -> tuple[Optional[int], str, Optional[str]]:
-    """
-    Traite une pièce jointe :
-    - Décode le base64
-    - Vérifie le hash (doublon)
-    - Appelle analyze_document
-    - Crée FileAnalysis en DB
-
-    Retourne (file_analysis_id, summary_line, candidate_name)
-    """
-
     if not att.get("content_base64"):
         return None, "", None
 
@@ -304,7 +274,6 @@ async def _process_attachment(
     filename = att.get("filename", "document")
     content_type = att.get("content_type", "application/pdf")
 
-    # Anti-doublon par hash SHA256
     file_hash = hashlib.sha256(raw_bytes).hexdigest()
     existing = (
         db.query(models.FileAnalysis)
@@ -319,16 +288,12 @@ async def _process_attachment(
         log.info(f"[pipeline] Doublon détecté ({filename}), réutilisation id={existing.id}")
         return existing.id, existing.filename, None
 
-    # Analyse via Gemini
     doc_result = await analyze_document(
         file_bytes=raw_bytes,
         filename=filename,
         content_type=content_type,
     )
 
-    # FIX : vérifier que l'analyse Gemini a réussi avant de sauvegarder
-    # Sans ce check, un échec Gemini sauvegarde doc_type="other" silencieusement
-    # et la checklist ne se met jamais à jour
     if not doc_result.success:
         log.warning(
             f"[pipeline] ⚠️ Analyse Gemini échouée pour {filename} "
@@ -336,15 +301,11 @@ async def _process_attachment(
             f"le fichier sera sauvegardé avec doc_type='other', "
             f"la checklist ne sera pas mise à jour pour ce document."
         )
-        # On continue quand même pour sauvegarder le fichier en DB
-        # mais le type restera "other" et l'agent pourra le reclassifier manuellement
 
-    # ── Upload vers Cloudflare R2 ──────────────────────────────────────────────
     safe_name = f"{agency_id}_{int(time.time())}_{filename}"
     upload_file(raw_bytes, safe_name, content_type)
     log.info(f"[pipeline] Fichier uploadé dans R2 : {safe_name}")
 
-    # Sauvegarde FileAnalysis en DB
     new_file = models.FileAnalysis(
         agency_id=agency_id,
         filename=safe_name,
@@ -371,14 +332,8 @@ async def _process_attachment(
 # ── Envoi email via Resend ─────────────────────────────────────────────────────
 
 async def _send_reply(to_email: str, subject: str, body: str) -> None:
-    """
-    Envoie un email via Resend.
-    Ajoute le header X-CipherFlow-Origin pour l'anti-boucle du watcher.
-    """
     import resend
-
     resend.api_key = settings.RESEND_API_KEY
-
     resend.Emails.send({
         "from": settings.RESEND_FROM_EMAIL,
         "to": [to_email],

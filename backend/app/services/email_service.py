@@ -3,7 +3,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 from google import genai
 
@@ -11,13 +11,9 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-# ── Configuration Gemini ───────────────────────────────────────────────────────
-
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 _MODEL = settings.GEMINI_MODEL
 
-
-# ── Résultats typés ────────────────────────────────────────────────────────────
 
 @dataclass
 class EmailAnalysisResult:
@@ -113,6 +109,17 @@ Règles :
 
 # ── Génération de réponse ──────────────────────────────────────────────────────
 
+# Labels lisibles pour les types de documents
+_DOC_LABELS = {
+    "id": "pièce d'identité",
+    "payslip": "fiche de paie",
+    "tax": "avis d'imposition",
+    "work_contract": "contrat de travail",
+    "address_proof": "justificatif de domicile",
+    "bank": "RIB",
+}
+
+
 async def generate_reply(
     from_email: str,
     subject: str,
@@ -123,7 +130,18 @@ async def generate_reply(
     company_name: str = "Agence",
     tone: str = "pro",
     signature: str = "L'équipe",
+    received_docs: Optional[List[str]] = None,
+    missing_docs: Optional[List[str]] = None,
+    payslip_required: int = 3,
+    payslip_received: int = 0,
 ) -> EmailReplyResult:
+    """
+    Génère une réponse email adaptée à l'état réel du dossier.
+
+    - Dossier complet    → confirme tout reçu, en cours d'examen
+    - Dossier incomplet  → confirme les reçus, demande UNIQUEMENT les manquants
+    - Aucun doc valide   → demande tous les documents nécessaires
+    """
 
     tone_map = {
         "pro": "professionnel et courtois",
@@ -131,6 +149,74 @@ async def generate_reply(
         "formal": "formel et soutenu",
     }
     tone_label = tone_map.get(tone, "professionnel et courtois")
+
+    # ── Bloc dossier locataire ─────────────────────────────────────────────────
+    dossier_block = ""
+    if category == "dossier_locataire":
+        received_docs = received_docs or []
+        missing_docs = missing_docs or []
+
+        # Résumé lisible des documents reçus (avec compte des fiches de paie)
+        def _summarize_received(docs: List[str], ps_received: int, ps_required: int) -> str:
+            counts: dict = {}
+            for d in docs:
+                counts[d] = counts.get(d, 0) + 1
+            parts = []
+            for doc_type, count in counts.items():
+                label = _DOC_LABELS.get(doc_type, doc_type)
+                if doc_type == "payslip":
+                    parts.append(f"{count}/{ps_required} fiche(s) de paie")
+                else:
+                    parts.append(label)
+            return ", ".join(parts) if parts else "aucun"
+
+        def _summarize_missing(docs: List[str], ps_missing_count: int) -> str:
+            # Déduplique et formule les manquants lisiblement
+            unique_missing = []
+            seen = set()
+            for d in docs:
+                if d not in seen:
+                    seen.add(d)
+                    if d == "payslip":
+                        unique_missing.append(f"{ps_missing_count} fiche(s) de paie manquante(s)")
+                    else:
+                        unique_missing.append(_DOC_LABELS.get(d, d))
+            return ", ".join(unique_missing) if unique_missing else "aucun"
+
+        payslip_missing_count = payslip_required - payslip_received
+
+        if not missing_docs:
+            # Dossier complet
+            received_str = _summarize_received(received_docs, payslip_received, payslip_required)
+            dossier_block = (
+                f"\nInstructions spécifiques au dossier :\n"
+                f"Le dossier est COMPLET. Documents reçus : {received_str}. "
+                f"Confirme la réception de tous les documents et indique que le dossier "
+                f"est en cours d'examen. Ne demande aucun document supplémentaire."
+            )
+        elif received_docs:
+            # Dossier partiel
+            received_str = _summarize_received(received_docs, payslip_received, payslip_required)
+            missing_str = _summarize_missing(missing_docs, payslip_missing_count)
+            dossier_block = (
+                f"\nInstructions spécifiques au dossier :\n"
+                f"Le dossier est INCOMPLET. "
+                f"Documents déjà reçus : {received_str}. "
+                f"Documents encore manquants : {missing_str}. "
+                f"Confirme les documents reçus et demande UNIQUEMENT les documents manquants. "
+                f"Ne redemande pas les documents déjà reçus."
+            )
+        else:
+            # Aucun document valide reçu
+            all_labels = (
+                "pièce d'identité, 3 fiches de paie, avis d'imposition, "
+                "contrat de travail, justificatif de domicile"
+            )
+            dossier_block = (
+                f"\nInstructions spécifiques au dossier :\n"
+                f"Aucun document locataire valide n'a été reçu. "
+                f"Demande les documents nécessaires : {all_labels}."
+            )
 
     prompt = f"""
 Tu es l'assistant de "{company_name}", une agence immobilière.
@@ -143,14 +229,14 @@ Contexte de l'email reçu :
 - Urgence : {urgency}
 - Résumé : {summary}
 - Contenu original : {content[:1000]}
+{dossier_block}
 
-Instructions :
+Instructions générales :
 - Réponds UNIQUEMENT avec le corps de l'email (pas de JSON, pas de markdown)
 - Ne mets pas d'objet / subject
 - Termine par : {signature}
-- Si c'est un dossier locataire avec des documents, confirme la réception
-- Si des documents manquent, rappelle lesquels (pièce d'identité, fiches de paie, avis d'imposition)
 - Sois concis (5-8 lignes max)
+- Si des instructions spécifiques au dossier sont fournies ci-dessus, suis-les à la lettre
 """
 
     try:
@@ -164,5 +250,8 @@ Instructions :
     except Exception as e:
         log.error(f"[email_service] Erreur génération réponse : {e}")
         return EmailReplyResult(
-            reply=f"Bonjour,\n\nNous avons bien reçu votre email et reviendrons vers vous rapidement.\n\n{signature}"
+            reply=(
+                f"Bonjour,\n\nNous avons bien reçu votre email et reviendrons "
+                f"vers vous rapidement.\n\n{signature}"
+            )
         )
