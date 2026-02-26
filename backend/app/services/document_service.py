@@ -28,6 +28,39 @@ SUPPORTED_MIME_TYPES = {
     "image/heif",
 }
 
+# Map extension → MIME pour corriger les serveurs qui envoient application/octet-stream
+_EXT_TO_MIME = {
+    ".pdf":  "application/pdf",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+}
+
+
+def _resolve_mime(content_type: str, filename: str) -> str:
+    """
+    Si le MIME reçu est générique (octet-stream, binary, vide),
+    tente de le deviner depuis l'extension du fichier.
+    Permet de lire les PDFs envoyés par les serveurs institutionnels
+    qui utilisent application/octet-stream par défaut.
+    """
+    mime = (content_type or "").lower().strip()
+    if mime not in ("application/octet-stream", "application/binary",
+                    "binary/octet-stream", ""):
+        return mime
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    resolved = _EXT_TO_MIME.get(ext)
+    if resolved:
+        log.info(
+            f"[document_service] MIME générique ({content_type!r}) → "
+            f"résolu en {resolved!r} via extension ({filename})"
+        )
+        return resolved
+    return mime
+
 
 @dataclass
 class DocumentAnalysisResult:
@@ -48,7 +81,9 @@ async def analyze_document(
     content_type: str = "application/pdf",
 ) -> DocumentAnalysisResult:
 
-    mime = content_type.lower()
+    # FIX : résolution MIME avant toute vérification
+    mime = _resolve_mime(content_type, filename)
+
     if mime not in SUPPORTED_MIME_TYPES:
         log.warning(f"[document_service] Type non supporté : {mime} ({filename})")
         return DocumentAnalysisResult(
@@ -78,7 +113,7 @@ Règles doc_type :
 - work_contract : contrat de travail, promesse d'embauche, attestation employeur
 - address_proof : justificatif de domicile (quittance de loyer, facture EDF/eau/gaz/téléphone, attestation d'hébergement)
 - bank : RIB, relevé bancaire, relevé de compte
-- other : tout le reste (photo, dessin, document non reconnu, etc.)
+- other : tout le reste (photo, dessin, document non reconnu, facture commerciale, etc.)
 """
 
     def _call_gemini(data_bytes: bytes, data_mime: str) -> str:
@@ -101,7 +136,6 @@ Règles doc_type :
         """
         from PIL import Image
 
-        # Diagnostic : log les premiers octets pour identifier le format réel
         header = data_bytes[:12].hex() if len(data_bytes) >= 12 else data_bytes.hex()
         log.info(f"[document_service] Diagnostic image header ({filename}): {header}")
 
@@ -177,7 +211,7 @@ Règles doc_type :
         is_image = mime.startswith("image/")
         is_invalid_arg = "INVALID_ARGUMENT" in err_str or "Unable to process" in err_str
 
-        # Retry : re-encodage PIL si image corrompue ou trop grande (ex : Gmail forwarding)
+        # Retry : re-encodage PIL si image corrompue ou trop grande
         if is_image and is_invalid_arg:
             log.warning(
                 f"[document_service] Gemini INVALID_ARGUMENT sur {filename}, "

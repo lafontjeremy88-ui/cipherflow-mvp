@@ -7,14 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
 from app.services.storage_service import download_file as r2_download, delete_file as r2_delete
 from app.database.database import get_db
-from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, TenantFileStatus, User
+from app.database.models import FileAnalysis, TenantDocumentLink, TenantFile, TenantFileStatus, TenantDocType, User
 
 router = APIRouter(tags=["Fichiers"])
 
@@ -35,33 +35,31 @@ class FileHistoryItem(BaseModel):
         from_attributes = True
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def _compute_checklist_simple(doc_types: list) -> dict:
-    from app.database.models import TenantDocType
-    required = [TenantDocType.ID, TenantDocType.PAYSLIP, TenantDocType.TAX]
-    required_set = set(required)
-    received_set = {dt for dt in doc_types if dt in required_set}
-    missing_set = required_set - received_set
-    order = {TenantDocType.ID: 0, TenantDocType.PAYSLIP: 1, TenantDocType.TAX: 2}
-    return {
-        "required": [dt.value for dt in required],
-        "received": [dt.value for dt in sorted(received_set, key=lambda d: order.get(d, 99))],
-        "missing": [dt.value for dt in sorted(missing_set, key=lambda d: order.get(d, 99))],
-    }
-
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.get("/api/files/history", response_model=List[FileHistoryItem])
 async def get_files_history(
+    exclude_other: bool = Query(
+        default=True,
+        description="Si true (défaut), masque les documents non reconnus (type OTHER)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_db),
 ):
-    files = (
-        db.query(FileAnalysis)
-        .filter(FileAnalysis.agency_id == current_user.agency_id)
-        .order_by(FileAnalysis.id.desc())
-        .all()
+    """
+    Retourne l'historique des documents analysés.
+    Par défaut, les documents de type OTHER (non reconnus, formats non supportés)
+    sont masqués car ils n'apportent pas de valeur dans l'interface.
+    Passer exclude_other=false pour les afficher (debug).
+    """
+    query = db.query(FileAnalysis).filter(
+        FileAnalysis.agency_id == current_user.agency_id
     )
+
+    if exclude_other:
+        query = query.filter(FileAnalysis.file_type != TenantDocType.OTHER.value)
+
+    files = query.order_by(FileAnalysis.id.desc()).all()
     return files
 
 
@@ -83,7 +81,6 @@ def view_file(
     except Exception:
         raise HTTPException(404, "Fichier introuvable dans le stockage")
 
-    # Détection du vrai type MIME depuis le nom original (sans le préfixe agence_timestamp_)
     original_name = "_".join(f.filename.split("_")[2:]) if f.filename.count("_") >= 2 else f.filename
     mime_type, _ = mimetypes.guess_type(original_name)
     mime_type = mime_type or "application/octet-stream"
@@ -149,28 +146,36 @@ async def delete_file(
     if not f:
         raise HTTPException(404, "Introuvable")
 
+    # Récupère les dossiers liés avant suppression
     tenant_ids = [
         row[0] for row in
         db.query(TenantDocumentLink.tenant_file_id)
         .filter(TenantDocumentLink.file_analysis_id == f.id).all()
     ]
+
+    # Supprime le lien document ↔ dossier
     db.query(TenantDocumentLink).filter(
         TenantDocumentLink.file_analysis_id == f.id
     ).delete(synchronize_session=False)
 
+    # Recalcule la checklist de chaque dossier affecté
+    # en utilisant recompute_checklist (supporte la nouvelle checklist à 5 types)
+    from app.services.tenant_service import recompute_checklist
     for tid in tenant_ids:
         tf = db.query(TenantFile).filter(TenantFile.id == tid).first()
         if not tf:
             continue
-        remaining = db.query(TenantDocumentLink).filter(TenantDocumentLink.tenant_file_id == tf.id).all()
+        remaining = db.query(TenantDocumentLink).filter(
+            TenantDocumentLink.tenant_file_id == tf.id
+        ).all()
         if not remaining:
             tf.checklist_json = None
             tf.status = TenantFileStatus.NEW
+            db.commit()
         else:
-            checklist = _compute_checklist_simple([l.doc_type for l in remaining])
-            tf.checklist_json = json.dumps(checklist)
-            tf.status = TenantFileStatus.TO_VALIDATE if not checklist["missing"] else TenantFileStatus.INCOMPLETE
+            recompute_checklist(db, tf)
 
+    # Supprime le fichier de R2
     try:
         r2_delete(f.filename)
     except Exception:
