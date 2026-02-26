@@ -189,43 +189,45 @@ async def generate_reply(
             # Dossier complet
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             dossier_block = (
-                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
-                f"STATUT DU DOSSIER : COMPLET\n"
-                f"DOCUMENTS REÇUS : {received_str}\n"
-                f"→ Écris une phrase confirmant que le dossier est complet.\n"
-                f"→ Liste les documents reçus : {received_str}\n"
-                f"→ Indique que le dossier est en cours d'examen par l'agence.\n"
-                f"→ NE demande AUCUN document supplémentaire."
+                f"\nContexte du dossier locataire :\n"
+                f"Le dossier est COMPLET. Documents reçus : {received_str}.\n\n"
+                f"Rédige un email naturel et fluide (3 paragraphes) qui :\n"
+                f"1. Remercie chaleureusement pour l'envoi et confirme que le dossier est complet\n"
+                f"2. Mentionne naturellement dans une phrase les documents reçus ({received_str})\n"
+                f"3. Indique que l'agence va étudier le dossier et reviendra sous peu\n"
+                f"N'écris AUCUN label technique (pas de 'STATUT', 'DOCUMENTS REÇUS', etc.)."
             )
         elif received_docs:
             # Dossier partiel
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             missing_str = _summarize_missing(missing_docs, payslip_missing_count)
             dossier_block = (
-                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
-                f"STATUT DU DOSSIER : INCOMPLET\n"
-                f"DOCUMENTS REÇUS : {received_str}\n"
-                f"DOCUMENTS MANQUANTS : {missing_str}\n"
-                f"→ Remercie pour les documents déjà envoyés.\n"
-                f"→ Confirme EXACTEMENT les documents reçus : {received_str}\n"
-                f"→ Demande EXACTEMENT les documents manquants : {missing_str}\n"
-                f"→ NE redemande PAS les documents déjà reçus.\n"
-                f"→ NE mentionne PAS d'autres documents que ceux listés."
+                f"\nContexte du dossier locataire :\n"
+                f"Documents déjà reçus : {received_str}.\n"
+                f"Documents encore manquants : {missing_str}.\n\n"
+                f"Rédige un email naturel et fluide (3 paragraphes) qui :\n"
+                f"1. Remercie pour les documents envoyés et confirme leur bonne réception\n"
+                f"2. Mentionne naturellement les documents reçus ({received_str})\n"
+                f"3. Explique poliment qu'il manque encore {missing_str} pour compléter le dossier, "
+                f"et demande de les envoyer dès que possible\n"
+                f"N'écris AUCUN label technique (pas de 'STATUT', 'DOCUMENTS REÇUS', etc.).\n"
+                f"NE redemande PAS les documents déjà reçus."
             )
         else:
             # Aucun document valide reçu
             all_labels = (
                 "une pièce d'identité, 3 fiches de paie, "
-                "un avis d'imposition, un contrat de travail, "
-                "un justificatif de domicile"
+                "un avis d'imposition, un contrat de travail "
+                "et un justificatif de domicile"
             )
             dossier_block = (
-                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
-                f"STATUT DU DOSSIER : AUCUN DOCUMENT VALIDE REÇU\n"
-                f"DOCUMENTS NÉCESSAIRES : {all_labels}\n"
-                f"→ Indique qu'aucun document valide n'a été reçu pour ce dossier.\n"
-                f"→ Demande EXACTEMENT ces documents : {all_labels}\n"
-                f"→ NE mentionne PAS d'autres documents."
+                f"\nContexte du dossier locataire :\n"
+                f"Aucun document valide n'a été reçu pour ce dossier.\n\n"
+                f"Rédige un email naturel et fluide (3 paragraphes) qui :\n"
+                f"1. Accuse réception de l'email\n"
+                f"2. Explique poliment qu'aucun document valide n'a pu être traité\n"
+                f"3. Demande d'envoyer les pièces nécessaires : {all_labels}\n"
+                f"N'écris AUCUN label technique (pas de 'STATUT', 'DOCUMENTS REÇUS', etc.)."
             )
 
     prompt = f"""
@@ -242,11 +244,12 @@ Contexte de l'email reçu :
 {dossier_block}
 
 Instructions générales :
-- Réponds UNIQUEMENT avec le corps de l'email (pas de JSON, pas de markdown)
+- Réponds UNIQUEMENT avec le corps de l'email (pas de JSON, pas de markdown, pas de labels techniques)
 - Ne mets pas d'objet / subject
 - Termine par : {signature}
-- Sois concis (5-8 lignes max)
-- Si des instructions spécifiques au dossier sont fournies ci-dessus, suis-les à la lettre
+- Style naturel et fluide, en paragraphes, sans listes à puces
+- 3 paragraphes maximum
+- Si un contexte de dossier est fourni ci-dessus, suis-le à la lettre sans en reprendre les labels
 """
 
     try:
