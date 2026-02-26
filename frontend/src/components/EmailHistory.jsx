@@ -823,10 +823,7 @@ export default function EmailHistory() {
                   </div>
 
                   {suggestedResponse ? (
-                    <pre
-                      className="email-body"
-                      style={{ maxHeight: 220 }}
-                    >
+                    <pre className="email-body">
                       {suggestedResponse}
                     </pre>
                   ) : (
