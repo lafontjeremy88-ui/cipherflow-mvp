@@ -189,33 +189,43 @@ async def generate_reply(
             # Dossier complet
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             dossier_block = (
-                f"\nInstructions spécifiques au dossier :\n"
-                f"Le dossier est COMPLET. Documents reçus : {received_str}. "
-                f"Confirme la réception de tous les documents et indique que le dossier "
-                f"est en cours d'examen. Ne demande aucun document supplémentaire."
+                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
+                f"STATUT DU DOSSIER : COMPLET\n"
+                f"DOCUMENTS REÇUS : {received_str}\n"
+                f"→ Écris une phrase confirmant que le dossier est complet.\n"
+                f"→ Liste les documents reçus : {received_str}\n"
+                f"→ Indique que le dossier est en cours d'examen par l'agence.\n"
+                f"→ NE demande AUCUN document supplémentaire."
             )
         elif received_docs:
             # Dossier partiel
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             missing_str = _summarize_missing(missing_docs, payslip_missing_count)
             dossier_block = (
-                f"\nInstructions spécifiques au dossier :\n"
-                f"Le dossier est INCOMPLET. "
-                f"Documents déjà reçus : {received_str}. "
-                f"Documents encore manquants : {missing_str}. "
-                f"Confirme les documents reçus et demande UNIQUEMENT les documents manquants. "
-                f"Ne redemande pas les documents déjà reçus."
+                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
+                f"STATUT DU DOSSIER : INCOMPLET\n"
+                f"DOCUMENTS REÇUS : {received_str}\n"
+                f"DOCUMENTS MANQUANTS : {missing_str}\n"
+                f"→ Remercie pour les documents déjà envoyés.\n"
+                f"→ Confirme EXACTEMENT les documents reçus : {received_str}\n"
+                f"→ Demande EXACTEMENT les documents manquants : {missing_str}\n"
+                f"→ NE redemande PAS les documents déjà reçus.\n"
+                f"→ NE mentionne PAS d'autres documents que ceux listés."
             )
         else:
             # Aucun document valide reçu
             all_labels = (
-                "pièce d'identité, 3 fiches de paie, avis d'imposition, "
-                "contrat de travail, justificatif de domicile"
+                "une pièce d'identité, 3 fiches de paie, "
+                "un avis d'imposition, un contrat de travail, "
+                "un justificatif de domicile"
             )
             dossier_block = (
-                f"\nInstructions spécifiques au dossier :\n"
-                f"Aucun document locataire valide n'a été reçu. "
-                f"Demande les documents nécessaires : {all_labels}."
+                f"\nINSTRUCTIONS OBLIGATOIRES — tu dois inclure ces informations mot pour mot dans l'email :\n"
+                f"STATUT DU DOSSIER : AUCUN DOCUMENT VALIDE REÇU\n"
+                f"DOCUMENTS NÉCESSAIRES : {all_labels}\n"
+                f"→ Indique qu'aucun document valide n'a été reçu pour ce dossier.\n"
+                f"→ Demande EXACTEMENT ces documents : {all_labels}\n"
+                f"→ NE mentionne PAS d'autres documents."
             )
 
     prompt = f"""
