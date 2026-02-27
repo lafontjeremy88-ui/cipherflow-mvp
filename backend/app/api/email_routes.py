@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import logging
 import time
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from app.database.models import (
 )
 
 router = APIRouter(tags=["Emails"])
+log = logging.getLogger(__name__)
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -235,11 +237,12 @@ async def process_email_manual(
     Pipeline complet inline — identique au watcher automatique :
     1. Analyse IA pièces jointes + upload R2
     2. Analyse email (catégorie, urgence, résumé)
-    3. Génération réponse suggérée
-    4. Sauvegarde EmailAnalysis en base
-    5. Création/récupération dossier locataire
-    6. Attachement documents + recalcul checklist
-    7. Envoi email si activé
+    3. Sauvegarde EmailAnalysis (sans réponse)
+    4. Création/récupération dossier locataire
+    5. Attachement documents + recalcul checklist
+    6. Génération réponse (avec état réel du dossier)
+    7. Mise à jour réponse dans EmailAnalysis
+    8. Envoi email si activé
     """
     from app.services.document_service import analyze_document
     from app.services.email_service import analyze_email, generate_reply
@@ -309,6 +312,7 @@ async def process_email_manual(
             saved_file_ids.append(new_file.id)
 
         except Exception as e:
+            log.error(f"[email_routes] Erreur PJ ({att.get('filename', '?')}) : {e}")
             attachment_summary += f"- {att.get('filename', '?')} : erreur ({e})\n"
 
     # ── 2. Analyse email ───────────────────────────────────────────────────────
@@ -320,20 +324,7 @@ async def process_email_manual(
         attachment_summary=attachment_summary,
     )
 
-    # ── 3. Réponse suggérée ────────────────────────────────────────────────────
-    reply_result = await generate_reply(
-        from_email=req.from_email,
-        subject=req.subject,
-        content=req.content,
-        summary=email_result.summary,
-        category=email_result.category,
-        urgency=email_result.urgency,
-        company_name=company_name,
-        tone=tone,
-        signature=signature,
-    )
-
-    # ── 4. Sauvegarde EmailAnalysis ────────────────────────────────────────────
+    # ── 3. Sauvegarde EmailAnalysis (sans réponse pour l'instant) ─────────────
     email_record = EmailAnalysis(
         agency_id=aid,
         sender_email=req.from_email,
@@ -343,14 +334,15 @@ async def process_email_manual(
         category=email_result.category,
         urgency=email_result.urgency,
         is_devis=email_result.is_devis,
-        suggested_response_text=reply_result.reply,
+        suggested_response_text="",  # Sera mis à jour après
         reply_sent=False,
     )
     db.add(email_record)
     db.commit()
     db.refresh(email_record)
 
-    # ── 5. Dossier locataire ───────────────────────────────────────────────────
+    # ── 4. Dossier locataire ───────────────────────────────────────────────────
+    tenant_file = None
     tenant_file_id = None
     checklist = None
 
@@ -368,6 +360,7 @@ async def process_email_manual(
         if tenant_file:
             ensure_email_link(db, tenant_file.id, email_record.id)
 
+            # ── 5. Attachement documents + recalcul checklist ──────────────────
             if saved_file_ids:
                 attach_files_to_tenant_file(db, tenant_file, saved_file_ids)
                 db.refresh(tenant_file)
@@ -379,7 +372,47 @@ async def process_email_manual(
 
             tenant_file_id = tenant_file.id
 
-    # ── 6. Envoi email si activé ───────────────────────────────────────────────
+    # ── 6. Génération réponse (APRÈS checklist) ────────────────────────────────
+    # FIX BUG : On récupère l'état réel du dossier AVANT de générer la réponse
+    received_docs = []
+    missing_docs = []
+    payslip_required = 3
+    payslip_received = 0
+
+    if tenant_file and checklist:
+        try:
+            received_docs = checklist.get("received", [])
+            missing_docs = checklist.get("missing", [])
+            payslip_required = checklist.get("payslip_required", 3)
+            payslip_received = checklist.get("payslip_received", 0)
+            log.info(
+                f"[email_routes] Dossier id={tenant_file.id} : "
+                f"reçus={len(received_docs)} manquants={len(missing_docs)}"
+            )
+        except Exception as e:
+            log.warning(f"[email_routes] Impossible de lire la checklist : {e}")
+
+    reply_result = await generate_reply(
+        from_email=req.from_email,
+        subject=req.subject,
+        content=req.content,
+        summary=email_result.summary,
+        category=email_result.category,
+        urgency=email_result.urgency,
+        company_name=company_name,
+        tone=tone,
+        signature=signature,
+        received_docs=received_docs,
+        missing_docs=missing_docs,
+        payslip_required=payslip_required,
+        payslip_received=payslip_received,
+    )
+
+    # ── 7. Mise à jour de la réponse ───────────────────────────────────────────
+    email_record.suggested_response_text = reply_result.reply
+    db.commit()
+
+    # ── 8. Envoi email si activé ───────────────────────────────────────────────
     if send_email_flag and reply_result.reply:
         try:
             send_email_via_resend(
@@ -390,8 +423,8 @@ async def process_email_manual(
             email_record.reply_sent = True
             email_record.reply_sent_at = datetime.utcnow()
             db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[email_routes] Erreur envoi email : {e}")
 
     return {
         "analyse": {
