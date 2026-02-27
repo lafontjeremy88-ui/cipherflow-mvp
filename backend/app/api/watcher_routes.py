@@ -14,6 +14,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -27,6 +28,62 @@ router = APIRouter(prefix="/watcher", tags=["Watcher Internal"])
 def _check_secret(x_watcher_secret: str = Header(...)):
     if x_watcher_secret != settings.WATCHER_SECRET:
         raise HTTPException(status_code=403, detail="Secret invalide")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 📧 NORMALISATION EMAILS (Gmail, Outlook, etc.)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def normalize_email(email: str) -> tuple[str, str]:
+    """
+    Normalise un email selon les règles du provider.
+    
+    Retourne (normalized_email, canonical_email) :
+    - normalized_email : version normalisée (sans points Gmail, etc.)
+    - canonical_email : version canonique (sans alias +)
+    
+    Règles par provider :
+    - Gmail / Googlemail :
+      - Ignore les points : user.name@gmail.com = username@gmail.com
+      - Ignore les alias + : user+test@gmail.com = user@gmail.com
+    - Outlook / Hotmail / Live :
+      - Garde les alias + : user+test@outlook.com ≠ user@outlook.com
+    - Autres (Yahoo, ProtonMail, etc.) :
+      - Pas de normalisation spéciale
+    
+    Tous :
+    - Case-insensitive : User@Gmail.com = user@gmail.com
+    """
+    if not email or "@" not in email:
+        return email.lower() if email else "", ""
+    
+    local, domain = email.rsplit("@", 1)
+    local = local.lower()
+    domain = domain.lower()
+    
+    # ── Gmail / Googlemail : ignore points + alias ───────────────────────────
+    if domain in ["gmail.com", "googlemail.com"]:
+        # Version normalisée : sans points
+        local_normalized = local.replace(".", "")
+        
+        # Version canonique : sans points ET sans alias
+        local_canonical = local_normalized.split("+")[0]
+        
+        return (
+            f"{local_normalized}@{domain}",
+            f"{local_canonical}@{domain}",
+        )
+    
+    # ── Outlook / Hotmail / Live : garde tout ─────────────────────────────────
+    elif domain in ["outlook.com", "outlook.fr", "hotmail.com", "hotmail.fr", "live.com", "live.fr"]:
+        # Pas de normalisation spéciale
+        # Les alias + sont DISTINCTS chez Outlook
+        return f"{local}@{domain}", f"{local}@{domain}"
+    
+    # ── Autres providers (Yahoo, ProtonMail, custom domains) ─────────────────
+    else:
+        # Pas de normalisation
+        return f"{local}@{domain}", f"{local}@{domain}"
 
 
 # ── GET /watcher/configs ───────────────────────────────────────────────────────
@@ -111,7 +168,7 @@ async def update_token(
 
 # ── GET /watcher/check-sender ─────────────────────────────────────────────────
 
-@router.get("/check-sender")
+@router.get("/watcher/check-sender")
 async def check_known_sender(
     email: str,
     agency_id: int,
@@ -120,6 +177,8 @@ async def check_known_sender(
 ):
     """
     Vérifie si un email est déjà connu (candidat existant dans les dossiers).
+    Gère la normalisation Gmail (points + alias ignorés).
+    
     Appelé par le watcher pour décider si un email sans PJ/mots-clés doit être accepté.
     
     Retourne : {"is_known": true/false}
@@ -129,12 +188,23 @@ async def check_known_sender(
     if not settings.WATCHER_SECRET or not hmac.compare_digest(auth, settings.WATCHER_SECRET):
         raise HTTPException(status_code=403, detail="Secret invalide")
     
-    # Vérification en base
+    # Normalisation email
+    normalized, canonical = normalize_email(email)
+    
+    # Liste des variantes à chercher
+    variants = list(set([email.lower(), normalized, canonical]))
+    
+    log.debug(f"[watcher/check-sender] Recherche email={email} variants={variants}")
+    
+    # Recherche en base avec toutes les variantes
     exists = db.query(models.TenantFile).filter(
         models.TenantFile.agency_id == agency_id,
-        models.TenantFile.candidate_email == email,
+        or_(*[
+            models.TenantFile.candidate_email == variant
+            for variant in variants
+        ])
     ).first() is not None
     
-    log.debug(f"[watcher/check-sender] email={email} agency={agency_id} is_known={exists}")
+    log.info(f"[watcher/check-sender] email={email} agency={agency_id} is_known={exists}")
     
     return {"is_known": exists}
