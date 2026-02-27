@@ -511,13 +511,11 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 .eh-meta{
   display:flex;
   align-items:center;
-  gap:6px;
+  flex-wrap: wrap;
+  gap:4px;
   margin-top: 6px;
   color: var(--text-secondary);
-  font-size: 0.9rem;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  font-size: 0.82rem;
   min-width: 0;
 }
 
@@ -535,7 +533,6 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
   white-space: nowrap;
   min-width: 0;
   flex: 1;
-  max-width: 220px;
 }
 
 .eh-cat-dot{
@@ -1356,4 +1353,3 @@ tbody tr:hover td { background: rgba(148,163,184,0.06); }
 
 
 
-/*=====essai====*/
