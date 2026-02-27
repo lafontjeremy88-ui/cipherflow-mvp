@@ -20,7 +20,8 @@ const DOC_LABELS = {
 };
 
 function getDocLabel(code) {
-  return DOC_LABELS[code] || code;
+  const normalized = (code || "").toLowerCase();
+  return DOC_LABELS[normalized] || normalized;
 }
 
 function getFileId(f) {
