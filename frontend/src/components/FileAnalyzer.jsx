@@ -110,6 +110,8 @@ const FileAnalysis = ({ token, authFetch }) => {
       alert("Erreur lors du téléchargement.");
     }
   };
+
+  const handleDelete = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
     try {
       const res = await authFetch(`${API_BASE}/api/files/${id}`, { method: "DELETE" });
