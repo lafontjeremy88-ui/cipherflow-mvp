@@ -5,14 +5,10 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, List
 
-from google import genai
-
 from app.core.config import settings
+from app.services.mistral_service import analyze_with_mistral
 
 log = logging.getLogger(__name__)
-
-_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-_MODEL = settings.GEMINI_MODEL
 
 
 @dataclass
@@ -72,13 +68,16 @@ Règles :
 - candidate_name : cherche le nom dans la signature ou le contenu
 """
 
-    raw = ""
     try:
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=[prompt],
+        result = await analyze_with_mistral(
+            prompt=prompt,
+            model="mistral-small-latest",
         )
-        raw = response.text.strip()
+        
+        if not result.success:
+            raise Exception(result.error)
+        
+        raw = result.text
         clean = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean)
 
@@ -93,14 +92,14 @@ Règles :
         )
 
     except json.JSONDecodeError as e:
-        log.error(f"[email_service] JSON invalide Gemini : {e} — raw={raw[:200]}")
+        log.error(f"[email_service] JSON invalide Mistral : {e}")
         return EmailAnalysisResult(
             summary="Analyse IA indisponible (JSON invalide)",
             suggested_title=subject,
-            raw_ai_text=raw,
+            raw_ai_text="",
         )
     except Exception as e:
-        log.error(f"[email_service] Erreur Gemini : {e}")
+        log.error(f"[email_service] Erreur Mistral : {e}")
         return EmailAnalysisResult(
             summary="Analyse IA indisponible",
             suggested_title=subject,
@@ -109,7 +108,6 @@ Règles :
 
 # ── Génération de réponse ──────────────────────────────────────────────────────
 
-# Labels lisibles pour les types de documents
 _DOC_LABELS = {
     "id": "pièce d'identité",
     "payslip": "fiche de paie",
@@ -135,13 +133,6 @@ async def generate_reply(
     payslip_required: int = 3,
     payslip_received: int = 0,
 ) -> EmailReplyResult:
-    """
-    Génère une réponse email adaptée à l'état réel du dossier.
-
-    - Dossier complet    → confirme tout reçu, en cours d'examen
-    - Dossier incomplet  → confirme les reçus, demande UNIQUEMENT les manquants
-    - Aucun doc valide   → demande tous les documents nécessaires
-    """
 
     tone_map = {
         "pro": "professionnel et courtois",
@@ -150,13 +141,11 @@ async def generate_reply(
     }
     tone_label = tone_map.get(tone, "professionnel et courtois")
 
-    # ── Bloc dossier locataire ─────────────────────────────────────────────────
     dossier_block = ""
     if category == "dossier_locataire":
         received_docs = received_docs or []
         missing_docs = missing_docs or []
 
-        # Résumé lisible des documents reçus (avec compte des fiches de paie)
         def _summarize_received(docs: List[str], ps_received: int, ps_required: int) -> str:
             counts: dict = {}
             for d in docs:
@@ -171,7 +160,6 @@ async def generate_reply(
             return ", ".join(parts) if parts else "aucun"
 
         def _summarize_missing(docs: List[str], ps_missing_count: int) -> str:
-            # Déduplique et formule les manquants lisiblement
             unique_missing = []
             seen = set()
             for d in docs:
@@ -186,7 +174,6 @@ async def generate_reply(
         payslip_missing_count = payslip_required - payslip_received
 
         if not missing_docs:
-            # Dossier complet
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             dossier_block = (
                 f"\nContexte du dossier locataire :\n"
@@ -198,7 +185,6 @@ async def generate_reply(
                 f"N'écris AUCUN label technique (pas de 'STATUT', 'DOCUMENTS REÇUS', etc.)."
             )
         elif received_docs:
-            # Dossier partiel
             received_str = _summarize_received(received_docs, payslip_received, payslip_required)
             missing_str = _summarize_missing(missing_docs, payslip_missing_count)
             dossier_block = (
@@ -214,7 +200,6 @@ async def generate_reply(
                 f"NE redemande PAS les documents déjà reçus."
             )
         else:
-            # Aucun document valide reçu
             all_labels = (
                 "une pièce d'identité, 3 fiches de paie, "
                 "un avis d'imposition, un contrat de travail "
@@ -253,12 +238,15 @@ Instructions générales :
 """
 
     try:
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=[prompt],
+        result = await analyze_with_mistral(
+            prompt=prompt,
+            model="mistral-small-latest",
         )
-        raw = response.text.strip()
-        return EmailReplyResult(reply=raw, raw_ai_text=raw)
+        
+        if not result.success:
+            raise Exception(result.error)
+        
+        return EmailReplyResult(reply=result.text, raw_ai_text=result.text)
 
     except Exception as e:
         log.error(f"[email_service] Erreur génération réponse : {e}")

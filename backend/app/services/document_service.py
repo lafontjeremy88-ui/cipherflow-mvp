@@ -1,22 +1,16 @@
 # app/services/document_service.py
 
-import base64
 import io
 import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from google import genai
-from google.genai import types
-
 from app.core.config import settings
 from app.database.models import TenantDocType, DocQuality
+from app.services.mistral_service import analyze_with_mistral
 
 log = logging.getLogger(__name__)
-
-_client = genai.Client(api_key=settings.GEMINI_API_KEY)
-_MODEL = settings.GEMINI_MODEL
 
 SUPPORTED_MIME_TYPES = {
     "application/pdf",
@@ -28,7 +22,6 @@ SUPPORTED_MIME_TYPES = {
     "image/heif",
 }
 
-# Map extension → MIME pour corriger les serveurs qui envoient application/octet-stream
 _EXT_TO_MIME = {
     ".pdf":  "application/pdf",
     ".jpg":  "image/jpeg",
@@ -41,12 +34,6 @@ _EXT_TO_MIME = {
 
 
 def _resolve_mime(content_type: str, filename: str) -> str:
-    """
-    Si le MIME reçu est générique (octet-stream, binary, vide),
-    tente de le deviner depuis l'extension du fichier.
-    Permet de lire les PDFs envoyés par les serveurs institutionnels
-    qui utilisent application/octet-stream par défaut.
-    """
     mime = (content_type or "").lower().strip()
     if mime not in ("application/octet-stream", "application/binary",
                     "binary/octet-stream", ""):
@@ -81,7 +68,6 @@ async def analyze_document(
     content_type: str = "application/pdf",
 ) -> DocumentAnalysisResult:
 
-    # FIX : résolution MIME avant toute vérification
     mime = _resolve_mime(content_type, filename)
 
     if mime not in SUPPORTED_MIME_TYPES:
@@ -116,24 +102,8 @@ Règles doc_type :
 - other : tout le reste (photo, dessin, document non reconnu, facture commerciale, etc.)
 """
 
-    def _call_gemini(data_bytes: bytes, data_mime: str) -> str:
-        """Appel Gemini et retourne le texte brut."""
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=[
-                types.Part.from_bytes(data=data_bytes, mime_type=data_mime),
-                prompt,
-            ],
-        )
-        return response.text.strip()
-
     def _reencode_image(data_bytes: bytes) -> tuple[bytes, str]:
-        """
-        Re-encode l'image via PIL pour réparer les fichiers corrompus.
-        - Redimensionne à 2048x2048 max (limite Gemini)
-        - Convertit en PNG propre
-        - Gère les formats HEIC/HEIF (iPhone) et autres formats non-standard
-        """
+        """Re-encode l'image via PIL pour réparer les fichiers corrompus."""
         from PIL import Image
 
         header = data_bytes[:12].hex() if len(data_bytes) >= 12 else data_bytes.hex()
@@ -141,7 +111,7 @@ Règles doc_type :
 
         buf_in = io.BytesIO(data_bytes)
 
-        # Tentative 1 : PIL standard (JPEG, PNG, WEBP...)
+        # Tentative 1 : PIL standard
         try:
             buf_in.seek(0)
             img = Image.open(buf_in).convert("RGB")
@@ -154,7 +124,7 @@ Règles doc_type :
         except Exception as pil_err:
             log.warning(f"[document_service] PIL standard échoué ({filename}): {pil_err}")
 
-        # Tentative 2 : pillow-heif pour HEIC/HEIF (photos iPhone)
+        # Tentative 2 : pillow-heif pour HEIC/HEIF
         try:
             import pillow_heif
             pillow_heif.register_heif_opener()
@@ -167,16 +137,15 @@ Règles doc_type :
             log.info(f"[document_service] PIL HEIF OK pour {filename}")
             return buf_out.getvalue(), "image/png"
         except ImportError:
-            log.warning(f"[document_service] pillow-heif non installé, HEIC non supporté")
+            log.warning(f"[document_service] pillow-heif non installé")
         except Exception as heif_err:
             log.warning(f"[document_service] PIL HEIF échoué ({filename}): {heif_err}")
 
-        # Tentative 3 : retourner l'original (Gemini réessaiera)
-        log.warning(f"[document_service] Toutes tentatives PIL échouées pour {filename}, envoi original")
+        log.warning(f"[document_service] Toutes tentatives PIL échouées pour {filename}")
         return data_bytes, mime
 
-    def _parse_gemini_response(raw: str) -> DocumentAnalysisResult:
-        """Parse le JSON Gemini et retourne un DocumentAnalysisResult."""
+    def _parse_response(raw: str) -> DocumentAnalysisResult:
+        """Parse le JSON Mistral."""
         clean = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean)
 
@@ -201,55 +170,75 @@ Règles doc_type :
             success=True,
         )
 
-    raw = ""
+    # ── Appel Mistral ──────────────────────────────────────────────────────────
+    
+    # Pour les PDFs : Mistral Small (texte)
+    # Pour les images : Pixtral (vision)
+    model = "mistral-small-latest"
+    image_data = None
+    
+    if mime.startswith("image/"):
+        model = "pixtral-12b-2409"
+        image_data = file_bytes
+    
     try:
-        raw = _call_gemini(file_bytes, mime)
-        return _parse_gemini_response(raw)
+        result = await analyze_with_mistral(
+            prompt=prompt,
+            image_bytes=image_data,
+            model=model,
+        )
+        
+        if not result.success:
+            raise Exception(result.error)
+        
+        return _parse_response(result.text)
 
     except Exception as first_err:
         err_str = str(first_err)
         is_image = mime.startswith("image/")
-        is_invalid_arg = "INVALID_ARGUMENT" in err_str or "Unable to process" in err_str
 
-        # Retry : re-encodage PIL si image corrompue ou trop grande
-        if is_image and is_invalid_arg:
+        # Retry : re-encodage PIL si image corrompue
+        if is_image:
             log.warning(
-                f"[document_service] Gemini INVALID_ARGUMENT sur {filename}, "
-                f"tentative re-encodage PIL (resize + conversion PNG)…"
+                f"[document_service] Erreur sur {filename}, "
+                f"tentative re-encodage PIL…"
             )
             try:
-                clean_bytes, clean_mime = _reencode_image(file_bytes)
-                raw = _call_gemini(clean_bytes, clean_mime)
-                log.info(f"[document_service] Re-encodage PIL réussi pour {filename}")
-                return _parse_gemini_response(raw)
+                clean_bytes, _ = _reencode_image(file_bytes)
+                result = await analyze_with_mistral(
+                    prompt=prompt,
+                    image_bytes=clean_bytes,
+                    model="pixtral-12b-2409",
+                )
+                if result.success:
+                    log.info(f"[document_service] Re-encodage PIL réussi pour {filename}")
+                    return _parse_response(result.text)
+                else:
+                    raise Exception(result.error)
             except json.JSONDecodeError as je:
-                log.error(f"[document_service] JSON invalide après retry : {je} ({filename})")
+                log.error(f"[document_service] JSON invalide après retry : {je}")
                 return DocumentAnalysisResult(
                     summary="Analyse indisponible (réponse IA invalide)",
                     success=False,
                     error=str(je),
                 )
             except Exception as retry_err:
-                log.error(
-                    f"[document_service] Erreur Gemini après retry PIL ({filename}) : {retry_err}"
-                )
+                log.error(f"[document_service] Erreur après retry PIL : {retry_err}")
                 return DocumentAnalysisResult(
-                    summary="L'analyse de la pièce jointe n'est pas disponible "
-                            "(fichier corrompu ou format non lisible par l'IA).",
+                    summary="L'analyse de la pièce jointe n'est pas disponible.",
                     success=False,
                     error=str(retry_err),
                 )
 
-        # JSON invalide sur première tentative
         if isinstance(first_err, json.JSONDecodeError):
-            log.error(f"[document_service] JSON invalide : {first_err} ({filename})")
+            log.error(f"[document_service] JSON invalide : {first_err}")
             return DocumentAnalysisResult(
                 summary="Analyse indisponible (réponse IA invalide)",
                 success=False,
                 error=str(first_err),
             )
 
-        log.error(f"[document_service] Erreur Gemini ({filename}) : {first_err}")
+        log.error(f"[document_service] Erreur Mistral : {first_err}")
         return DocumentAnalysisResult(
             summary="Analyse indisponible",
             success=False,
