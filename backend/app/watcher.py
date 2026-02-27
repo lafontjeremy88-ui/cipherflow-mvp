@@ -1,12 +1,13 @@
 """
 WATCHER GMAIL API — CipherFlow
 ================================
-Remplace le watcher IMAP par une connexion Gmail API OAuth.
+Watcher multi-tenant avec filtrage intelligent pour emails immobiliers.
 
-- Même logique de filtrage (score / blacklist)
-- Même format de payload vers le webhook backend
-- Rafraîchissement automatique des tokens OAuth
-- Support multi-tenant (un thread par agence)
+NOUVELLE STRATÉGIE DE FILTRAGE :
+- Règles séquentielles (OR) : si UN critère match → ACCEPT
+- Priorité métier : PJ > Mots-clés > Expéditeur connu
+- Plus permissif pour candidatures légitimes
+- Logs détaillés pour debugging
 """
 
 import base64
@@ -53,72 +54,142 @@ if missing:
 
 WEBHOOK_URL = f"{BACKEND_URL}/webhook/email"
 CONFIGS_URL = f"{BACKEND_URL}/watcher/configs"
-TOKEN_UPDATE_URL = f"{BACKEND_URL}/watcher/update-token"  # endpoint pour MAJ token en base
+TOKEN_UPDATE_URL = f"{BACKEND_URL}/watcher/update-token"
 
 GOOGLE_TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
 
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",  # inclut readonly + marquer comme lu
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
 ]
 
 
 # ============================================================
-# 🧠 FILTRAGE MÉTIER (inchangé vs version IMAP)
+# 🧠 NOUVELLE STRATÉGIE DE FILTRAGE MÉTIER
 # ============================================================
 
 class FilterDecision(str, Enum):
-    PROCESS_FULL  = "process_full"
-    PROCESS_LIGHT = "process_light"
-    IGNORE        = "ignore"
+    PROCESS_FULL  = "process_full"   # Traitement complet avec IA
+    PROCESS_LIGHT = "process_light"  # Traitement léger
+    IGNORE        = "ignore"         # Ignorer
 
 
-BLACKLIST = [
-    "railway", "google", "postmaster", "mailer-daemon", "daemon",
-    "notification", "resend", "no-reply", "noreply", "newsletter",
-    "unsubscribe", "se désabonner", "se desabonner", "mailchimp",
-    "sendinblue", "sg-mkt", "emailing",
+# ── Blacklist système (bots, notifications techniques) ────────────────────────
+SYSTEM_BLACKLIST = [
+    "railway.app",
+    "mailer-daemon",
+    "postmaster@",
+    "daemon@",
+    "noreply@github",
+    "noreply@gitlab",
+    "notification@",
+    "notifications@",
+]
+
+# ── Mots-clés immobiliers (sujet OU corps) ───────────────────────────────────
+IMMOBILIER_KEYWORDS = [
+    # Candidatures
+    "candidature", "dossier", "locataire", "location", "louer", "bail", "garant",
+    
+    # Types de biens
+    "appartement", "studio", "t2", "t3", "t4", "t5", "maison", "logement", "pièces",
+    
+    # Documents
+    "visite", "documents", "justificatifs", "pièce d'identité", "identité",
+    "bulletin de salaire", "fiche de paie", "salaire", "avis d'imposition",
+    "imposition", "contrat de travail", "rib", "relevé", "quittance",
+]
+
+# ── Mots-clés spam (bloque même si mot-clé immo présent) ─────────────────────
+SPAM_KEYWORDS = [
+    "viagra", "casino", "lottery", "loterie", "bitcoin", "crypto",
+    "investment opportunity", "make money fast", "gagner de l'argent",
+    "promo exclusive", "offre limitée", "cliquez ici", "click here",
 ]
 
 
-def is_blacklisted(sender: str, subject: str, body: str) -> bool:
-    text = f"{sender} {subject} {body}".lower()
-    return any(word in text for word in BLACKLIST)
+def is_system_blacklisted(sender: str) -> bool:
+    """Vérifie si c'est un email système/bot à ignorer."""
+    sender_lower = sender.lower()
+    return any(pattern in sender_lower for pattern in SYSTEM_BLACKLIST)
 
 
-def compute_score(sender: str, subject: str, body: str, attachments: list):
-    score = 0
+def is_known_sender(sender_email: str, agency_id: int) -> bool:
+    """
+    Vérifie si l'expéditeur est déjà connu en base (candidat existant).
+    Fait une requête rapide au backend.
+    """
+    try:
+        resp = requests.get(
+            f"{BACKEND_URL}/watcher/check-sender",
+            params={
+                "email": sender_email,
+                "agency_id": agency_id,
+            },
+            headers={"x-watcher-secret": WATCHER_SECRET},
+            timeout=3,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("is_known", False)
+    except Exception as e:
+        log.warning(f"[filter] Impossible de vérifier expéditeur connu : {e}")
+    return False
+
+
+def decide_filter(sender: str, subject: str, body: str, attachments: list, agency_id: int) -> tuple[FilterDecision, list]:
+    """
+    NOUVELLE STRATÉGIE : Règles séquentielles (OR logic).
+    Retourne (decision, reasons)
+    
+    Priorité :
+    1. Blacklist système → IGNORE
+    2. A des pièces jointes → ACCEPT
+    3. Mots-clés immobiliers → ACCEPT (sauf si spam)
+    4. Expéditeur connu → ACCEPT
+    5. Sinon → IGNORE
+    """
     reasons = []
-    text = f"{sender} {subject} {body}".lower()
-
+    
+    # ── 1️⃣ BLACKLIST SYSTÈME ──────────────────────────────────────────────────
+    if is_system_blacklisted(sender):
+        reasons.append("system_blacklist")
+        log.info(f"❌ IGNORE (blacklist système) — {sender}")
+        return FilterDecision.IGNORE, reasons
+    
+    # ── 2️⃣ A DES PIÈCES JOINTES ───────────────────────────────────────────────
     if attachments:
-        score += 40
-        reasons.append("attachments_present")
-
-    keywords = ["dossier", "location", "locataire", "bulletin", "fiche de paie",
-                "avis", "impôt", "imposition", "pièce", "identité"]
-    for kw in keywords:
-        if kw in text:
-            score += 10
-            reasons.append(f"keyword:{kw}")
-            break
-
-    for kw in ["promo", "offre", "réduction", "newsletter"]:
-        if kw in text:
-            score -= 30
-            reasons.append(f"marketing:{kw}")
-
-    if len(body.strip()) < 40 and not attachments:
-        score -= 15
-        reasons.append("short_body_no_attachment")
-
-    return score, reasons
-
-
-def decide(score: int) -> FilterDecision:
-    if score >= 40:  return FilterDecision.PROCESS_FULL
-    if score >= 15:  return FilterDecision.PROCESS_LIGHT
-    return FilterDecision.IGNORE
+        reasons.append("has_attachments")
+        log.info(f"✅ ACCEPT (pièces jointes: {len(attachments)}) — agency={agency_id}")
+        return FilterDecision.PROCESS_FULL, reasons
+    
+    # ── 3️⃣ MOTS-CLÉS IMMOBILIERS ──────────────────────────────────────────────
+    text = f"{subject} {body}".lower()
+    
+    # Vérification spam d'abord
+    has_spam = any(spam_word in text for spam_word in SPAM_KEYWORDS)
+    if has_spam:
+        reasons.append("spam_keywords")
+        log.info(f"❌ IGNORE (spam détecté) — {subject}")
+        return FilterDecision.IGNORE, reasons
+    
+    # Vérification mots-clés immobiliers
+    matched_keywords = [kw for kw in IMMOBILIER_KEYWORDS if kw in text]
+    if matched_keywords:
+        reasons.append(f"immo_keywords:{','.join(matched_keywords[:3])}")
+        log.info(f"✅ ACCEPT (mots-clés: {matched_keywords[:3]}) — agency={agency_id}")
+        return FilterDecision.PROCESS_FULL, reasons
+    
+    # ── 4️⃣ EXPÉDITEUR CONNU ───────────────────────────────────────────────────
+    _, sender_email = parseaddr(sender)
+    if is_known_sender(sender_email, agency_id):
+        reasons.append("known_sender")
+        log.info(f"✅ ACCEPT (expéditeur connu: {sender_email}) — agency={agency_id}")
+        return FilterDecision.PROCESS_LIGHT, reasons
+    
+    # ── 5️⃣ AUCUN CRITÈRE → IGNORE ─────────────────────────────────────────────
+    reasons.append("no_criteria_matched")
+    log.info(f"❌ IGNORE (aucun critère) — {subject[:50]}")
+    return FilterDecision.IGNORE, reasons
 
 
 # ============================================================
@@ -129,7 +200,6 @@ def build_credentials(config: dict) -> Credentials:
     """Construit un objet Credentials Google depuis la config agence."""
     expiry = config.get("gmail_token_expiry")
     if isinstance(expiry, str):
-        # Parser la date ISO depuis le JSON backend
         expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
 
     creds = Credentials(
@@ -152,7 +222,6 @@ def refresh_if_needed(creds: Credentials, agency_id: int) -> Credentials:
         log.info(f"[oauth] Token expiré, rafraîchissement agency={agency_id}")
         try:
             creds.refresh(GoogleRequest())
-            # Notifier le backend pour mettre à jour le token en base
             try:
                 requests.post(
                     TOKEN_UPDATE_URL,
@@ -227,13 +296,12 @@ def _extract_body_and_attachments(payload: dict):
             filename = part.get("filename", "")
 
             if filename:
-                # C'est une pièce jointe
                 attachment_id = part.get("body", {}).get("attachmentId")
                 if attachment_id:
                     attachments.append({
                         "filename":       filename,
                         "content_type":   part_mime,
-                        "attachment_id":  attachment_id,  # sera téléchargé plus tard
+                        "attachment_id":  attachment_id,
                     })
                     log.info(f"   📎 PJ détectée : {filename}")
 
@@ -288,13 +356,9 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
     sender  = _get_header(headers, "From")
     subject = _decode_mime_header(_get_header(headers, "Subject"))
     body, att_meta = _extract_body_and_attachments(payload)
-    body = body or "Pas de contenu texte"
+    body = body or ""
 
-    # Filtrage blacklist
-    if is_blacklisted(sender, subject, body):
-        log.info(f"🚫 Ignoré (Blacklist) agency={agency_id} — {subject}")
-        _mark_as_read(service, message_id)
-        return
+    log.info(f"📧 Email reçu — De: {sender} | Sujet: {subject[:50]}")
 
     # Téléchargement des pièces jointes
     attachments = []
@@ -306,13 +370,14 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
                 "content_type":   att["content_type"],
                 "content_base64": base64.b64encode(raw_bytes).decode("utf-8"),
             })
+            log.info(f"   ✅ PJ téléchargée : {att['filename']} ({len(raw_bytes)} bytes)")
         except Exception as e:
-            log.error(f"[watcher] Erreur téléchargement PJ {att['filename']} : {e}")
+            log.error(f"   ❌ Erreur téléchargement PJ {att['filename']} : {e}")
 
-    # Score et décision
-    score, reasons = compute_score(sender, subject, body, attachments)
-    decision = decide(score)
-    log.info(f"🧠 Score={score} | Décision={decision} | agency={agency_id}")
+    # ── NOUVELLE STRATÉGIE DE FILTRAGE ────────────────────────────────────────
+    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id)
+    
+    log.info(f"🧠 Décision={decision.value} | Raisons={reasons} | agency={agency_id}")
 
     if decision == FilterDecision.IGNORE:
         _mark_as_read(service, message_id)
@@ -328,7 +393,6 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
         "send_email":      AUTO_SEND,
         "attachments":     attachments,
         "agency_id":       agency_id,
-        "filter_score":    score,
         "filter_decision": decision.value,
         "filter_reasons":  reasons,
     }
@@ -374,12 +438,9 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
 
     while not stop_event.is_set():
         try:
-            # Reconstruction des credentials à chaque loop (token peut avoir été refreshé)
             creds = build_credentials(config)
             creds = refresh_if_needed(creds, agency_id)
 
-            # Si refresh réussi, on met à jour la config locale (access_token + expiry)
-            # Sans cette MAJ, l'expiry reste l'ancienne date → boucle de refresh infinie
             if creds.token != config.get("gmail_access_token"):
                 config["gmail_access_token"] = creds.token
             if creds.expiry:
@@ -387,7 +448,6 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
 
             service = build("gmail", "v1", credentials=creds)
 
-            # Recherche des emails non lus
             result = service.users().messages().list(
                 userId="me",
                 q="is:unread in:inbox",
@@ -430,11 +490,9 @@ def fetch_configs() -> list:
             timeout=10,
         )
         if resp.status_code == 200:
-            # Filtre côté watcher : on ne garde que les agences avec OAuth Gmail
             return [
                 c for c in resp.json()
                 if c.get("gmail_refresh_token")
-                # enabled ne bloque pas Gmail OAuth, seulement le watcher IMAP
             ]
         log.warning(f"⚠️ Impossible de récupérer les configs : {resp.status_code}")
     except Exception as e:
@@ -446,13 +504,12 @@ def run_multi_tenant_watcher():
     """Boucle principale multi-tenant — démarre/arrête les threads par agence."""
     log.info("🚀 Watcher Gmail multi-tenant démarré")
 
-    active_watchers: dict = {}  # agency_id → (thread, stop_event)
+    active_watchers: dict = {}
 
     while True:
         configs = fetch_configs()
         active_ids = {c["agency_id"] for c in configs}
 
-        # Arrêt des watchers désactivés
         for agency_id in list(active_watchers.keys()):
             if agency_id not in active_ids:
                 log.info(f"🛑 Désactivation watcher agency={agency_id}")
@@ -461,7 +518,6 @@ def run_multi_tenant_watcher():
                 active_watchers[agency_id][0].join(timeout=5)
                 del active_watchers[agency_id]
 
-        # Démarrage des nouveaux watchers
         for config in configs:
             agency_id = config["agency_id"]
             if agency_id not in active_watchers:

@@ -5,12 +5,14 @@ Authentification par x-watcher-secret header.
 
 - GET  /watcher/configs        → liste des agences avec Gmail connecté
 - POST /watcher/update-token   → MAJ access_token après refresh OAuth
+- GET  /watcher/check-sender   → vérifie si un email est connu (candidat existant)
 """
 
+import hmac
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -105,4 +107,34 @@ async def update_token(
     db.commit()
     log.info(f"[watcher/update-token] Token mis à jour agency={payload.agency_id}")
     return {"success": True}
-## essai 
+
+
+# ── GET /watcher/check-sender ─────────────────────────────────────────────────
+
+@router.get("/check-sender")
+async def check_known_sender(
+    email: str,
+    agency_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Vérifie si un email est déjà connu (candidat existant dans les dossiers).
+    Appelé par le watcher pour décider si un email sans PJ/mots-clés doit être accepté.
+    
+    Retourne : {"is_known": true/false}
+    """
+    # Vérification du secret
+    auth = request.headers.get("x-watcher-secret", "")
+    if not settings.WATCHER_SECRET or not hmac.compare_digest(auth, settings.WATCHER_SECRET):
+        raise HTTPException(status_code=403, detail="Secret invalide")
+    
+    # Vérification en base
+    exists = db.query(models.TenantFile).filter(
+        models.TenantFile.agency_id == agency_id,
+        models.TenantFile.candidate_email == email,
+    ).first() is not None
+    
+    log.debug(f"[watcher/check-sender] email={email} agency={agency_id} is_known={exists}")
+    
+    return {"is_known": exists}
