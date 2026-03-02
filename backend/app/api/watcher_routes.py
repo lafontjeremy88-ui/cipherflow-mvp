@@ -168,7 +168,7 @@ async def update_token(
 
 # ── GET /watcher/check-sender ─────────────────────────────────────────────────
 
-@router.get("/watcher/check-sender")
+@router.get("/check-sender")
 async def check_known_sender(
     email: str,
     agency_id: int,
