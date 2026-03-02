@@ -55,6 +55,7 @@ if missing:
 WEBHOOK_URL = f"{BACKEND_URL}/webhook/email"
 CONFIGS_URL = f"{BACKEND_URL}/watcher/configs"
 TOKEN_UPDATE_URL = f"{BACKEND_URL}/watcher/update-token"
+CHECK_SENDER_URL = f"{BACKEND_URL}/watcher/check-sender"
 
 GOOGLE_TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
 
@@ -69,9 +70,9 @@ SCOPES = [
 # ============================================================
 
 class FilterDecision(str, Enum):
-    PROCESS_FULL  = "process_full"   # Traitement complet avec IA
-    PROCESS_LIGHT = "process_light"  # Traitement léger
-    IGNORE        = "ignore"         # Ignorer
+    PROCESS_FULL  = "process_full"
+    PROCESS_LIGHT = "process_light"
+    IGNORE        = "ignore"
 
 
 # ── Blacklist système (bots, notifications techniques) ────────────────────────
@@ -88,13 +89,8 @@ SYSTEM_BLACKLIST = [
 
 # ── Mots-clés immobiliers (sujet OU corps) ───────────────────────────────────
 IMMOBILIER_KEYWORDS = [
-    # Candidatures
     "candidature", "dossier", "locataire", "location", "louer", "bail", "garant",
-    
-    # Types de biens
     "appartement", "studio", "t2", "t3", "t4", "t5", "maison", "logement", "pièces",
-    
-    # Documents
     "visite", "documents", "justificatifs", "pièce d'identité", "identité",
     "bulletin de salaire", "fiche de paie", "salaire", "avis d'imposition",
     "imposition", "contrat de travail", "rib", "relevé", "quittance",
@@ -117,11 +113,12 @@ def is_system_blacklisted(sender: str) -> bool:
 def is_known_sender(sender_email: str, agency_id: int) -> bool:
     """
     Vérifie si l'expéditeur est déjà connu en base (candidat existant).
-    Fait une requête rapide au backend.
+    Fait une requête au backend avec normalisation Gmail.
     """
     try:
+        log.info(f"[filter] Vérification expéditeur connu : {sender_email}")
         resp = requests.get(
-            f"{BACKEND_URL}/watcher/check-sender",
+            CHECK_SENDER_URL,
             params={
                 "email": sender_email,
                 "agency_id": agency_id,
@@ -130,9 +127,13 @@ def is_known_sender(sender_email: str, agency_id: int) -> bool:
             timeout=3,
         )
         if resp.status_code == 200:
-            return resp.json().get("is_known", False)
+            is_known = resp.json().get("is_known", False)
+            log.info(f"[filter] Résultat: is_known={is_known}")
+            return is_known
+        else:
+            log.warning(f"[filter] Backend retourné {resp.status_code}")
     except Exception as e:
-        log.warning(f"[filter] Impossible de vérifier expéditeur connu : {e}")
+        log.warning(f"[filter] Erreur vérification expéditeur : {e}")
     return False
 
 
@@ -337,7 +338,6 @@ def download_attachment(service, user_id: str, message_id: str, attachment_id: s
 def process_one_message(service, message_id: str, agency_id: int, gmail_email: str):
     """Traite un email Gmail API et l'envoie au webhook backend."""
 
-    # Récupération du message complet
     msg_data = service.users().messages().get(
         userId="me",
         id=message_id,
@@ -347,7 +347,6 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
     payload = msg_data.get("payload", {})
     headers = payload.get("headers", [])
 
-    # Anti-boucle : on ignore nos propres emails
     if _get_header(headers, "X-CipherFlow-Origin"):
         log.info(f"[watcher] Email CipherFlow ignoré (anti-boucle) id={message_id}")
         _mark_as_read(service, message_id)
@@ -360,7 +359,6 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
 
     log.info(f"📧 Email reçu — De: {sender} | Sujet: {subject[:50]}")
 
-    # Téléchargement des pièces jointes
     attachments = []
     for att in att_meta:
         try:
