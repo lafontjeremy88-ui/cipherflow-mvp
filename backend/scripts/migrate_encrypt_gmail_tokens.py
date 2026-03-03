@@ -74,21 +74,21 @@ def main() -> None:
 
     with engine.begin() as conn:
         for row in rows:
-            config_id    = row[0]
-            agency_id    = row[1]
+            config_id     = row[0]
+            agency_id     = row[1]
             access_token  = row[2]
             refresh_token = row[3]
 
             updates = {}
 
-            # ── access_token ─────────────────────────────────────────────────
+            # ── access_token ──────────────────────────────────────────────────
             if access_token:
                 if _is_encrypted(access_token):
                     print(f"  ⏭️   config #{config_id} (agency={agency_id}) : access_token déjà chiffré")
                     skipped += 1
                 else:
                     updates["access"] = _encrypt(access_token)
-                    print(f"  🔐  config #{config_id} (agency={agency_id}) : access_token chiffré")
+                    print(f"  🔐  config #{config_id} (agency={agency_id}) : access_token → chiffré")
 
             # ── refresh_token ─────────────────────────────────────────────────
             if refresh_token:
@@ -98,7 +98,7 @@ def main() -> None:
                         skipped += 1
                 else:
                     updates["refresh"] = _encrypt(refresh_token)
-                    print(f"  🔐  config #{config_id} (agency={agency_id}) : refresh_token chiffré")
+                    print(f"  🔐  config #{config_id} (agency={agency_id}) : refresh_token → chiffré")
 
             if not updates:
                 continue
@@ -123,8 +123,8 @@ def main() -> None:
             updated += 1
 
     print(f"\n✅  Migration terminée.")
-    print(f"    Lignes mises à jour : {updated}")
-    print(f"    Lignes déjà chiffrées (ignorées) : {skipped}")
+    print(f"    Lignes mises à jour   : {updated}")
+    print(f"    Lignes déjà chiffrées : {skipped}")
 
 
 if __name__ == "__main__":
