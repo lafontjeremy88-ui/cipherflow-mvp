@@ -153,16 +153,18 @@ async def google_callback(request: Request):
         if not email or not sub:
             raise HTTPException(status_code=400, detail="Google userinfo incomplet")
 
-        # Étape 4: OPTIONNEL - Restriction d'accès pour la beta
-        # Décommentez les lignes ci-dessous pour limiter l'accès à certains domaines/emails
-        # ALLOWED_DOMAINS = ['votreagence.com', 'example.fr']
-        # domain = email.split('@')[1]
-        # if domain not in ALLOWED_DOMAINS:
-        #     raise HTTPException(
-        #         status_code=403, 
-        #         detail=f"Accès refusé. CipherFlow est actuellement en beta privée. Domaine {domain} non autorisé."
-        #     )
+      # Étape 4: RESTRICTION D'ACCÈS BETA - Liste blanche d'emails/domaines
+        # ── Personnalisez cette liste avec vos beta testeurs ──────────────────
 
+        # Liste des emails autorisés individuellement
+        ALLOWED_EMAILS = [
+            'lafontjeremy88@gmail.com',  # Votre email admin
+            'zamithdoriane@gmail.com'
+            'cipherflow.service@gmail.com',   # L'email de test
+            # Ajoutez ici les emails de vos beta testeurs :
+            # 'testeur1@gmail.com',
+            # 'marie@example.com',
+]
         # Étape 5: Création du JWT CipherFlow
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
