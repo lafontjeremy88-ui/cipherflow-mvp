@@ -153,18 +153,39 @@ async def google_callback(request: Request):
         if not email or not sub:
             raise HTTPException(status_code=400, detail="Google userinfo incomplet")
 
-      # Étape 4: RESTRICTION D'ACCÈS BETA - Liste blanche d'emails/domaines
+        # Étape 4: RESTRICTION D'ACCÈS BETA - Liste blanche d'emails/domaines
         # ── Personnalisez cette liste avec vos beta testeurs ──────────────────
-
+        
         # Liste des emails autorisés individuellement
         ALLOWED_EMAILS = [
-            'lafontjeremy88@gmail.com',  # Votre email admin
-            'zamithdoriane@gmail.com'
-            'cipherflow.service@gmail.com',   # L'email de test
+            'lafontjeremy88@gmail.com',      # Votre email admin
+            'zamithdoriane@gmail.com',       # Email de test
+            'cipherflow.service@gmail.com',  # Email service
             # Ajoutez ici les emails de vos beta testeurs :
             # 'testeur1@gmail.com',
             # 'marie@example.com',
-]
+        ]
+        
+        # OU liste des domaines autorisés (tous les emails @domaine.com)
+        ALLOWED_DOMAINS = [
+            # Décommentez si vous voulez autoriser des domaines entiers :
+            # 'votreagence.com',  # Tous les emails @votreagence.com
+            # 'example.fr',
+        ]
+        
+        # Validation : vérifier que l'email est autorisé
+        domain = email.split('@')[1] if '@' in email else ''
+        
+        if email not in ALLOWED_EMAILS and domain not in ALLOWED_DOMAINS:
+            print(f"🚫 Accès refusé pour {email} (domaine: {domain})")
+            raise HTTPException(
+                status_code=403, 
+                detail="Accès refusé. CipherFlow est actuellement en beta privée. "
+                       "Contactez l'équipe CipherFlow pour obtenir un accès."
+            )
+        
+        print(f"✅ Accès autorisé pour {email}")
+
         # Étape 5: Création du JWT CipherFlow
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
