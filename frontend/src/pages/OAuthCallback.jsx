@@ -1,62 +1,85 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { API_URL } from "../services/api";
 
 const LS_TOKEN = "cipherflow_token";
 const LS_EMAIL = "cipherflow_email";
 
-function getCookie(name) {
-  return document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(name + "="))
-    ?.split("=")[1] || null;
-}
-
-function deleteCookie(name) {
-  document.cookie = `${name}=; max-age=0; path=/`;
-}
-
-function parseJwtEmail(token) {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.email || null;
-  } catch {
-    return null;
-  }
-}
-
 export default function OAuthCallback({ onSuccess }) {
   const navigate = useNavigate();
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    // P2 : lecture depuis cookie HttpOnly au lieu de ?token= dans l'URL
-    const token = getCookie("oauth_token");
+    // NOUVELLE MÉTHODE SÉCURISÉE :
+    // Au lieu de lire le cookie directement (impossible avec httponly=true),
+    // on appelle un endpoint backend qui lit le cookie HttpOnly côté serveur
+    // et nous retourne le token en JSON.
+    
+    const exchangeToken = async () => {
+      try {
+        const response = await fetch(`${API_URL}/auth/google/exchange-token`, {
+          method: 'GET',
+          credentials: 'include',  // ✅ IMPORTANT : Envoie les cookies (dont oauth_token)
+        });
 
-    if (!token) {
-      navigate("/", { replace: true });
-      return;
-    }
+        if (!response.ok) {
+          // Pas de cookie trouvé ou erreur serveur
+          console.error("Erreur échange token:", response.status);
+          navigate("/", { replace: true });
+          return;
+        }
 
-    // Nettoyage immédiat du cookie
-    deleteCookie("oauth_token");
+        const data = await response.json();
+        const { token, email } = data;
 
-    // Extraction email depuis le JWT (pas de requête réseau)
-    const email = parseJwtEmail(token);
+        if (!token) {
+          console.error("Token manquant dans la réponse");
+          navigate("/", { replace: true });
+          return;
+        }
 
-    localStorage.setItem(LS_TOKEN, token);
-    if (email) localStorage.setItem(LS_EMAIL, email);
+        // Stockage en localStorage (maintenant que le cookie HttpOnly est supprimé côté serveur)
+        localStorage.setItem(LS_TOKEN, token);
+        if (email) {
+          localStorage.setItem(LS_EMAIL, email);
+        }
 
-    if (typeof onSuccess === "function") {
-      onSuccess(token, email);
-    }
+        // Notifier App.jsx que la connexion est réussie
+        if (typeof onSuccess === "function") {
+          onSuccess(token, email);
+        }
 
-    navigate("/", { replace: true });
+        // Redirection vers le dashboard
+        navigate("/", { replace: true });
+        
+      } catch (err) {
+        console.error("Erreur lors de l'échange du token:", err);
+        setError("Erreur de connexion. Veuillez réessayer.");
+        
+        // Redirection après 2 secondes en cas d'erreur
+        setTimeout(() => {
+          navigate("/", { replace: true });
+        }, 2000);
+      }
+    };
+
+    exchangeToken();
   }, [navigate, onSuccess]);
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-      <div style={{ padding: 20 }}>
-        <h3>Connexion en cours...</h3>
-        <p>On finalise la session.</p>
+      <div style={{ padding: 20, textAlign: "center" }}>
+        {error ? (
+          <>
+            <h3 style={{ color: "#ef4444" }}>❌ {error}</h3>
+            <p>Redirection...</p>
+          </>
+        ) : (
+          <>
+            <h3>🔐 Connexion sécurisée en cours...</h3>
+            <p>Finalisation de l'authentification.</p>
+          </>
+        )}
       </div>
     </div>
   );

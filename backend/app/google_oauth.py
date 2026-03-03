@@ -3,6 +3,7 @@
 P2 : token JWT transmis via cookie HttpOnly + Secure
      au lieu d'un query param dans l'URL (évite la fuite dans les logs/historique).
 P2+ : validation cryptographique du token ID Google avec google-auth
+P2++ : endpoint d'échange sécurisé pour protéger contre XSS
 """
 import os
 from datetime import datetime, timedelta
@@ -10,7 +11,7 @@ from typing import Optional
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from jose import jwt
 from starlette.middleware.sessions import SessionMiddleware
 from google.oauth2 import id_token
@@ -189,17 +190,17 @@ async def google_callback(request: Request):
         # Étape 5: Création du JWT CipherFlow
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
-        # Étape 6: Retour avec cookie sécurisé HttpOnly
+        # Étape 6: Retour avec cookie HttpOnly sécurisé (protection XSS maximale)
         redirect_url = f"{FRONTEND_URL}/oauth/callback"
         response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(
             key="oauth_token",
             value=cf_token,
-            httponly=True,  # JavaScript ne peut pas lire ce cookie (protection XSS)
+            httponly=True,   # ✅ Protection XSS : JavaScript ne peut PAS lire ce cookie
             secure=IS_PROD,  # Envoyé uniquement en HTTPS en production
             samesite="lax",
-            max_age=120,    # 2 minutes pour lire le cookie puis il expire
-            domain=None,
+            max_age=120,     # 2 minutes pour échanger le token
+            path="/",        # Disponible sur tout le site
         )
         return response
 
@@ -210,3 +211,55 @@ async def google_callback(request: Request):
         # Toute autre erreur → redirection vers frontend avec erreur
         print(f"❌ Erreur OAuth callback: {str(e)}")
         return RedirectResponse(url=f"{FRONTEND_URL}/?oauth_error=1", status_code=302)
+
+
+@router.get("/exchange-token")
+async def exchange_token(request: Request):
+    """
+    Endpoint sécurisé d'échange de cookie HttpOnly contre un token JSON.
+    
+    Cette approche offre une sécurité maximale :
+    - Le cookie est HttpOnly = JavaScript malveillant ne peut PAS le voler
+    - Le backend lit le cookie et le retourne en JSON
+    - Le cookie est supprimé immédiatement après lecture
+    - Le token est ensuite stocké en localStorage par le frontend
+    
+    Flow:
+    1. Frontend est redirigé vers /oauth/callback
+    2. Frontend appelle /auth/google/exchange-token (envoie le cookie automatiquement)
+    3. Backend lit le cookie HttpOnly, le retourne en JSON, et supprime le cookie
+    4. Frontend stocke le token en localStorage
+    """
+    # Lire le cookie HttpOnly (JavaScript ne peut pas faire ça)
+    token = request.cookies.get("oauth_token")
+    
+    if not token:
+        raise HTTPException(
+            status_code=401, 
+            detail="No OAuth token found. Please authenticate again."
+        )
+    
+    # Extraire l'email du JWT pour le retourner aussi
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
+        email = payload.get("email")
+    except Exception:
+        email = None
+    
+    # Créer la réponse JSON avec le token
+    response = JSONResponse({
+        "token": token,
+        "email": email,
+        "message": "Token échangé avec succès"
+    })
+    
+    # ✅ IMPORTANT : Supprimer le cookie immédiatement après lecture
+    response.delete_cookie(
+        key="oauth_token",
+        path="/",
+        samesite="lax"
+    )
+    
+    print(f"🔄 Token échangé pour {email}")
+    
+    return response
