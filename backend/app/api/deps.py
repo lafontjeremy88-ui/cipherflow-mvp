@@ -19,8 +19,14 @@ async def get_current_user_db(
     """
     Résout le token JWT → User en base.
     Utilisé comme dépendance dans toutes les routes protégées.
+    
+    FIX : Cherche d'abord 'email', puis 'sub' pour compatibilité avec :
+    - JWT Google OAuth : {"sub": google_id, "email": "user@gmail.com"}
+    - JWT classique : {"sub": "user@email.com"}
     """
-    email = token_payload.get("sub") or token_payload.get("email")
+    # Essayer d'abord 'email' (Google OAuth), puis 'sub' (JWT classique)
+    email = token_payload.get("email") or token_payload.get("sub")
+    
     if not email:
         raise HTTPException(status_code=401, detail="Token invalide")
 
