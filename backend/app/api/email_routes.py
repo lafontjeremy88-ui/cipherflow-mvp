@@ -96,8 +96,12 @@ async def get_stats(
         (func.lower(EmailAnalysis.urgency).contains("urg")),
     ).count()
 
-    from app.database.models import TenantFile
+    from app.database.models import TenantFile, TenantFileStatus
     tenant_count = db.query(TenantFile).filter(TenantFile.agency_id == aid).count()
+    tenant_incomplete = db.query(TenantFile).filter(
+        TenantFile.agency_id == aid,
+        TenantFile.status == TenantFileStatus.INCOMPLETE,
+    ).count()
 
     cat_stats = (
         db.query(EmailAnalysis.category, func.count(EmailAnalysis.id))
@@ -116,6 +120,7 @@ async def get_stats(
             "total_emails": total,
             "high_urgency": high,
             "tenant_files": tenant_count,
+            "tenant_files_incomplete": tenant_incomplete,
         },
         "charts": {"distribution": [{"name": c[0], "value": c[1]} for c in cat_stats]},
         "recents": [

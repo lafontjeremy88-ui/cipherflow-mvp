@@ -108,14 +108,19 @@ async def email_webhook(request: Request):
             agency = None
             if alias:
                 agency = db.query(Agency).filter(Agency.email_alias == alias).first()
-            # Fallback : première agence en base
             if not agency:
-                agency = db.query(Agency).order_by(Agency.id.asc()).first()
-            payload["agency_id"] = agency.id if agency else 1
+                log.warning(f"[webhook] Alias '{alias}' non résolu (to_email='{to_email}') — rejeté")
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Alias email inconnu : '{alias}'. Vérifiez email_alias de l'agence.",
+                )
+            payload["agency_id"] = agency.id
             log.info(f"[webhook] agency_id résolu : {payload['agency_id']} (alias='{alias}')")
+        except HTTPException:
+            raise
         except Exception as e:
             log.error(f"[webhook] Erreur résolution agency_id : {e}")
-            payload["agency_id"] = 1
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la résolution de l'agence.")
         finally:
             db.close()
 

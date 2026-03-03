@@ -1,5 +1,27 @@
 import React, { useEffect, useState } from "react";
 
+const STATUS_BADGE = {
+  validated:   { label: "Complet",    bg: "#16a34a", color: "#dcfce7" },
+  to_validate: { label: "À valider",  bg: "#0891b2", color: "#e0f2fe" },
+  incomplete:  { label: "Incomplet",  bg: "#d97706", color: "#fef3c7" },
+  new:         { label: "Nouveau",    bg: "#475569", color: "#f1f5f9" },
+  rejected:    { label: "Rejeté",     bg: "#dc2626", color: "#fee2e2" },
+};
+
+function StatusBadge({ status }) {
+  const cfg = STATUS_BADGE[status] || STATUS_BADGE.new;
+  return (
+    <span style={{
+      background: cfg.bg, color: cfg.color,
+      fontSize: 11, fontWeight: 700,
+      padding: "2px 8px", borderRadius: 999,
+      whiteSpace: "nowrap",
+    }}>
+      {cfg.label}
+    </span>
+  );
+}
+
 /**
  * Liste des dossiers locataires (tenant-files)
  *
@@ -95,8 +117,8 @@ export default function TenantFilesList({
             >
               <div style={{ fontWeight: 800 }}>{t.candidate_email || "Email inconnu"}</div>
 
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-                <span style={{ opacity: 0.8, fontSize: 13 }}>Statut : {t.status}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+                <StatusBadge status={t.status} />
                 <span style={{ opacity: 0.6, fontSize: 12 }}>
                   {t.created_at ? new Date(t.created_at).toLocaleString() : ""}
                 </span>

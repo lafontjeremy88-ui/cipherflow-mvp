@@ -231,16 +231,18 @@ Règles doc_type :
                 )
 
         if isinstance(first_err, json.JSONDecodeError):
-            log.error(f"[document_service] JSON invalide : {first_err}")
+            log.error(f"[document_service] JSON invalide pour {filename} : {first_err}")
             return DocumentAnalysisResult(
-                summary="Analyse indisponible (réponse IA invalide)",
+                doc_type=TenantDocType.OTHER.value,
+                summary="Document illisible",
                 success=False,
                 error=str(first_err),
             )
 
-        log.error(f"[document_service] Erreur Mistral : {first_err}")
+        log.error(f"[document_service] Erreur analyse PDF {filename} : {first_err}")
         return DocumentAnalysisResult(
-            summary="Analyse indisponible",
+            doc_type=TenantDocType.OTHER.value,
+            summary="Document illisible",
             success=False,
             error=str(first_err),
         )

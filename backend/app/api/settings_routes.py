@@ -24,29 +24,17 @@ log = logging.getLogger(__name__)
 
 # ── Helpers chiffrement mot de passe IMAP ─────────────────────────────────────
 
+from app.core.security_utils import fernet_encrypt_str, fernet_decrypt_str
+
+
 def _encrypt_password(password: str) -> str:
     """Chiffre le mot de passe IMAP avec Fernet avant stockage."""
-    from app.core.config import settings as app_settings
-    key = (app_settings.FERNET_KEY or "").strip()
-    if not key:
-        return password  # dev sans chiffrement
-    from cryptography.fernet import Fernet
-    f = Fernet(key.encode() if isinstance(key, str) else key)
-    return f.encrypt(password.encode()).decode()
+    return fernet_encrypt_str(password)
 
 
 def _decrypt_password(encrypted: str) -> str:
     """Déchiffre le mot de passe IMAP."""
-    from app.core.config import settings as app_settings
-    key = (app_settings.FERNET_KEY or "").strip()
-    if not key:
-        return encrypted
-    try:
-        from cryptography.fernet import Fernet
-        f = Fernet(key.encode() if isinstance(key, str) else key)
-        return f.decrypt(encrypted.encode()).decode()
-    except Exception:
-        return ""
+    return fernet_decrypt_str(encrypted)
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────

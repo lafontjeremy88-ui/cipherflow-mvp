@@ -46,6 +46,36 @@ def decrypt_bytes(data: bytes) -> bytes:
         return data
 
 
+# ── Fernet (chiffrement tokens DB) ────────────────────────────────────────────
+
+def fernet_encrypt_str(value: str) -> str:
+    """Chiffre une chaîne avec FERNET_KEY (stockage tokens en DB).
+    Retourne la valeur en clair si la clé n'est pas configurée (dev).
+    """
+    from app.core.config import settings as app_settings
+    key = (app_settings.FERNET_KEY or "").strip()
+    if not key:
+        return value
+    f = Fernet(key.encode() if isinstance(key, str) else key)
+    return f.encrypt(value.encode()).decode()
+
+
+def fernet_decrypt_str(encrypted: str) -> str:
+    """Déchiffre une chaîne chiffrée avec FERNET_KEY.
+    Retourne la valeur telle quelle si la clé n'est pas configurée (dev).
+    Retourne une chaîne vide si le déchiffrement échoue.
+    """
+    from app.core.config import settings as app_settings
+    key = (app_settings.FERNET_KEY or "").strip()
+    if not key:
+        return encrypted
+    try:
+        f = Fernet(key.encode() if isinstance(key, str) else key)
+        return f.decrypt(encrypted.encode()).decode()
+    except Exception:
+        return ""
+
+
 # ── Tokens ─────────────────────────────────────────────────────────────────────
 
 REFRESH_TOKEN_DAYS = 30

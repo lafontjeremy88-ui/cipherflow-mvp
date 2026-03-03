@@ -227,9 +227,16 @@ function GmailConnectSection({ authFetch }) {
           <div style={{ display: "flex", alignItems: "center", gap: "16px", padding: "1rem", background: "#0d2818", borderRadius: "8px", border: "1px solid #16a34a", marginBottom: "1.5rem" }}>
             <Wifi size={22} color="#34d399" />
             <div style={{ flex: 1 }}>
-              <div style={{ color: "white", fontWeight: "bold" }}>Gmail connecté ✅</div>
-              <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "2px" }}>
-                {status.email || "Adresse non disponible"} — Watcher actif, surveillance en cours
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ color: "white", fontWeight: "bold", fontSize: "0.95rem" }}>
+                  {status.email || "Adresse non disponible"}
+                </span>
+                <span style={{ background: "#16a34a", color: "#dcfce7", fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999 }}>
+                  Connecté
+                </span>
+              </div>
+              <div style={{ color: "#64748b", fontSize: "0.8rem", marginTop: "4px" }}>
+                Watcher actif — surveillance en cours
               </div>
             </div>
           </div>

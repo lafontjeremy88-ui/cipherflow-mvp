@@ -18,6 +18,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.security_utils import fernet_decrypt_str, fernet_encrypt_str
 from app.database.database import get_db
 from app.database import models
 
@@ -114,8 +115,8 @@ async def get_watcher_configs(
     for c in configs:
         result.append({
             "agency_id":           c.agency_id,
-            "gmail_access_token":  c.gmail_access_token,
-            "gmail_refresh_token": c.gmail_refresh_token,
+            "gmail_access_token":  fernet_decrypt_str(c.gmail_access_token) if c.gmail_access_token else None,
+            "gmail_refresh_token": fernet_decrypt_str(c.gmail_refresh_token) if c.gmail_refresh_token else None,
             "gmail_token_expiry":  c.gmail_token_expiry.isoformat() if c.gmail_token_expiry else None,
             "gmail_email":         c.gmail_email,
             "enabled":             c.enabled,
@@ -155,7 +156,7 @@ async def update_token(
     if not config:
         raise HTTPException(status_code=404, detail="Config agence introuvable")
 
-    config.gmail_access_token = payload.gmail_access_token
+    config.gmail_access_token = fernet_encrypt_str(payload.gmail_access_token)
     if payload.gmail_token_expiry:
         config.gmail_token_expiry = datetime.fromisoformat(
             payload.gmail_token_expiry.replace("Z", "+00:00")

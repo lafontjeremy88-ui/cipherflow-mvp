@@ -29,7 +29,7 @@ from app.database.database import SessionLocal
 from app.database import models
 from app.database.models import TenantDocType
 from app.services.email_service import analyze_email, generate_reply
-from app.services.document_service import analyze_document
+from app.services.document_service import analyze_document, DocumentAnalysisResult
 from app.services.storage_service import upload_file
 from app.services.tenant_service import (
     ensure_tenant_file,
@@ -288,11 +288,20 @@ async def _process_attachment(
         log.info(f"[pipeline] Doublon détecté ({filename}), réutilisation id={existing.id}")
         return existing.id, existing.filename, None
 
-    doc_result = await analyze_document(
-        file_bytes=raw_bytes,
-        filename=filename,
-        content_type=content_type,
-    )
+    try:
+        doc_result = await analyze_document(
+            file_bytes=raw_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+    except Exception as doc_err:
+        log.error(f"[pipeline] analyze_document() a planté pour {filename} : {doc_err}")
+        doc_result = DocumentAnalysisResult(
+            doc_type=TenantDocType.OTHER.value,
+            summary="Document illisible",
+            success=False,
+            error=str(doc_err),
+        )
 
     if not doc_result.success:
         log.warning(

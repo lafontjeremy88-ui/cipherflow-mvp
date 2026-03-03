@@ -249,28 +249,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         if not email or not sub:
             raise HTTPException(status_code=400, detail="Google userinfo incomplet")
 
-        # Étape 4: RESTRICTION D'ACCÈS BETA - Liste blanche d'emails/domaines
-        ALLOWED_EMAILS = [
-            'lafontjeremy88@gmail.com',
-            'zamithdoriane@gmail.com',
-            'cipherflow.service@gmail.com',
-        ]
-        
-        ALLOWED_DOMAINS = []
-        
-        domain = email.split('@')[1] if '@' in email else ''
-        
-        if email not in ALLOWED_EMAILS and domain not in ALLOWED_DOMAINS:
-            print(f"🚫 Accès refusé pour {email} (domaine: {domain})")
-            raise HTTPException(
-                status_code=403, 
-                detail="Accès refusé. CipherFlow est actuellement en beta privée. "
-                       "Contactez l'équipe CipherFlow pour obtenir un accès."
-            )
-        
-        print(f"✅ Accès autorisé pour {email}")
-
-        # 🔧 FIX : Étape 5 - CHERCHER OU CRÉER L'UTILISATEUR DANS LA BDD
+        # Étape 4 : CHERCHER OU CRÉER L'UTILISATEUR DANS LA BDD
         user = get_or_create_user_from_google(
             db=db,
             email=email,

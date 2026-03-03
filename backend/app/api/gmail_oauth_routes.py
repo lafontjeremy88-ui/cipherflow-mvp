@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_db
 from app.core.config import settings
+from app.core.security_utils import fernet_encrypt_str, fernet_decrypt_str
 from app.database.database import get_db
 from app.database import models
 
@@ -210,11 +211,11 @@ async def gmail_callback(
     
     # ═══════════════════════════════════════════════════════════════════════════
 
-    # 4. Sauvegarde en base
+    # 4. Sauvegarde en base (tokens chiffrés avec Fernet)
     try:
         config = _get_or_create_email_config(db, agency_id)
-        config.gmail_access_token  = access_token
-        config.gmail_refresh_token = refresh_token
+        config.gmail_access_token  = fernet_encrypt_str(access_token)
+        config.gmail_refresh_token = fernet_encrypt_str(refresh_token)
         config.gmail_token_expiry  = datetime.utcnow() + timedelta(seconds=expires_in)
         config.gmail_email         = gmail_email
         config.enabled             = True
@@ -264,11 +265,11 @@ async def gmail_disconnect(
     if not config or not config.gmail_refresh_token:
         raise HTTPException(status_code=404, detail="Aucune connexion Gmail active")
 
-    # Révocation côté Google (best effort)
+    # Révocation côté Google (best effort — déchiffrement du token avant envoi)
     try:
         requests.post(
             GOOGLE_REVOKE_URL,
-            params={"token": config.gmail_refresh_token},
+            params={"token": fernet_decrypt_str(config.gmail_refresh_token)},
             timeout=10,
         )
     except Exception as e:

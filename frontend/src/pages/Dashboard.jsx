@@ -48,15 +48,11 @@ function normalizeStats(payload) {
     total_emails: Number(kpis?.total_emails || kpis?.emails || 0),
     high_urgency: Number(kpis?.high_urgency || kpis?.urgent || 0),
 
-    // 🧱 Nouveau KPI : dossiers locataires
     tenant_files: Number(
-      kpis?.tenant_files ||      // futur champ côté backend
-      kpis?.tenantfiles ||       // au cas où tu l'appelles autrement
-      kpis?.dossiers ||          // alias possible
-      kpis?.invoices ||          // fallback sur l'ancien champ "invoices"
-      kpis?.quittances ||
-      0
+      kpis?.tenant_files || kpis?.tenantfiles || kpis?.dossiers ||
+      kpis?.invoices || kpis?.quittances || 0
     ),
+    tenant_files_incomplete: Number(kpis?.tenant_files_incomplete || 0),
 
     distribution,
     recents: Array.isArray(payload?.recents)
@@ -136,12 +132,14 @@ const goToCategory = (name) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [stats, setStats] = useState({
-  total_emails: 0,
-  high_urgency: 0,
-  tenant_files: 0,
-  distribution: [],
-  recents: [],
-});
+    total_emails: 0,
+    high_urgency: 0,
+    tenant_files: 0,
+    tenant_files_incomplete: 0,
+    distribution: [],
+    recents: [],
+  });
+  const [gmailConnected, setGmailConnected] = useState(null); // null = inconnu
 
   const donut = useMemo(() => buildDonut(stats.distribution), [stats.distribution]);
   const donutData = donut.data;
@@ -156,16 +154,26 @@ const goToCategory = (name) => {
       setError("");
 
       try {
-        const res = await doFetch("/dashboard/stats");
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(`Stats HTTP ${res.status} ${txt}`);
+        const [statsRes, gmailRes] = await Promise.all([
+          doFetch("/dashboard/stats"),
+          doFetch("/gmail/status").catch(() => null),
+        ]);
+
+        if (!statsRes.ok) {
+          const txt = await statsRes.text().catch(() => "");
+          throw new Error(`Stats HTTP ${statsRes.status} ${txt}`);
         }
 
-        const payload = await res.json().catch(() => ({}));
+        const payload = await statsRes.json().catch(() => ({}));
         const normalized = normalizeStats(payload);
 
-        if (!cancelled) setStats(normalized);
+        if (!cancelled) {
+          setStats(normalized);
+          if (gmailRes?.ok) {
+            const gData = await gmailRes.json().catch(() => null);
+            setGmailConnected(gData?.connected ?? false);
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(e?.message || "Erreur inconnue");
       } finally {
@@ -191,6 +199,28 @@ const goToCategory = (name) => {
         <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
       </div>
 
+      {/* Bannière onboarding Gmail */}
+      {gmailConnected === false && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "12px 20px", marginBottom: 24, borderRadius: 10,
+          background: "rgba(109,94,248,0.12)", border: "1px solid rgba(109,94,248,0.4)",
+          color: "#c4b5fd",
+        }}>
+          <span style={{ fontSize: 18 }}>⚡</span>
+          <span style={{ flex: 1 }}>
+            Connectez votre boîte Gmail pour automatiser le traitement des emails.
+          </span>
+          <button
+            className="btn btn-primary"
+            style={{ padding: "6px 16px", fontSize: 13 }}
+            onClick={() => navigate("/settings")}
+          >
+            Connecter Gmail
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="alert alert-error">
           <strong>Erreur :</strong> {error}
@@ -214,13 +244,20 @@ const goToCategory = (name) => {
           onClick={() => navigate("/emails/history?filter=high_urgency")}
         />
 
-        <StatCard
-          title="DOSSIERS LOCATAIRES"
-          value={loading ? "…" : stats.tenant_files}
-          icon={FileText}
-          color="#44C2A8"
-          onClick={() => navigate("/tenant-files")}   // ✅ c’est le bon path
-        />
+        <div>
+          <StatCard
+            title="DOSSIERS LOCATAIRES"
+            value={loading ? "…" : stats.tenant_files}
+            icon={FileText}
+            color="#44C2A8"
+            onClick={() => navigate("/tenant-files")}
+          />
+          {!loading && stats.tenant_files_incomplete > 0 && (
+            <div style={{ marginTop: 6, paddingLeft: 4, fontSize: 12, color: "#d97706", fontWeight: 600 }}>
+              {stats.tenant_files_incomplete} incomplet{stats.tenant_files_incomplete > 1 ? "s" : ""}
+            </div>
+          )}
+        </div>
 
       </div>
 
