@@ -4,6 +4,7 @@ P2 : token JWT transmis via cookie HttpOnly + Secure
      au lieu d'un query param dans l'URL (évite la fuite dans les logs/historique).
 P2+ : validation cryptographique du token ID Google avec google-auth
 P2++ : endpoint d'échange sécurisé pour protéger contre XSS
+P2+++ : cookie cross-domain avec SameSite=None pour Vercel → Railway
 """
 import os
 from datetime import datetime, timedelta
@@ -190,17 +191,17 @@ async def google_callback(request: Request):
         # Étape 5: Création du JWT CipherFlow
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
-        # Étape 6: Retour avec cookie HttpOnly sécurisé (protection XSS maximale)
+        # Étape 6: Cookie cross-domain avec SameSite=None
         redirect_url = f"{FRONTEND_URL}/oauth/callback"
         response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(
             key="oauth_token",
             value=cf_token,
-            httponly=True,   # ✅ Protection XSS : JavaScript ne peut PAS lire ce cookie
-            secure=IS_PROD,  # Envoyé uniquement en HTTPS en production
-            samesite="lax",
-            max_age=120,     # 2 minutes pour échanger le token
-            path="/",        # Disponible sur tout le site
+            httponly=True,    # Protection XSS
+            secure=True,      # OBLIGATOIRE avec SameSite=None
+            samesite="none",  # ✅ MODIFIÉ : "none" pour permettre cross-domain (Vercel → Railway)
+            max_age=120,      # 2 minutes
+            path="/",
         )
         return response
 
@@ -234,6 +235,7 @@ async def exchange_token(request: Request):
     token = request.cookies.get("oauth_token")
     
     if not token:
+        print("⚠️ exchange-token: Aucun cookie oauth_token trouvé")
         raise HTTPException(
             status_code=401, 
             detail="No OAuth token found. Please authenticate again."
@@ -243,7 +245,8 @@ async def exchange_token(request: Request):
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
         email = payload.get("email")
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ exchange-token: Erreur décodage JWT: {e}")
         email = None
     
     # Créer la réponse JSON avec le token
@@ -257,7 +260,8 @@ async def exchange_token(request: Request):
     response.delete_cookie(
         key="oauth_token",
         path="/",
-        samesite="lax"
+        samesite="none",  # Doit matcher le samesite utilisé lors de la création
+        secure=True,
     )
     
     print(f"🔄 Token échangé pour {email}")
