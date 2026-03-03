@@ -188,6 +188,28 @@ async def gmail_callback(
         log.warning(f"[gmail_oauth] Impossible de récupérer l'email : {e}")
         gmail_email = ""
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 🔒 FIX : VÉRIFICATION DOUBLON GMAIL
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    # Vérifie si ce Gmail est déjà connecté à UNE AUTRE agence
+    if gmail_email:
+        existing = db.query(models.AgencyEmailConfig).filter(
+            models.AgencyEmailConfig.gmail_email == gmail_email,
+            models.AgencyEmailConfig.agency_id != agency_id,
+            models.AgencyEmailConfig.gmail_refresh_token.isnot(None),
+        ).first()
+
+        if existing:
+            log.warning(
+                f"[gmail_oauth] Gmail {gmail_email} déjà connecté à agency={existing.agency_id}"
+            )
+            return RedirectResponse(
+                f"{settings.FRONTEND_URL}/settings?gmail=error&reason=already_connected"
+            )
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+
     # 4. Sauvegarde en base
     try:
         config = _get_or_create_email_config(db, agency_id)
