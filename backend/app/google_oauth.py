@@ -7,6 +7,7 @@ P2++ : endpoint d'échange sécurisé pour protéger contre XSS
 P2+++ : cookie cross-domain avec SameSite=None pour Vercel → Railway
 FIX : Création automatique du user et de l'agence si non existant
 """
+import logging
 import os
 import re
 import time
@@ -27,6 +28,8 @@ from app.database.database import get_db
 from app.database.models import Agency, User, UserRole
 from app.utils.settings_factory import create_default_settings_for_agency
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth/google", tags=["auth-google"])
 
 GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
@@ -35,6 +38,16 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rs
 
 SCOPES = "openid email profile"
 IS_PROD = settings.ENV in ("prod", "production")
+
+# ── Whitelist beta (optionnelle) ───────────────────────────────────────────────
+# Variable d'environnement ALLOWED_EMAILS : liste CSV d'emails autorisés.
+# Si absente ou vide → tous les emails sont acceptés (mode production ouvert).
+_allowed_env = os.getenv("ALLOWED_EMAILS", "").strip()
+ALLOWED_EMAILS: list[str] = (
+    [e.strip().lower() for e in _allowed_env.split(",") if e.strip()]
+    if _allowed_env
+    else []
+)
 
 oauth = OAuth()
 oauth.register(
@@ -58,33 +71,18 @@ def attach_oauth(app):
 def verify_google_id_token(token_string: str) -> dict:
     """
     VALIDATION CRYPTOGRAPHIQUE SÉCURISÉE du token ID Google.
-    
-    Vérifie:
-    - Signature cryptographique (que c'est vraiment Google qui a signé)
-    - Audience (que le token est bien pour notre client_id)
-    - Issuer (que ça vient bien de accounts.google.com)
-    - Expiration (que le token n'est pas expiré)
-    
-    Sans cette validation, quelqu'un pourrait créer un faux token
-    et prétendre être n'importe qui.
-    
-    Returns:
-        dict: Claims validés du token (email, sub, name, picture)
-    Raises:
-        ValueError: Si le token est invalide ou falsifié
+    Vérifie signature, audience, issuer et expiration.
     """
     try:
-        # Validation complète avec la librairie officielle Google
         idinfo = id_token.verify_oauth2_token(
             token_string,
             google_requests.Request(),
             GOOGLE_OAUTH_CLIENT_ID
         )
 
-        # Vérifications supplémentaires de sécurité
         if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
             raise ValueError('Wrong issuer - le token ne vient pas de Google')
-        
+
         if idinfo['aud'] != GOOGLE_OAUTH_CLIENT_ID:
             raise ValueError('Wrong audience - le token est pour une autre application')
 
@@ -101,45 +99,29 @@ def get_or_create_user_from_google(
     name: Optional[str] = None,
 ) -> User:
     """
-    🔧 FIX : Cherche ou crée l'utilisateur depuis Google OAuth.
-    
-    Si l'utilisateur existe → le retourne
-    Si l'utilisateur n'existe pas → crée user + agence automatiquement
-    
-    Args:
-        db: Session de base de données
-        email: Email Google vérifié
-        google_sub: Google subject ID (identifiant unique)
-        name: Nom complet de l'utilisateur (optionnel)
-    
-    Returns:
-        User: L'utilisateur existant ou nouvellement créé
+    Cherche ou crée l'utilisateur depuis Google OAuth.
+    Si l'utilisateur existe → le retourne.
+    Si l'utilisateur n'existe pas → crée user + agence automatiquement.
     """
     # 1. Chercher l'utilisateur existant
     user = db.query(User).filter(User.email == email).first()
-    
+
     if user:
-        print(f"✅ Utilisateur existant trouvé: {email} (user_id={user.id})")
+        log.info("[google_oauth] Utilisateur existant trouvé agency_id=%s", user.agency_id)
         return user
-    
+
     # 2. Créer une nouvelle agence pour ce nouvel utilisateur
-    print(f"🆕 Création d'un nouveau compte pour {email}")
-    
-    # Nom de l'agence basé sur l'email
+    log.info("[google_oauth] Création d'un nouveau compte Google OAuth")
+
     agency_name = f"Agence de {email.split('@')[0]}"
-    
-    # Alias unique pour l'agence
     clean_alias = re.sub(r"[^a-zA-Z0-9]", "", email.split("@")[0]).lower()
-    
-    # Vérifier l'unicité de l'alias
+
     if db.query(Agency).filter(Agency.email_alias == clean_alias).first():
         clean_alias = f"{clean_alias}{int(time.time())}"
-    
-    # Vérifier l'unicité du nom
+
     if db.query(Agency).filter(Agency.name == agency_name).first():
         agency_name = f"{agency_name} ({int(time.time())})"
-    
-    # Créer l'agence
+
     new_agency = Agency(
         name=agency_name,
         email_alias=clean_alias,
@@ -147,38 +129,37 @@ def get_or_create_user_from_google(
     db.add(new_agency)
     db.commit()
     db.refresh(new_agency)
-    print(f"✅ Agence créée: {agency_name} (agency_id={new_agency.id})")
-    
+    log.info("[google_oauth] Agence créée agency_id=%s", new_agency.id)
+
     # 3. Créer l'utilisateur
-    # Extraire prénom/nom depuis le name Google si disponible
     first_name = ""
     last_name = ""
     if name:
         parts = name.split(" ", 1)
         first_name = parts[0] if len(parts) > 0 else ""
         last_name = parts[1] if len(parts) > 1 else ""
-    
+
     new_user = User(
         email=email,
-        hashed_password=None,  # Pas de mot de passe pour les comptes Google OAuth
+        hashed_password=None,
         agency_id=new_agency.id,
         role=UserRole.AGENCY_ADMIN,
-        email_verified=True,  # Google a déjà vérifié l'email
+        email_verified=True,
         first_name=first_name,
         last_name=last_name,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    print(f"✅ Utilisateur créé: {email} (user_id={new_user.id})")
-    
-    # 4. Créer les settings par défaut pour l'agence
+    log.info("[google_oauth] Utilisateur créé user_id=%s", new_user.id)
+
+    # 4. Créer les settings par défaut
     try:
         create_default_settings_for_agency(db, new_agency)
-        print(f"✅ Settings créés pour agency_id={new_agency.id}")
+        log.info("[google_oauth] Settings créés agency_id=%s", new_agency.id)
     except Exception as e:
-        print(f"⚠️ Erreur création settings (non bloquant): {e}")
-    
+        log.warning("[google_oauth] Erreur création settings (non bloquant): %s", e)
+
     return new_user
 
 
@@ -215,32 +196,26 @@ async def google_login(request: Request):
 @router.get("/callback")
 async def google_callback(request: Request, db: Session = Depends(get_db)):
     """
-    Callback OAuth Google - VERSION SÉCURISÉE + FIX CRÉATION USER
-    
-    Modifications :
+    Callback OAuth Google — VERSION SÉCURISÉE.
     1. Récupère le token depuis Google via Authlib
-    2. VALIDE CRYPTOGRAPHIQUEMENT le token ID avec google-auth
-    3. 🔧 FIX : Cherche ou crée l'utilisateur dans la base de données
-    4. Crée un JWT CipherFlow uniquement si la validation réussit
+    2. Valide cryptographiquement le token ID avec google-auth
+    3. Cherche ou crée l'utilisateur
+    4. Crée un JWT CipherFlow
     5. Retourne le token dans un cookie HttpOnly sécurisé
     """
     try:
-        # Étape 1: Récupération du token OAuth via Authlib
         token_response = await oauth.google.authorize_access_token(request)
-        
-        # Étape 2: VALIDATION CRYPTOGRAPHIQUE SÉCURISÉE du token ID
+
         id_token_str = token_response.get("id_token")
         if not id_token_str:
             raise HTTPException(status_code=400, detail="ID token manquant dans la réponse Google")
-        
-        # Validation complète : signature, audience, issuer, expiration
+
         try:
             userinfo = verify_google_id_token(id_token_str)
         except ValueError as e:
-            print(f"⚠️ TENTATIVE D'AUTHENTIFICATION AVEC TOKEN INVALIDE: {str(e)}")
+            log.warning("[google_oauth] Tentative avec token invalide : %s", e)
             raise HTTPException(status_code=401, detail=f"Token Google invalide: {str(e)}")
 
-        # Étape 3: Extraction des infos utilisateur VALIDÉES
         email = userinfo.get("email")
         sub = userinfo.get("sub")
         name = userinfo.get("name")
@@ -249,20 +224,24 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         if not email or not sub:
             raise HTTPException(status_code=400, detail="Google userinfo incomplet")
 
-        # Étape 4 : CHERCHER OU CRÉER L'UTILISATEUR DANS LA BDD
+        # ── Whitelist beta (si configurée) ────────────────────────────────────
+        if ALLOWED_EMAILS and email.lower() not in ALLOWED_EMAILS:
+            log.warning("[google_oauth] Email non autorisé (whitelist active)")
+            return RedirectResponse(
+                url=f"{FRONTEND_URL}/?oauth_error=unauthorized", status_code=302
+            )
+
         user = get_or_create_user_from_google(
             db=db,
             email=email,
             google_sub=sub,
             name=name,
         )
-        
-        print(f"✅ Utilisateur authentifié: {user.email} (user_id={user.id}, agency_id={user.agency_id})")
 
-        # Étape 6: Création du JWT CipherFlow
+        log.info("[google_oauth] Utilisateur authentifié user_id=%s agency_id=%s", user.id, user.agency_id)
+
         cf_token = create_jwt(email=email, sub=sub, name=name, picture=picture)
 
-        # Étape 7: Cookie cross-domain avec SameSite=None
         redirect_url = f"{FRONTEND_URL}/oauth/callback"
         response = RedirectResponse(url=redirect_url, status_code=302)
         response.set_cookie(
@@ -279,9 +258,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Erreur OAuth callback: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        log.error("[google_oauth] Erreur OAuth callback : %s", e, exc_info=True)
         return RedirectResponse(url=f"{FRONTEND_URL}/?oauth_error=1", status_code=302)
 
 
@@ -291,34 +268,34 @@ async def exchange_token(request: Request):
     Endpoint sécurisé d'échange de cookie HttpOnly contre un token JSON.
     """
     token = request.cookies.get("oauth_token")
-    
+
     if not token:
-        print("⚠️ exchange-token: Aucun cookie oauth_token trouvé")
+        log.warning("[google_oauth] exchange-token : aucun cookie oauth_token trouvé")
         raise HTTPException(
-            status_code=401, 
+            status_code=401,
             detail="No OAuth token found. Please authenticate again."
         )
-    
+
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
         email = payload.get("email")
     except Exception as e:
-        print(f"⚠️ exchange-token: Erreur décodage JWT: {e}")
+        log.warning("[google_oauth] exchange-token : erreur décodage JWT : %s", e)
         email = None
-    
+
     response = JSONResponse({
         "token": token,
         "email": email,
         "message": "Token échangé avec succès"
     })
-    
+
     response.delete_cookie(
         key="oauth_token",
         path="/",
         samesite="none",
         secure=True,
     )
-    
-    print(f"🔄 Token échangé pour {email}")
-    
+
+    log.info("[google_oauth] Token échangé (exchange-token)")
+
     return response

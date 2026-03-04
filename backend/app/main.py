@@ -3,9 +3,11 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from app.api.auth_routes import router as auth_router
 from app.api.email_routes import router as email_router
@@ -26,6 +28,19 @@ ENABLE_RETENTION = os.getenv("ENABLE_RETENTION_WORKER", "true").strip().lower() 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Vérification des secrets critiques au démarrage ───────────────────────
+    if not os.getenv("WATCHER_SECRET"):
+        raise RuntimeError(
+            "WATCHER_SECRET non configuré — démarrage refusé. "
+            "Définissez la variable d'environnement WATCHER_SECRET."
+        )
+    if not os.getenv("FERNET_KEY"):
+        raise RuntimeError(
+            "FERNET_KEY non configuré — démarrage refusé. "
+            "Définissez la variable d'environnement FERNET_KEY."
+        )
+    log.info("[startup] Secrets critiques vérifiés ✅")
+
     if ENABLE_RETENTION:
         import asyncio
         asyncio.create_task(retention_worker())
@@ -74,7 +89,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-Watcher-Secret"],
 )
 
 # ── OAuth Google ───────────────────────────────────────────────────────────────
@@ -82,6 +97,25 @@ attach_oauth(app)
 
 # ── Webhook email (watcher → backend) ─────────────────────────────────────────
 WATCHER_SECRET = os.getenv("WATCHER_SECRET", "")
+
+
+class WebhookAttachment(BaseModel):
+    filename: str
+    content_type: str
+    content_base64: str
+
+
+class WebhookEmailPayload(BaseModel):
+    from_email: str
+    to_email: str
+    subject: str = ""
+    content: str = ""
+    send_email: bool = True
+    attachments: List[WebhookAttachment] = []
+    agency_id: Optional[int] = None
+    filter_decision: Optional[str] = None
+    filter_reasons: Optional[List[str]] = None
+    filter_score: Optional[int] = None
 
 
 @app.post("/webhook/email")
@@ -93,18 +127,22 @@ async def email_webhook(request: Request):
     from app.database.models import Agency
 
     auth = request.headers.get("X-Watcher-Secret", "")
-    if WATCHER_SECRET and not hmac.compare_digest(auth, WATCHER_SECRET):
+    if not hmac.compare_digest(auth, WATCHER_SECRET):
         raise HTTPException(403, "Webhook non autorisé")
 
-    payload = await request.json()
+    try:
+        raw = await request.json()
+        payload_model = WebhookEmailPayload(**raw)
+    except Exception as e:
+        raise HTTPException(422, f"Payload webhook invalide : {e}")
+
+    payload: Dict[str, Any] = payload_model.model_dump()
 
     # ── Résolution agency_id depuis to_email ──────────────────────────────────
-    # Le watcher n'envoie pas agency_id — on le résout ici avant d'enqueuer
-    if "agency_id" not in payload:
+    if payload.get("agency_id") is None:
         db = SessionLocal()
         try:
             to_email = payload.get("to_email", "")
-            # Format attendu : contact+alias@domaine.com → alias
             alias = to_email.split("@")[0].split("+")[-1] if to_email else ""
             agency = None
             if alias:

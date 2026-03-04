@@ -45,10 +45,7 @@ export default function Login({ onLogin }) {
         return;
       }
 
-      // Stocke token + email en localStorage
-      localStorage.setItem("cipherflow_token", token);
-      localStorage.setItem("cipherflow_email", email.trim().toLowerCase());
-
+      // setToken() + setEmail() déjà appelés dans login() (services/api.js)
       // Notifie App.jsx : "connecté"
       if (typeof onLogin === "function") onLogin();
     } catch (err) {

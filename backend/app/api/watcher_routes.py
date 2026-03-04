@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -222,7 +222,7 @@ async def update_outlook_token(
 
 @router.get("/check-sender")
 async def check_known_sender(
-    email: str,
+    email: EmailStr,
     agency_id: int,
     request: Request,
     db: Session = Depends(get_db),

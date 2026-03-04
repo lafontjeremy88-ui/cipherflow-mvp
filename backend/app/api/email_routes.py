@@ -37,7 +37,7 @@ class EmailHistoryItem(BaseModel):
     category: str
     urgency: str
     is_devis: bool
-    raw_email_text: str
+    raw_email_text: Optional[str] = None  # déprécié — non stocké (RGPD)
     suggested_response_text: Optional[str] = None
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
@@ -52,7 +52,7 @@ class EmailDetailResponse(BaseModel):
     created_at: Optional[datetime] = None
     sender_email: str
     subject: str
-    raw_email_text: str
+    raw_email_text: Optional[str] = None  # déprécié — non stocké (RGPD)
     summary: str
     category: str
     urgency: str

@@ -7,18 +7,22 @@ export const API_URL =
   import.meta.env.VITE_API_URL?.trim() ||
   "https://cipherflow-mvp-production.up.railway.app";
 
-export const LS_TOKEN = "cipherflow_token";
 export const LS_EMAIL = "cipherflow_email";
 
 // ==============================
-// Storage helpers
+// In-memory token storage (XSS-safe)
+// Le token d'accès JWT n'est JAMAIS stocké en localStorage.
+// Il est conservé en mémoire JavaScript : volatile au rechargement,
+// mais restauré automatiquement via le cookie HttpOnly de refresh.
 // ==============================
+let _accessToken = null;
+
 export function getToken() {
-  return localStorage.getItem(LS_TOKEN);
+  return _accessToken;
 }
 
 export function setToken(token) {
-  if (token) localStorage.setItem(LS_TOKEN, token);
+  _accessToken = token ?? null;
 }
 
 export function getEmail() {
@@ -30,7 +34,7 @@ export function setEmail(email) {
 }
 
 export function clearAuth() {
-  localStorage.removeItem(LS_TOKEN);
+  _accessToken = null;
   localStorage.removeItem(LS_EMAIL);
 }
 
@@ -48,7 +52,7 @@ export async function safeJson(res) {
   try {
     return JSON.parse(text);
   } catch {
-    return text; // fallback si backend renvoie autre chose
+    return text;
   }
 }
 
@@ -64,7 +68,7 @@ export async function apiPublicFetch(path, options = {}) {
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-    credentials: "include", // utile si backend pose cookie refresh
+    credentials: "include",
   });
 
   const data = await safeJson(res);
@@ -114,10 +118,8 @@ export async function authFetch(path, options = {}) {
     throw new Error("Non authentifié : token absent.");
   }
 
-  // 1) requête normale
   let res = await doRequest(token);
 
-  // 2) si 401 => refresh => retry
   if (res.status === 401) {
     const newToken = await refreshAccessToken();
     if (!newToken) {
@@ -162,7 +164,6 @@ export async function refreshAccessToken() {
 // API calls
 // ==============================
 export async function login(email, password) {
-  // adapte si ton backend attend un autre schema
   const data = await apiPublicFetch("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
@@ -176,7 +177,6 @@ export async function login(email, password) {
 }
 
 export async function logout() {
-  // si ton backend a /auth/logout (sinon ça ne casse rien)
   try {
     await fetch(buildUrl("/auth/logout"), {
       method: "POST",
@@ -197,7 +197,6 @@ export async function getDashboardStats() {
     throw new Error(data?.detail || "Erreur récupération stats.");
   }
 
-  // On renvoie DIRECTEMENT les stats (pas {res,data})
   return data;
 }
 
@@ -214,7 +213,7 @@ export async function unlinkDocumentFromTenant(tenantId, fileId) {
     throw new Error(data?.detail || "Impossible de retirer le document du dossier.");
   }
 
-  return data; // { status, tenant_id, file_id, new_status, checklist }
+  return data;
 }
 
 

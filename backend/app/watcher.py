@@ -184,6 +184,10 @@ def is_known_sender(sender_email: str, agency_id: int) -> bool:
             return is_known
         else:
             log.warning(f"[filter] Backend retourné {resp.status_code}")
+    except requests.exceptions.MissingSchema as e:
+        log.error(f"[filter] CHECK_SENDER_URL malformée — vérifiez BACKEND_URL : {e}")
+    except requests.exceptions.RequestException as e:
+        log.warning(f"[filter] Erreur réseau vérification expéditeur : {e}")
     except Exception as e:
         log.warning(f"[filter] Erreur vérification expéditeur : {e}")
     return False
@@ -619,6 +623,31 @@ def _get_outlook_body(message: dict) -> str:
     return content.strip()
 
 
+def _get_internet_message_headers(message_id: str, access_token: str) -> list:
+    """
+    Récupère les internetMessageHeaders d'un message Outlook via un appel séparé.
+    Nécessaire car ce champ n'est pas disponible dans la requête de liste ($select).
+    Utilisé pour l'anti-boucle CipherFlow (header X-CipherFlow-Origin).
+    """
+    try:
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
+        resp = requests.get(
+            url,
+            params={"$select": "internetMessageHeaders"},
+            headers=_outlook_headers(access_token),
+            timeout=10,
+        )
+        if resp.ok:
+            return resp.json().get("internetMessageHeaders", [])
+        log.warning(
+            f"[outlook] Impossible de récupérer les headers id={message_id} "
+            f"HTTP {resp.status_code}"
+        )
+    except Exception as e:
+        log.warning(f"[outlook] Erreur récupération headers message={message_id} : {e}")
+    return []
+
+
 def _get_outlook_attachments(message_id: str, access_token: str, has_attachments: bool) -> list:
     """
     Récupère les pièces jointes d'un message Outlook via Graph API.
@@ -674,8 +703,9 @@ def process_one_outlook_message(
     """Traite un email Outlook (Graph API) et l'envoie au webhook backend."""
     message_id = message.get("id", "")
 
-    # Anti-boucle : ignorer les emails envoyés par CipherFlow
-    internet_headers = message.get("internetMessageHeaders", [])
+    # Anti-boucle : appel séparé pour récupérer les internetMessageHeaders
+    # (non disponible dans la requête de liste)
+    internet_headers = _get_internet_message_headers(message_id, access_token)
     for h in internet_headers:
         if h.get("name", "").lower() == "x-cipherflow-origin":
             log.info(f"[outlook] Email CipherFlow ignoré (anti-boucle) id={message_id}")
@@ -780,6 +810,15 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
                 log.warning(f"[outlook] 401 — forçage refresh token agency={agency_id}")
                 config["outlook_token_expiry"] = None
                 stop_event.wait(5)
+                continue
+
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 60))
+                retry_after = min(retry_after, 300)  # cap à 5 minutes
+                log.warning(
+                    f"[outlook] 429 Rate limit — attente {retry_after}s agency={agency_id}"
+                )
+                stop_event.wait(retry_after)
                 continue
 
             if not resp.ok:

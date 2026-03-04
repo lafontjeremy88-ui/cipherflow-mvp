@@ -1,21 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { API_URL } from "../services/api";
+import { API_URL, setToken, setEmail } from "../services/api";
 
-const LS_TOKEN = "cipherflow_token";
-const LS_EMAIL = "cipherflow_email";
-
-export default function OAuthCallback({ onDone }) {  // ← CORRIGÉ : onDone au lieu de onSuccess
+export default function OAuthCallback({ onDone }) {
   const navigate = useNavigate();
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Méthode sécurisée avec endpoint d'échange
     const exchangeToken = async () => {
       try {
         const response = await fetch(`${API_URL}/auth/google/exchange-token`, {
-          method: 'GET',
-          credentials: 'include',  // Envoie les cookies
+          method: "GET",
+          credentials: "include",
         });
 
         if (!response.ok) {
@@ -33,23 +29,17 @@ export default function OAuthCallback({ onDone }) {  // ← CORRIGÉ : onDone au
           return;
         }
 
-        // Stockage en localStorage
-        localStorage.setItem(LS_TOKEN, token);
-        if (email) {
-          localStorage.setItem(LS_EMAIL, email);
-        }
+        // Stockage en mémoire (XSS-safe) — email en localStorage (non sensible)
+        setToken(token);
+        if (email) setEmail(email);
 
-        // ✅ IMPORTANT : Appeler onDone (pas onSuccess)
         if (typeof onDone === "function") {
           onDone();
         }
-
-        // La navigation est gérée par handleLoginSuccess dans App.jsx
-        
       } catch (err) {
         console.error("Erreur lors de l'échange du token:", err);
         setError("Erreur de connexion. Veuillez réessayer.");
-        
+
         setTimeout(() => {
           navigate("/login", { replace: true });
         }, 2000);

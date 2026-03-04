@@ -27,30 +27,17 @@ import VerifyEmail from "./pages/VerifyEmail";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 
-// ✅ NOUVEL ONGLET : Analyse Email
 import EmailProcessor from "./pages/EmailProcessor";
 
-// -----------------------------
-// Config
-// -----------------------------
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
-
-// ✅ une seule clé de token (stable)
-const LS_ACCESS = "cipherflow_token";
-const LS_EMAIL = "cipherflow_email";
-
-function getStoredAccessToken() {
-  return localStorage.getItem(LS_ACCESS);
-}
-
-function setStoredAccessToken(token) {
-  if (token) localStorage.setItem(LS_ACCESS, token);
-}
-
-function clearStoredAuth() {
-  localStorage.removeItem(LS_ACCESS);
-  localStorage.removeItem(LS_EMAIL);
-}
+// Services — token en mémoire (XSS-safe)
+import {
+  API_URL as API_BASE,
+  getToken,
+  setToken,
+  clearAuth,
+  getEmail,
+  refreshAccessToken,
+} from "./services/api";
 
 // -----------------------------
 // UI helpers
@@ -68,8 +55,6 @@ function ProtectedRoute({ isAuthed, children }) {
 // App Shell (Sidebar + Layout)
 // -----------------------------
 function AppShell({ authFetch, onLogout }) {
-  const location = useLocation();
-
   const navItemClass = ({ isActive }) => cx("nav-item", isActive && "active");
 
   return (
@@ -104,12 +89,6 @@ function AppShell({ authFetch, onLogout }) {
             Documents
           </NavLink>
 
-          {/* 🔒 Quittances - brique prévue, cachée pour l'instant
-          <NavLink to="/invoices" className={navItemClass}>
-            Quittances
-          </NavLink>
-          */}
-
           <NavLink to="/tenant-files" className={navItemClass}>
             Dossiers locataires
           </NavLink>
@@ -122,16 +101,15 @@ function AppShell({ authFetch, onLogout }) {
             Paramètres
           </NavLink>
 
-          {/* pousse le bloc de déconnexion + infos vers le bas */}
           <div className="nav-spacer" />
 
           <button className="btn btn-ghost" onClick={onLogout}>
             Se déconnecter
           </button>
 
-          {localStorage.getItem(LS_EMAIL) ? (
+          {getEmail() ? (
             <div className="muted small" style={{ marginTop: 8 }}>
-              {localStorage.getItem(LS_EMAIL)}
+              {getEmail()}
             </div>
           ) : null}
 
@@ -169,7 +147,6 @@ function AppShell({ authFetch, onLogout }) {
         </nav>
       </aside>
 
-      {/* 🔥 ICI : on utilise main-content qui a le layout plein écran */}
       <main className="main-content">
         <Routes>
           <Route
@@ -182,7 +159,6 @@ function AppShell({ authFetch, onLogout }) {
             element={<EmailHistory authFetch={authFetch} />}
           />
 
-          {/* ✅ route analyse email */}
           <Route
             path="/emails/analyze"
             element={<EmailProcessor authFetch={authFetch} />}
@@ -192,13 +168,6 @@ function AppShell({ authFetch, onLogout }) {
             path="/documents"
             element={<FileAnalyzer authFetch={authFetch} />}
           />
-
-          {/* 🔒 Quittances - brique prévue, cachée pour l'instant
-          <Route
-            path="/invoices"
-            element={<InvoiceGenerator authFetch={authFetch} />}
-          />
-          */}
 
           <Route
             path="/tenant-files"
@@ -215,7 +184,6 @@ function AppShell({ authFetch, onLogout }) {
             element={<AccountPage authFetch={authFetch} />}
           />
 
-          {/* fallback interne */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
@@ -230,8 +198,24 @@ function AppInner() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [accessToken, setAccessToken] = useState(getStoredAccessToken());
+  // Token uniquement en mémoire — null au démarrage
+  const [accessToken, setAccessToken] = useState(null);
+  // Devient true une fois le check initial /auth/refresh terminé
+  const [authChecked, setAuthChecked] = useState(false);
+
   const isAuthed = !!accessToken;
+
+  // ── Hydration au montage ──────────────────────────────────────────────────
+  // Tente de restaurer la session depuis le cookie HttpOnly de refresh.
+  // Si le cookie est valide, on obtient un nouvel access token en mémoire.
+  useEffect(() => {
+    refreshAccessToken()
+      .then((token) => {
+        if (token) setAccessToken(token);
+      })
+      .finally(() => setAuthChecked(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const authFetch = useMemo(() => {
     return async (path, options = {}) => {
@@ -249,7 +233,7 @@ function AppInner() {
         );
       }
 
-      const token = getStoredAccessToken();
+      const token = getToken(); // lit le module-level _accessToken (mémoire)
       if (token) headers.set("Authorization", `Bearer ${token}`);
 
       const doFetch = async () => {
@@ -273,7 +257,7 @@ function AppInner() {
             const data = await refreshRes.json().catch(() => ({}));
             const newToken = data?.access_token;
             if (newToken) {
-              setStoredAccessToken(newToken);
+              setToken(newToken);
               setAccessToken(newToken);
               headers.set("Authorization", `Bearer ${newToken}`);
               res = await doFetch();
@@ -288,24 +272,22 @@ function AppInner() {
     };
   }, []);
 
-  useEffect(() => {
-    const onStorage = () => setAccessToken(getStoredAccessToken());
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
   const handleLogout = () => {
-    clearStoredAuth();
+    clearAuth();
     setAccessToken(null);
     navigate("/login", { replace: true });
   };
 
   const handleLoginSuccess = () => {
-    setAccessToken(getStoredAccessToken());
+    // setToken() a déjà été appelé par login() ou exchange-token dans api.js
+    setAccessToken(getToken());
     navigate("/dashboard", { replace: true });
   };
 
+  // ── Redirection vers /login si non authentifié ────────────────────────────
+  // On attend la fin du check initial pour ne pas rediriger prématurément
   useEffect(() => {
+    if (!authChecked) return;
     const publicPaths = [
       "/login",
       "/register",
@@ -314,12 +296,15 @@ function AppInner() {
       "/forgot-password",
       "/reset-password",
       "/privacy",
-      "/mentions-legales", // ✅ page accessible sans être connecté
+      "/mentions-legales",
     ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
-  }, [isAuthed, location.pathname, navigate]);
+  }, [isAuthed, authChecked, location.pathname, navigate]);
+
+  // Pendant le check initial, on ne rend rien (évite le flash de /login)
+  if (!authChecked) return null;
 
   return (
     <Routes>
@@ -373,7 +358,6 @@ function AppInner() {
 
       <Route path="/privacy" element={<PrivacyPolicy />} />
 
-      {/* ✅ Nouvelle route publique : Mentions légales */}
       <Route path="/mentions-legales" element={<LegalNotice />} />
 
       {/* Protected shell */}
