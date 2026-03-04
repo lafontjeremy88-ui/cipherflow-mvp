@@ -37,7 +37,6 @@ class EmailHistoryItem(BaseModel):
     category: str
     urgency: str
     is_devis: bool
-    raw_email_text: Optional[str] = None  # déprécié — non stocké (RGPD)
     suggested_response_text: Optional[str] = None
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
@@ -52,7 +51,6 @@ class EmailDetailResponse(BaseModel):
     created_at: Optional[datetime] = None
     sender_email: str
     subject: str
-    raw_email_text: Optional[str] = None  # déprécié — non stocké (RGPD)
     summary: str
     category: str
     urgency: str
@@ -334,7 +332,6 @@ async def process_email_manual(
         agency_id=aid,
         sender_email=req.from_email,
         subject=req.subject,
-        raw_email_text=req.content,
         summary=email_result.summary,
         category=email_result.category,
         urgency=email_result.urgency,

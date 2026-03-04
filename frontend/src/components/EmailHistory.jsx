@@ -212,7 +212,7 @@ export default function EmailHistory() {
       const res = await authFetch(`/email/${emailId}`);
       const data = await res.json();
 
-      const raw = data?.raw_email_text || data?.raw || "";
+      const raw = data?.raw || "";
 
       const plain = extractMimePart(raw, "text/plain");
       const html = extractMimePart(raw, "text/html");

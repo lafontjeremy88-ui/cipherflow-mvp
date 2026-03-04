@@ -188,7 +188,6 @@ class EmailAnalysis(Base):
     agency_id = Column(Integer, ForeignKey("agencies.id"), index=True)
     sender_email = Column(String)
     subject = Column(String)
-    raw_email_text = Column(Text)
     is_devis = Column(Boolean, default=False)
     category = Column(String)
     urgency = Column(String)

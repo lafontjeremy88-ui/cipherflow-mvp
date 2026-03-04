@@ -118,7 +118,6 @@ async def run_email_pipeline(payload: dict) -> None:
             agency_id=agency_id,
             sender_email=from_email,
             subject=subject,
-            raw_email_text=None,  # non stocké pour conformité RGPD
             is_devis=email_result.is_devis,
             category=email_result.category,
             urgency=email_result.urgency,
