@@ -139,7 +139,8 @@ const goToCategory = (name) => {
     distribution: [],
     recents: [],
   });
-  const [gmailConnected, setGmailConnected] = useState(null); // null = inconnu
+  const [gmailConnected, setGmailConnected]     = useState(null); // null = inconnu
+  const [outlookConnected, setOutlookConnected] = useState(null);
 
   const donut = useMemo(() => buildDonut(stats.distribution), [stats.distribution]);
   const donutData = donut.data;
@@ -154,9 +155,10 @@ const goToCategory = (name) => {
       setError("");
 
       try {
-        const [statsRes, gmailRes] = await Promise.all([
+        const [statsRes, gmailRes, outlookRes] = await Promise.all([
           doFetch("/dashboard/stats"),
           doFetch("/gmail/status").catch(() => null),
+          doFetch("/outlook/status").catch(() => null),
         ]);
 
         if (!statsRes.ok) {
@@ -172,6 +174,10 @@ const goToCategory = (name) => {
           if (gmailRes?.ok) {
             const gData = await gmailRes.json().catch(() => null);
             setGmailConnected(gData?.connected ?? false);
+          }
+          if (outlookRes?.ok) {
+            const oData = await outlookRes.json().catch(() => null);
+            setOutlookConnected(oData?.connected ?? false);
           }
         }
       } catch (e) {
@@ -199,8 +205,8 @@ const goToCategory = (name) => {
         <p className="muted">Vue d’ensemble de l’activité de ton agence.</p>
       </div>
 
-      {/* Bannière onboarding Gmail */}
-      {gmailConnected === false && (
+      {/* Bannière onboarding — affichée uniquement si aucune boîte email n'est connectée */}
+      {gmailConnected === false && outlookConnected === false && (
         <div style={{
           display: "flex", alignItems: "center", gap: 12,
           padding: "12px 20px", marginBottom: 24, borderRadius: 10,
@@ -209,14 +215,14 @@ const goToCategory = (name) => {
         }}>
           <span style={{ fontSize: 18 }}>⚡</span>
           <span style={{ flex: 1 }}>
-            Connectez votre boîte Gmail pour automatiser le traitement des emails.
+            Connectez votre boîte email (Gmail ou Outlook) pour automatiser le traitement des emails.
           </span>
           <button
             className="btn btn-primary"
             style={{ padding: "6px 16px", fontSize: 13 }}
             onClick={() => navigate("/settings")}
           >
-            Connecter Gmail
+            Connecter
           </button>
         </div>
       )}
