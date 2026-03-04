@@ -171,6 +171,8 @@ class AppSettings(Base):
     signature = Column(String, default="Cordialement")
     logo = Column(Text, nullable=True)
     retention_config_json = Column(Text, nullable=True)
+    auto_reply_enabled        = Column(Boolean, default=False, nullable=False)
+    auto_reply_delay_minutes  = Column(Integer, default=0,     nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -279,6 +281,22 @@ class TenantDocumentLink(Base):
 
     tenant_file = relationship("TenantFile", back_populates="document_links")
     file = relationship("FileAnalysis")
+
+
+# ============================================================
+# 🚫 BLACKLIST PERSONNALISÉE PAR AGENCE
+# ============================================================
+
+class AgencyBlacklist(Base):
+    __tablename__ = "agency_blacklists"
+
+    id         = Column(Integer, primary_key=True)
+    agency_id  = Column(Integer, ForeignKey("agencies.id"), nullable=False, index=True)
+    pattern    = Column(String(255), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    agency = relationship("Agency")
 
 
 # ============================================================

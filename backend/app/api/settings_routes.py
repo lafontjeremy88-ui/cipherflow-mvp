@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_db
 from app.database.database import get_db
 from app.database.models import (
-    Agency, AgencyEmailConfig, AppSettings, EmailAnalysis, FileAnalysis,
+    Agency, AgencyBlacklist, AgencyEmailConfig, AppSettings, EmailAnalysis, FileAnalysis,
     Invoice, RefreshToken, TenantDocumentLink, TenantEmailLink,
     TenantFile, User, UserRole,
 )
@@ -66,6 +66,8 @@ class AgencySettingsUpdate(BaseModel):
     signature: Optional[str] = None
     send_email: Optional[bool] = None
     retention_config_json: Optional[str] = None
+    auto_reply_enabled:       Optional[bool] = None
+    auto_reply_delay_minutes: Optional[int]  = None
 
 
 class EmailConfigUpdate(BaseModel):
@@ -211,6 +213,8 @@ async def get_settings(
         "signature": s.signature,
         "send_email": getattr(s, "send_email", None),
         "retention_config": retention,
+        "auto_reply_enabled":       s.auto_reply_enabled,
+        "auto_reply_delay_minutes": s.auto_reply_delay_minutes,
     }
 
 
@@ -243,6 +247,10 @@ async def update_settings(
             s.retention_config_json = json.dumps(parsed)
         except Exception:
             raise HTTPException(400, "retention_config_json invalide.")
+    if payload.auto_reply_enabled is not None:
+        s.auto_reply_enabled = payload.auto_reply_enabled
+    if payload.auto_reply_delay_minutes is not None:
+        s.auto_reply_delay_minutes = max(0, payload.auto_reply_delay_minutes)
 
     db.commit()
     return {"status": "updated"}
@@ -319,6 +327,73 @@ async def update_email_config(
     db.commit()
 
     return {"status": "updated", "enabled": config.enabled}
+
+
+# ── Blacklist personnalisée par agence ────────────────────────────────────────
+
+class BlacklistPatternCreate(BaseModel):
+    pattern: str
+
+
+@router.get("/settings/blacklist")
+async def get_blacklist(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Retourne la liste des patterns blacklistés pour l'agence."""
+    entries = (
+        db.query(AgencyBlacklist)
+        .filter(AgencyBlacklist.agency_id == current_user.agency_id)
+        .order_by(AgencyBlacklist.created_at.desc())
+        .all()
+    )
+    return [{"id": e.id, "pattern": e.pattern, "created_at": e.created_at} for e in entries]
+
+
+@router.post("/settings/blacklist", status_code=201)
+async def add_blacklist_pattern(
+    payload: BlacklistPatternCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Ajoute un pattern à la blacklist de l'agence."""
+    pattern = payload.pattern.strip().lower()
+    if not pattern:
+        raise HTTPException(400, "Le pattern ne peut pas être vide.")
+
+    entry = AgencyBlacklist(
+        agency_id=current_user.agency_id,
+        pattern=pattern,
+        created_by=current_user.id,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    log.info(f"[blacklist] Pattern ajouté: {pattern!r} agency={current_user.agency_id}")
+    return {"id": entry.id, "pattern": entry.pattern, "created_at": entry.created_at}
+
+
+@router.delete("/settings/blacklist/{entry_id}")
+async def delete_blacklist_pattern(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Supprime un pattern de la blacklist de l'agence."""
+    entry = (
+        db.query(AgencyBlacklist)
+        .filter(
+            AgencyBlacklist.id == entry_id,
+            AgencyBlacklist.agency_id == current_user.agency_id,
+        )
+        .first()
+    )
+    if not entry:
+        raise HTTPException(404, "Pattern introuvable.")
+    db.delete(entry)
+    db.commit()
+    log.info(f"[blacklist] Pattern supprimé id={entry_id} agency={current_user.agency_id}")
+    return {"status": "deleted"}
 
 
 @router.get("/watcher/configs")

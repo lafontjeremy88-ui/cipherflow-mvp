@@ -447,6 +447,112 @@ function OutlookConnectSection({ authFetch }) {
   );
 }
 
+// ── Composant blacklist ────────────────────────────────────────────────────────
+function BlacklistSection({ authFetch }) {
+  const [patterns, setPatterns] = React.useState([]);
+  const [newPattern, setNewPattern] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+
+  const cardStyle = { background: "#1e293b", padding: "2rem", borderRadius: "12px", marginBottom: "2rem", border: "1px solid #334155" };
+
+  React.useEffect(() => {
+    const load = async () => {
+      if (!authFetch) return;
+      try {
+        const res = await authFetch(API_BASE + "/settings/blacklist");
+        if (res.ok) setPatterns(await res.json());
+      } catch (e) {
+        console.error("Erreur chargement blacklist:", e);
+      }
+    };
+    load();
+  }, [authFetch]);
+
+  const handleAdd = async () => {
+    const pattern = newPattern.trim();
+    if (!pattern) return;
+    setErr(null);
+    setLoading(true);
+    try {
+      const res = await authFetch(API_BASE + "/settings/blacklist", {
+        method: "POST",
+        body: JSON.stringify({ pattern }),
+      });
+      if (res.ok) {
+        const entry = await res.json();
+        setPatterns(prev => [entry, ...prev]);
+        setNewPattern('');
+      } else {
+        setErr("Erreur lors de l'ajout.");
+      }
+    } catch {
+      setErr("Erreur réseau.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setErr(null);
+    try {
+      const res = await authFetch(API_BASE + "/settings/blacklist/" + id, { method: "DELETE" });
+      if (res.ok) setPatterns(prev => prev.filter(p => p.id !== id));
+      else setErr("Erreur lors de la suppression.");
+    } catch {
+      setErr("Erreur réseau.");
+    }
+  };
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.2rem", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>🚫 Filtres personnalisés</h3>
+      <p style={{ color: "#64748b", fontSize: "0.85rem", marginBottom: "1.5rem" }}>
+        Les emails dont l'expéditeur contient l'un de ces patterns seront ignorés automatiquement.
+      </p>
+
+      <div style={{ display: "flex", gap: "10px", marginBottom: "1.5rem" }}>
+        <input
+          value={newPattern}
+          onChange={e => setNewPattern(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleAdd()}
+          placeholder="ex: @spam.com ou mauvaisexp@"
+          style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #334155", background: "#0f172a", color: "white", outline: "none", fontSize: "0.95rem" }}
+        />
+        <button
+          onClick={handleAdd}
+          disabled={loading || !newPattern.trim()}
+          style={{ background: "#6366f1", border: "none", color: "white", padding: "10px 20px", borderRadius: "8px", cursor: "pointer", fontWeight: "bold", whiteSpace: "nowrap" }}
+        >
+          Ajouter
+        </button>
+      </div>
+
+      {err && <div style={{ color: "#f87171", marginBottom: "1rem", fontSize: "0.9rem" }}>{err}</div>}
+
+      {patterns.length === 0 ? (
+        <div style={{ color: "#64748b", fontSize: "0.9rem" }}>Aucun filtre configuré.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {patterns.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", background: "#0f172a", borderRadius: "8px", border: "1px solid #334155" }}>
+              <span style={{ flex: 1, color: "#e2e8f0", fontFamily: "monospace", fontSize: "0.9rem" }}>{p.pattern}</span>
+              <button
+                onClick={() => handleDelete(p.id)}
+                style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer", fontSize: "1.1rem", padding: "2px 6px" }}
+                title="Supprimer"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ── Composant principal ────────────────────────────────────────────────────────
 const SettingsPanel = ({ token, authFetch }) => {
   const [settings, setSettings] = useState({
@@ -454,7 +560,9 @@ const SettingsPanel = ({ token, authFetch }) => {
     agent_name: '',
     tone: 'pro',
     signature: '',
-    logo: ''
+    logo: '',
+    auto_reply_enabled: false,
+    auto_reply_delay_minutes: 0,
   });
 
   const [loading, setLoading] = useState(false);
@@ -474,7 +582,12 @@ const SettingsPanel = ({ token, authFetch }) => {
     load();
   }, [authFetch]);
 
-  const handleChange = (e) => setSettings({ ...settings, [e.target.name]: e.target.value });
+  const handleChange = (e) => {
+    const val = e.target.type === 'checkbox' ? e.target.checked
+              : e.target.type === 'number'   ? Number(e.target.value)
+              : e.target.value;
+    setSettings({ ...settings, [e.target.name]: val });
+  };
 
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -582,6 +695,46 @@ const SettingsPanel = ({ token, authFetch }) => {
         </div>
       </div>
 
+      {/* Réponse automatique */}
+      <div style={cardStyle}>
+        <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.2rem", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>🤖 Réponse automatique</h3>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "1.5rem", padding: "1rem", background: settings.auto_reply_enabled ? "#0d2818" : "#1a1a2e", borderRadius: "8px", border: "1px solid " + (settings.auto_reply_enabled ? "#16a34a" : "#334155") }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "white", fontWeight: "bold" }}>Réponse automatique active</div>
+            <div style={{ color: "#64748b", fontSize: "0.8rem" }}>
+              {settings.auto_reply_enabled ? "Les candidatures acceptées reçoivent une réponse automatique" : "Activez pour envoyer automatiquement les réponses IA"}
+            </div>
+          </div>
+          <label style={{ position: "relative", display: "inline-block", width: "52px", height: "28px" }}>
+            <input type="checkbox" name="auto_reply_enabled" checked={!!settings.auto_reply_enabled} onChange={handleChange} style={{ opacity: 0, width: 0, height: 0 }} />
+            <span style={{ position: "absolute", cursor: "pointer", top: 0, left: 0, right: 0, bottom: 0, background: settings.auto_reply_enabled ? "#16a34a" : "#334155", borderRadius: "28px", transition: "0.3s" }}>
+              <span style={{ position: "absolute", height: "20px", width: "20px", left: settings.auto_reply_enabled ? "28px" : "4px", bottom: "4px", background: "white", borderRadius: "50%", transition: "0.3s" }} />
+            </span>
+          </label>
+        </div>
+
+        {settings.auto_reply_enabled && (
+          <div style={{ marginBottom: "1.5rem", padding: "1rem", background: "rgba(234,179,8,0.1)", borderRadius: "8px", border: "1px solid #ca8a04", color: "#fbbf24", fontSize: "0.85rem" }}>
+            ⚠️ Les emails seront envoyés automatiquement en votre nom
+          </div>
+        )}
+
+        <div>
+          <label style={labelStyle}>Délai avant envoi (minutes)</label>
+          <input
+            name="auto_reply_delay_minutes"
+            type="number"
+            min="0"
+            value={settings.auto_reply_delay_minutes ?? 0}
+            onChange={handleChange}
+            disabled
+            style={{ ...inputStyle, opacity: 0.5, cursor: "not-allowed" }}
+          />
+          <div style={{ color: "#64748b", fontSize: "0.78rem", marginTop: "4px" }}>délai — fonctionnalité en préparation</div>
+        </div>
+      </div>
+
       {/* Bouton save paramètres */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem", background: "#0f172a", padding: "10px", borderRadius: "12px", border: "1px solid #334155" }}>
         {message ? (
@@ -608,6 +761,8 @@ const SettingsPanel = ({ token, authFetch }) => {
           <OutlookConnectSection authFetch={authFetch} />
         </div>
       </div>
+
+      <BlacklistSection authFetch={authFetch} />
     </div>
   );
 };

@@ -151,6 +151,25 @@ async def run_email_pipeline(payload: dict) -> None:
         except Exception as e:
             log.error(f"[pipeline] Erreur création dossier : {e}")
 
+        # ── Notification email à l'agent ───────────────────────────────────────
+        if tenant_file:
+            try:
+                admin = (db.query(models.User)
+                           .filter(models.User.agency_id == agency_id,
+                                   models.User.role == "agency_admin")
+                           .first())
+                if admin and admin.email and settings.RESEND_API_KEY:
+                    await _notify_agent_new_dossier(
+                        to_email=admin.email,
+                        candidate_name=candidate_name or from_email,
+                        from_email=from_email,
+                        subject=subject,
+                        summary=email_result.summary,
+                        tenant_file_id=tenant_file.id,
+                    )
+            except Exception as e:
+                log.warning(f"[pipeline] Notification agent non envoyée : {e}")
+
         # ── ÉTAPES 5-7 : Liens et checklist ───────────────────────────────────
         if tenant_file:
 
@@ -212,7 +231,21 @@ async def run_email_pipeline(payload: dict) -> None:
         new_email.suggested_response_text = reply_result.reply
         db.commit()
 
-        if send_email and reply_result.reply:
+        # Décide de l'envoi auto selon : payload.send_email OU auto_reply_enabled (settings)
+        should_send = send_email  # flag du payload (watcher/manuel)
+        if not should_send and reply_result.reply:
+            try:
+                app_s = db.query(models.AppSettings).filter(
+                    models.AppSettings.agency_id == agency_id
+                ).first()
+                if (app_s and app_s.auto_reply_enabled
+                        and payload.get("filter_decision") == "accept"
+                        and not new_email.reply_sent):
+                    should_send = True
+            except Exception as e:
+                log.warning(f"[pipeline] Erreur lecture auto_reply_enabled : {e}")
+
+        if should_send and reply_result.reply:
             try:
                 await _send_reply(
                     to_email=from_email,
@@ -352,3 +385,31 @@ async def _send_reply(to_email: str, subject: str, body: str) -> None:
         },
     })
     log.info(f"[pipeline] Email envoyé à {to_email}")
+
+
+async def _notify_agent_new_dossier(
+    to_email: str,
+    candidate_name: str,
+    from_email: str,
+    subject: str,
+    summary: str,
+    tenant_file_id: int,
+) -> None:
+    import resend
+    resend.api_key = settings.RESEND_API_KEY
+    resend.Emails.send({
+        "from": settings.RESEND_FROM_EMAIL,
+        "to": [to_email],
+        "subject": f"Nouveau dossier : {candidate_name}",
+        "html": f"""
+        <h2>Nouveau dossier locataire</h2>
+        <p><b>Candidat :</b> {candidate_name}<br>
+           <b>Email :</b> {from_email}<br>
+           <b>Sujet :</b> {subject}</p>
+        <p><b>Résumé :</b> {summary}</p>
+        <p><a href="{settings.FRONTEND_URL}/tenant-files">
+           → Voir le dossier #{tenant_file_id}</a></p>
+        """,
+        "headers": {"X-CipherFlow-Origin": "agent-notification"},
+    })
+    log.info(f"[pipeline] Notification envoyée à l'agent {to_email}")
