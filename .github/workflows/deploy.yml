@@ -57,12 +57,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Action officielle Railway — lit RAILWAY_TOKEN depuis l'env GitHub secret
-      - name: Deploy backend to Railway
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: backend
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend
+        run: railway up --service backend --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
   # ── 3. Déploiement Vercel (frontend) — seulement si tests OK ───────────────
   deploy-frontend:
@@ -73,15 +74,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel
-
-      # Lancé depuis la racine du repo — ./frontend pointe vers le bon dossier.
-      # Ne pas utiliser working-directory: frontend car Vercel CLI résoudrait
-      # alors ./frontend → frontend/frontend (doublon).
       - name: Deploy frontend to Vercel
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel --prod --token "$VERCEL_TOKEN" --yes ./frontend
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./frontend
+          vercel-args: --prod
