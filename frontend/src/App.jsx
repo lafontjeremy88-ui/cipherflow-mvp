@@ -88,16 +88,20 @@ function AppShell({ authFetch, onLogout }) {
             Dashboard
           </NavLink>
 
-          <NavLink to="/emails/history" className={navItemClass}>
-            Historique Emails
+          <NavLink to="/emails/analyze" className={navItemClass}>
+            Traitement Email
           </NavLink>
 
-          <NavLink to="/emails/analyze" className={navItemClass}>
-            Analyse Email
+          <NavLink
+            to="/emails/history"
+            className={navItemClass}
+            style={{ paddingLeft: "2rem", fontSize: "0.875rem", opacity: 0.85 }}
+          >
+            Historique
           </NavLink>
 
           <NavLink to="/documents" className={navItemClass}>
-            Analyse de documents
+            Documents
           </NavLink>
 
           {/* 🔒 Quittances - brique prévue, cachée pour l'instant

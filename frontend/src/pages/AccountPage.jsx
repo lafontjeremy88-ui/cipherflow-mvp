@@ -8,17 +8,13 @@ export default function AccountPage({ authFetch }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-
-  // ✅ NEW: message succès
   const [successMsg, setSuccessMsg] = useState("");
-
   const [data, setData] = useState(null);
 
-  // form
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [agencyName, setAgencyName] = useState("");
-  const [preferredLanguage, setPreferredLanguage] = useState("fr");
+  const [fullName, setFullName] = useState("");
+
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [pwdMsg, setPwdMsg] = useState({ type: "", text: "" });
 
   const isAdmin = useMemo(() => {
     const r = String(data?.role || "").toLowerCase();
@@ -27,18 +23,14 @@ export default function AccountPage({ authFetch }) {
 
   const load = async () => {
     setErr("");
-    setSuccessMsg(""); // ✅ NEW: reset message
+    setSuccessMsg("");
     setLoading(true);
     try {
       const res = await authFetch("/account/me");
       const json = await res.json().catch(() => null);
       if (!res.ok) throw new Error(json?.detail || "Erreur chargement compte");
-
       setData(json);
-      setFirstName(json?.first_name || "");
-      setLastName(json?.last_name || "");
-      setAgencyName(json?.agency_name || "");
-      setPreferredLanguage((json?.preferred_language || "fr").toLowerCase());
+      setFullName([json?.first_name, json?.last_name].filter(Boolean).join(" "));
     } catch (e) {
       setErr(e.message || "Erreur");
     } finally {
@@ -53,29 +45,24 @@ export default function AccountPage({ authFetch }) {
 
   const onSave = async () => {
     setErr("");
-    setSuccessMsg(""); // ✅ NEW: reset message
+    setSuccessMsg("");
     setSaving(true);
     try {
+      const parts = fullName.trim().split(/\s+/);
       const payload = {
-        first_name: firstName,
-        last_name: lastName,
-        preferred_language: preferredLanguage,
+        first_name: parts[0] || "",
+        last_name:  parts.slice(1).join(" ") || "",
       };
-
-      if (isAdmin) payload.agency_name = agencyName;
 
       const res = await authFetch("/account/me", {
         method: "PATCH",
         body: JSON.stringify(payload),
       });
-
       const json = await res.json().catch(() => null);
       if (!res.ok) throw new Error(json?.detail || "Erreur sauvegarde");
 
       setData(json);
-
-      // ✅ NEW: success toast/message
-      setSuccessMsg("Modifications enregistrées avec succès.");
+      setSuccessMsg("Modifications enregistrées.");
       window.setTimeout(() => setSuccessMsg(""), 3000);
     } catch (e) {
       setErr(e.message || "Erreur");
@@ -84,23 +71,39 @@ export default function AccountPage({ authFetch }) {
     }
   };
 
-  // ✅ NEW: delete account (soft delete côté backend)
+  const onRequestPasswordReset = async () => {
+    if (!data?.email) return;
+    setPwdLoading(true);
+    setPwdMsg({ type: "", text: "" });
+    try {
+      const res = await authFetch("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email: data.email }),
+      });
+      if (res.ok) {
+        setPwdMsg({ type: "success", text: "Email de réinitialisation envoyé à " + data.email });
+      } else {
+        const json = await res.json().catch(() => null);
+        setPwdMsg({ type: "error", text: json?.detail || "Erreur lors de l'envoi." });
+      }
+    } catch {
+      setPwdMsg({ type: "error", text: "Erreur réseau." });
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
   const onDeleteAccount = async () => {
     setErr("");
     setSuccessMsg("");
-
     const ok = window.confirm(
       "Êtes-vous sûr de vouloir supprimer votre compte ? Cette action est irréversible."
     );
     if (!ok) return;
-
     try {
       const res = await authFetch("/account/me?mode=purge", { method: "DELETE" });
       const json = await res.json().catch(() => null);
-
       if (!res.ok) throw new Error(json?.detail || "Erreur suppression du compte");
-
-      // Déconnexion + retour login
       localStorage.clear();
       window.location.href = "/login";
     } catch (e) {
@@ -118,150 +121,136 @@ export default function AccountPage({ authFetch }) {
   }
 
   return (
-    <div style={{ display: "grid", gap: 16, maxWidth: 900 }}>
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Mon compte</h2>
-
-        {/* ✅ NEW: success message */}
-        {successMsg ? <div className="alert alert-success">{successMsg}</div> : null}
-
-        {err ? <div className="alert alert-error">{err}</div> : null}
+    <div style={{ display: "grid", gap: 20, maxWidth: 720 }}>
+      {/* En-tête */}
+      <div>
+        <h2 style={{ marginTop: 0, marginBottom: 4 }}>Mon compte</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Gérez vos informations personnelles et la sécurité de votre compte.
+        </p>
       </div>
 
-      {/* 1) Informations du compte */}
+      {successMsg && <div className="alert alert-success">{successMsg}</div>}
+      {err        && <div className="alert alert-error">{err}</div>}
+
+      {/* ── Informations ────────────────────────────────────────── */}
       <div className="card">
-        <h3>Informations</h3>
+        <h3 style={{ marginTop: 0 }}>Informations</h3>
 
         <div className="form-grid">
           <div className="field">
-            <label>Email (lecture seule)</label>
+            <label>Email</label>
             <input value={data?.email || ""} readOnly />
           </div>
 
           <div className="field">
-            <label>Rôle (lecture seule)</label>
+            <label>Rôle</label>
             <input value={data?.role || ""} readOnly />
           </div>
 
           <div className="field">
-            <label>Prénom</label>
-            <input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+            <label>État du compte</label>
+            <input value={data?.account_status || ""} readOnly />
           </div>
 
           <div className="field">
-            <label>Nom</label>
-            <input value={lastName} onChange={(e) => setLastName(e.target.value)} />
-          </div>
-
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Agence / Organisation {isAdmin ? "" : "(lecture seule)"}</label>
+            <label>Membre depuis</label>
             <input
-              value={agencyName}
-              onChange={(e) => setAgencyName(e.target.value)}
-              readOnly={!isAdmin}
-            />
-            {!isAdmin ? (
-              <div className="muted small" style={{ marginTop: 6 }}>
-                Seul un admin peut modifier le nom de l’agence.
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* 2) Préférences */}
-      <div className="card">
-        <h3>Préférences</h3>
-
-        <div className="form-grid">
-          <div className="field">
-            <label>Langue</label>
-            <select value={preferredLanguage} onChange={(e) => setPreferredLanguage(e.target.value)}>
-              <option value="fr">Français</option>
-              <option value="en">English</option>
-            </select>
-            <div className="muted small" style={{ marginTop: 6 }}>
-              Placeholder : la traduction UI viendra plus tard.
-            </div>
-          </div>
-
-          <div className="field">
-            <label>Préférences UI</label>
-            <input value="(placeholder)" readOnly />
-          </div>
-        </div>
-      </div>
-
-      {/* 3) Statut */}
-      <div className="card">
-        <h3>Statut du compte</h3>
-
-        <div className="form-grid">
-          <div className="field">
-            <label>Date de création</label>
-            <input
-              value={data?.created_at ? new Date(data.created_at).toLocaleString() : ""}
+              value={
+                data?.created_at
+                  ? new Date(data.created_at).toLocaleDateString("fr-FR")
+                  : ""
+              }
               readOnly
             />
           </div>
+        </div>
 
-          <div className="field">
-            <label>État</label>
-            <input value={data?.account_status || ""} readOnly />
+        <div className="form-grid" style={{ marginTop: 16 }}>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Nom complet</label>
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Prénom Nom"
+            />
           </div>
         </div>
-      </div>
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <button className={cx("btn", saving && "disabled")} onClick={onSave} disabled={saving}>
-          {saving ? "Sauvegarde…" : "Enregistrer"}
-        </button>
-        <button className="btn btn-ghost" onClick={load} disabled={saving}>
-          Recharger
-        </button>
-      </div>
-
-            {/* ✅ Bloc RGPD / infos légales */}
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Protection des données</h3>
-
-        <p className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
-          CipherFlow traite tes données conformément à sa{" "}
-          <a
-            href="/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ textDecoration: "underline" }}
+        <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+          <button
+            className={cx("btn btn-primary", saving && "disabled")}
+            onClick={onSave}
+            disabled={saving}
           >
-            Politique de confidentialité
-          </a>.
-        </p>
-
-        <p className="muted" style={{ fontSize: 12, opacity: 0.8 }}>
-          Tu peux consulter cette page à tout moment pour connaître le détail
-          des traitements et de tes droits (accès, suppression, portabilité…).
-        </p>
+            {saving ? "Sauvegarde…" : "Enregistrer"}
+          </button>
+          <button className="btn btn-ghost" onClick={load} disabled={saving}>
+            Recharger
+          </button>
+        </div>
       </div>
 
-      {/* ✅ Zone dangereuse */}
-      <div className="card" style={{ marginTop: 24 }}>
-        <h3 style={{ marginTop: 0, color: "#f97373" }}>Zone dangereuse</h3>
-
-        <div className="muted" style={{ marginBottom: 10 }}>
-          Supprimer ton compte te déconnecte immédiatement.
-          <br />
-          Cette action est <strong>irréversible</strong>.
-        </div>
-
+      {/* ── Sécurité ─────────────────────────────────────────────── */}
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Sécurité</h3>
+        <p className="muted" style={{ marginBottom: 14, fontSize: 14 }}>
+          Vous recevrez un lien de réinitialisation à{" "}
+          <strong>{data?.email}</strong>.
+        </p>
         <button
-          className="btn"
+          className="btn btn-ghost"
+          onClick={onRequestPasswordReset}
+          disabled={pwdLoading}
+        >
+          {pwdLoading ? "Envoi…" : "Changer mon mot de passe"}
+        </button>
+        {pwdMsg.text && (
+          <div
+            className={pwdMsg.type === "success" ? "alert alert-success" : "alert alert-error"}
+            style={{ marginTop: 12 }}
+          >
+            {pwdMsg.text}
+          </div>
+        )}
+      </div>
+
+      {/* ── Zone dangereuse ──────────────────────────────────────── */}
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Zone dangereuse</h3>
+        <p className="muted" style={{ marginBottom: 14, fontSize: 14 }}>
+          La suppression est <strong>irréversible</strong> et entraîne la
+          perte de toutes vos données.
+        </p>
+        <button
+          className="btn btn-ghost"
+          style={{ borderColor: "#f87171", color: "#f87171" }}
           onClick={onDeleteAccount}
-          disabled={saving}
         >
           Supprimer mon compte
         </button>
       </div>
 
+      {/* RGPD discret */}
+      <p className="muted" style={{ fontSize: 12, textAlign: "center", marginTop: 0 }}>
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ textDecoration: "underline" }}
+        >
+          Politique de confidentialité
+        </a>
+        {" · "}
+        <a
+          href="/mentions-legales"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ textDecoration: "underline" }}
+        >
+          Mentions légales
+        </a>
+      </p>
     </div>
   );
 }

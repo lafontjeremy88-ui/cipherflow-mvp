@@ -96,6 +96,12 @@ class AgencyEmailConfig(Base):
     gmail_token_expiry  = Column(DateTime, nullable=True)
     gmail_email         = Column(String, nullable=True)  # adresse Gmail connectée
 
+    # ── Outlook OAuth ───────────────────────────────────────
+    outlook_access_token  = Column(Text, nullable=True)
+    outlook_refresh_token = Column(Text, nullable=True)
+    outlook_token_expiry  = Column(DateTime, nullable=True)
+    outlook_email         = Column(String, nullable=True)  # adresse Outlook connectée
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
