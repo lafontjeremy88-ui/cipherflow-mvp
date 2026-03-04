@@ -14,6 +14,7 @@ import base64
 import email
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,8 @@ BACKEND_URL              = os.getenv("BACKEND_URL", "").rstrip("/")
 WATCHER_SECRET           = os.getenv("WATCHER_SECRET", "")
 GOOGLE_CLIENT_ID         = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET     = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+MICROSOFT_CLIENT_ID      = os.getenv("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET  = os.getenv("MICROSOFT_CLIENT_SECRET", "")
 AUTO_SEND                = os.getenv("AUTO_SEND", "true").lower() == "true"
 MAX_EMAILS_PER_LOOP      = int(os.getenv("MAX_EMAILS_PER_LOOP", "5"))
 PAUSE_BETWEEN_EMAILS_SEC = float(os.getenv("PAUSE_BETWEEN_EMAILS_SEC", "2"))
@@ -52,12 +55,15 @@ if not GOOGLE_CLIENT_SECRET: missing.append("GOOGLE_OAUTH_CLIENT_SECRET")
 if missing:
     raise RuntimeError(f"Variables manquantes: {', '.join(missing)}")
 
-WEBHOOK_URL = f"{BACKEND_URL}/webhook/email"
-CONFIGS_URL = f"{BACKEND_URL}/watcher/configs"
-TOKEN_UPDATE_URL = f"{BACKEND_URL}/watcher/update-token"
-CHECK_SENDER_URL = f"{BACKEND_URL}/watcher/check-sender"
+WEBHOOK_URL              = f"{BACKEND_URL}/webhook/email"
+CONFIGS_URL              = f"{BACKEND_URL}/watcher/configs"
+TOKEN_UPDATE_URL         = f"{BACKEND_URL}/watcher/update-token"
+OUTLOOK_UPDATE_URL       = f"{BACKEND_URL}/watcher/update-outlook-token"
+CHECK_SENDER_URL         = f"{BACKEND_URL}/watcher/check-sender"
 
-GOOGLE_TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_TOKEN_REFRESH_URL  = "https://oauth2.googleapis.com/token"
+MS_TOKEN_URL              = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+MS_GRAPH_MESSAGES_URL     = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -424,6 +430,320 @@ def _mark_as_read(service, message_id: str):
 
 
 # ============================================================
+# 🔐 GESTION TOKENS OUTLOOK (Microsoft Graph)
+# ============================================================
+
+def refresh_outlook_token_if_needed(config: dict) -> dict | None:
+    """
+    Rafraîchit le token Outlook si l'expiry est dans moins de 5 minutes.
+    Met à jour config en place et notifie le backend.
+    Retourne le config mis à jour, ou None si le refresh échoue.
+    """
+    agency_id = config["agency_id"]
+    expiry_str = config.get("outlook_token_expiry")
+
+    needs_refresh = True
+    if expiry_str:
+        try:
+            expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            needs_refresh = (expiry - datetime.now(timezone.utc)) < timedelta(minutes=5)
+        except Exception:
+            pass
+
+    if not needs_refresh:
+        return config
+
+    log.info(f"[outlook] Token expiré/proche, rafraîchissement agency={agency_id}")
+
+    if not MICROSOFT_CLIENT_ID or not MICROSOFT_CLIENT_SECRET:
+        log.error("[outlook] MICROSOFT_CLIENT_ID ou MICROSOFT_CLIENT_SECRET manquant")
+        return None
+
+    try:
+        resp = requests.post(
+            MS_TOKEN_URL,
+            data={
+                "grant_type":    "refresh_token",
+                "refresh_token": config["outlook_refresh_token"],
+                "client_id":     MICROSOFT_CLIENT_ID,
+                "client_secret": MICROSOFT_CLIENT_SECRET,
+                "scope":         "Mail.Read Mail.Send offline_access",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+
+        if not resp.ok:
+            log.error(
+                f"[outlook] Refresh token HTTP {resp.status_code} agency={agency_id} "
+                f"— {resp.text[:300]}"
+            )
+            return None
+
+        tokens = resp.json()
+        new_access_token = tokens.get("access_token")
+        if not new_access_token:
+            log.error(f"[outlook] Pas d'access_token dans la réponse agency={agency_id}")
+            return None
+
+        expires_in = tokens.get("expires_in", 3600)
+        new_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        new_expiry_iso = new_expiry.isoformat()
+
+        # Mettre à jour config local
+        config["outlook_access_token"] = new_access_token
+        config["outlook_token_expiry"] = new_expiry_iso
+
+        # Notifier le backend pour MAJ en base
+        try:
+            requests.post(
+                OUTLOOK_UPDATE_URL,
+                json={
+                    "agency_id":            agency_id,
+                    "outlook_access_token": new_access_token,
+                    "outlook_token_expiry": new_expiry_iso,
+                },
+                headers={"x-watcher-secret": WATCHER_SECRET},
+                timeout=10,
+            )
+        except Exception as e:
+            log.warning(f"[outlook] MAJ token backend échouée (non bloquant) : {e}")
+
+        log.info(f"[outlook] Token rafraîchi agency={agency_id}")
+        return config
+
+    except Exception as e:
+        log.error(f"[outlook] Refresh token exception agency={agency_id} : {e}")
+        return None
+
+
+# ============================================================
+# 📧 PARSING EMAIL OUTLOOK (Microsoft Graph)
+# ============================================================
+
+def _outlook_headers(access_token: str) -> dict:
+    return {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+
+def _mark_outlook_read(message_id: str, access_token: str):
+    """Marque un email Outlook comme lu via Graph API."""
+    try:
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
+        requests.patch(
+            url,
+            json={"isRead": True},
+            headers=_outlook_headers(access_token),
+            timeout=10,
+        )
+    except Exception as e:
+        log.warning(f"[outlook] Impossible de marquer comme lu {message_id} : {e}")
+
+
+def _get_outlook_body(message: dict) -> str:
+    """Extrait le corps texte depuis un message Graph API (prefer text/plain)."""
+    body = message.get("body", {})
+    content_type = body.get("contentType", "").lower()
+    content = body.get("content", "")
+
+    if content_type == "html":
+        # Strip HTML tags simplement
+        content = re.sub(r"<[^>]+>", " ", content)
+        content = re.sub(r"&nbsp;", " ", content)
+        content = re.sub(r"&amp;", "&", content)
+        content = re.sub(r"&lt;", "<", content)
+        content = re.sub(r"&gt;", ">", content)
+        content = re.sub(r"\s{2,}", " ", content)
+
+    return content.strip()
+
+
+def _get_outlook_attachments(message_id: str, access_token: str, has_attachments: bool) -> list:
+    """
+    Récupère les pièces jointes d'un message Outlook via Graph API.
+    Graph retourne contentBytes en base64 directement.
+    """
+    if not has_attachments:
+        return []
+
+    attachments = []
+    try:
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments"
+        resp = requests.get(url, headers=_outlook_headers(access_token), timeout=20)
+        if not resp.ok:
+            log.warning(f"[outlook] Attachments HTTP {resp.status_code} — {resp.text[:200]}")
+            return []
+
+        for att in resp.json().get("value", []):
+            # On ne traite que les fileAttachments (pas les itemAttachments = emails imbriqués)
+            if att.get("@odata.type") != "#microsoft.graph.fileAttachment":
+                continue
+
+            content_bytes_b64 = att.get("contentBytes", "")
+            if not content_bytes_b64:
+                continue
+
+            filename = att.get("name", "attachment")
+            content_type = att.get("contentType", "application/octet-stream")
+            size = att.get("size", 0)
+
+            attachments.append({
+                "filename":       filename,
+                "content_type":   content_type,
+                "content_base64": content_bytes_b64,
+            })
+            log.info(f"   ✅ PJ Outlook : {filename} ({size} bytes)")
+
+    except Exception as e:
+        log.error(f"[outlook] Erreur récupération PJ message={message_id} : {e}")
+
+    return attachments
+
+
+# ============================================================
+# 🚀 TRAITEMENT D'UN EMAIL OUTLOOK
+# ============================================================
+
+def process_one_outlook_message(
+    message: dict,
+    agency_id: int,
+    outlook_email: str,
+    access_token: str,
+):
+    """Traite un email Outlook (Graph API) et l'envoie au webhook backend."""
+    message_id = message.get("id", "")
+
+    # Anti-boucle : ignorer les emails envoyés par CipherFlow
+    internet_headers = message.get("internetMessageHeaders", [])
+    for h in internet_headers:
+        if h.get("name", "").lower() == "x-cipherflow-origin":
+            log.info(f"[outlook] Email CipherFlow ignoré (anti-boucle) id={message_id}")
+            _mark_outlook_read(message_id, access_token)
+            return
+
+    sender_obj = message.get("from", {}).get("emailAddress", {})
+    sender_name  = sender_obj.get("name", "")
+    sender_email = sender_obj.get("address", "")
+    sender       = f"{sender_name} <{sender_email}>" if sender_name else sender_email
+
+    subject = message.get("subject", "")
+    body    = _get_outlook_body(message)
+    has_att = message.get("hasAttachments", False)
+
+    log.info(f"📧 Outlook reçu — De: {sender} | Sujet: {subject[:50]}")
+
+    attachments = _get_outlook_attachments(message_id, access_token, has_att)
+
+    # ── Filtrage métier (même logique que Gmail) ───────────────────────────────
+    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id)
+    log.info(f"🧠 Outlook Décision={decision.value} | Raisons={reasons} | agency={agency_id}")
+
+    if decision == FilterDecision.IGNORE:
+        _mark_outlook_read(message_id, access_token)
+        return
+
+    webhook_payload = {
+        "from_email":      sender_email or sender,
+        "to_email":        outlook_email,
+        "subject":         subject,
+        "content":         body,
+        "send_email":      AUTO_SEND,
+        "attachments":     attachments,
+        "agency_id":       agency_id,
+        "filter_decision": decision.value,
+        "filter_reasons":  reasons,
+    }
+
+    try:
+        resp = requests.post(
+            WEBHOOK_URL,
+            json=webhook_payload,
+            headers={"x-watcher-secret": WATCHER_SECRET},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            log.info(f"✅ Outlook transmis au backend agency={agency_id}")
+            _mark_outlook_read(message_id, access_token)
+        else:
+            log.warning(f"⚠️ Backend {resp.status_code} — {resp.text[:200]}")
+    except Exception as e:
+        log.error(f"❌ Erreur envoi backend Outlook : {e}")
+
+
+# ============================================================
+# 👀 BOUCLE OUTLOOK PAR AGENCE
+# ============================================================
+
+def watch_agency_outlook(config: dict, stop_event: threading.Event):
+    """Thread de surveillance Outlook pour une agence."""
+    agency_id     = config["agency_id"]
+    outlook_email = config.get("outlook_email", "")
+
+    log.info(f"👀 Watcher Outlook démarré — agency={agency_id} email={outlook_email}")
+
+    while not stop_event.is_set():
+        try:
+            # Refresh token si nécessaire
+            updated_config = refresh_outlook_token_if_needed(config)
+            if updated_config is None:
+                log.error(f"[outlook] Refresh impossible — pause agency={agency_id}")
+                stop_event.wait(POLL_INTERVAL_SEC)
+                continue
+            config = updated_config
+
+            access_token = config.get("outlook_access_token", "")
+            if not access_token:
+                log.error(f"[outlook] Pas d'access_token agency={agency_id}")
+                stop_event.wait(POLL_INTERVAL_SEC)
+                continue
+
+            # Récupère les messages non lus de l'inbox
+            resp = requests.get(
+                MS_GRAPH_MESSAGES_URL,
+                params={
+                    "$filter":  "isRead eq false",
+                    "$top":     str(MAX_EMAILS_PER_LOOP),
+                    "$select":  "id,subject,from,body,hasAttachments,internetMessageHeaders",
+                    "$expand":  "internetMessageHeaders",
+                },
+                headers=_outlook_headers(access_token),
+                timeout=20,
+            )
+
+            if resp.status_code == 401:
+                log.warning(f"[outlook] 401 — forçage refresh token agency={agency_id}")
+                config["outlook_token_expiry"] = None
+                stop_event.wait(5)
+                continue
+
+            if not resp.ok:
+                log.warning(f"⚠️ Graph API {resp.status_code} agency={agency_id} — {resp.text[:200]}")
+                stop_event.wait(POLL_INTERVAL_SEC)
+                continue
+
+            messages = resp.json().get("value", [])
+            log.info(f"[outlook] {len(messages)} email(s) non lus — agency={agency_id}")
+
+            for message in messages:
+                if stop_event.is_set():
+                    break
+                try:
+                    process_one_outlook_message(message, agency_id, outlook_email, access_token)
+                except Exception as e:
+                    log.error(f"[outlook] Erreur traitement message {message.get('id')} : {e}")
+
+                time.sleep(PAUSE_BETWEEN_EMAILS_SEC)
+
+        except Exception as e:
+            log.warning(f"⚠️ Erreur boucle Outlook agency={agency_id} : {e}")
+
+        stop_event.wait(POLL_INTERVAL_SEC)
+
+    log.info(f"🛑 Watcher Outlook arrêté — agency={agency_id}")
+
+
+# ============================================================
 # 👀 BOUCLE GMAIL PAR AGENCE
 # ============================================================
 
@@ -480,7 +800,7 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
 # ============================================================
 
 def fetch_configs() -> list:
-    """Récupère les configs actives depuis le backend (agences avec Gmail connecté)."""
+    """Récupère toutes les configs actives (Gmail OU Outlook connecté)."""
     try:
         resp = requests.get(
             CONFIGS_URL,
@@ -488,10 +808,7 @@ def fetch_configs() -> list:
             timeout=10,
         )
         if resp.status_code == 200:
-            return [
-                c for c in resp.json()
-                if c.get("gmail_refresh_token")
-            ]
+            return resp.json()
         log.warning(f"⚠️ Impossible de récupérer les configs : {resp.status_code}")
     except Exception as e:
         log.error(f"❌ Erreur fetch configs : {e}")
@@ -499,26 +816,45 @@ def fetch_configs() -> list:
 
 
 def run_multi_tenant_watcher():
-    """Boucle principale multi-tenant — démarre/arrête les threads par agence."""
-    log.info("🚀 Watcher Gmail multi-tenant démarré")
+    """Boucle principale multi-tenant — démarre/arrête les threads Gmail ET Outlook par agence."""
+    log.info("🚀 Watcher multi-tenant (Gmail + Outlook) démarré")
 
-    active_watchers: dict = {}
+    gmail_watchers:   dict = {}  # agency_id -> (thread, stop_event)
+    outlook_watchers: dict = {}  # agency_id -> (thread, stop_event)
 
     while True:
         configs = fetch_configs()
-        active_ids = {c["agency_id"] for c in configs}
 
-        for agency_id in list(active_watchers.keys()):
-            if agency_id not in active_ids:
-                log.info(f"🛑 Désactivation watcher agency={agency_id}")
-                stop_event = active_watchers[agency_id][1]
+        # Agences avec Gmail connecté
+        gmail_configs   = [c for c in configs if c.get("gmail_refresh_token")]
+        # Agences avec Outlook connecté
+        outlook_configs = [c for c in configs if c.get("outlook_refresh_token")]
+
+        gmail_ids   = {c["agency_id"] for c in gmail_configs}
+        outlook_ids = {c["agency_id"] for c in outlook_configs}
+
+        # ── Arrêt des watchers Gmail obsolètes ────────────────────────────────
+        for agency_id in list(gmail_watchers.keys()):
+            if agency_id not in gmail_ids:
+                log.info(f"🛑 Désactivation watcher Gmail agency={agency_id}")
+                stop_event = gmail_watchers[agency_id][1]
                 stop_event.set()
-                active_watchers[agency_id][0].join(timeout=5)
-                del active_watchers[agency_id]
+                gmail_watchers[agency_id][0].join(timeout=5)
+                del gmail_watchers[agency_id]
 
-        for config in configs:
+        # ── Arrêt des watchers Outlook obsolètes ─────────────────────────────
+        for agency_id in list(outlook_watchers.keys()):
+            if agency_id not in outlook_ids:
+                log.info(f"🛑 Désactivation watcher Outlook agency={agency_id}")
+                stop_event = outlook_watchers[agency_id][1]
+                stop_event.set()
+                outlook_watchers[agency_id][0].join(timeout=5)
+                del outlook_watchers[agency_id]
+
+        # ── Démarrage des nouveaux watchers Gmail ─────────────────────────────
+        for config in gmail_configs:
             agency_id = config["agency_id"]
-            if agency_id not in active_watchers:
+            if agency_id not in gmail_watchers:
                 stop_event = threading.Event()
                 t = threading.Thread(
                     target=watch_agency_gmail,
@@ -527,8 +863,23 @@ def run_multi_tenant_watcher():
                     name=f"watcher-gmail-{agency_id}",
                 )
                 t.start()
-                active_watchers[agency_id] = (t, stop_event)
+                gmail_watchers[agency_id] = (t, stop_event)
                 log.info(f"▶️ Watcher Gmail démarré agency={agency_id}")
+
+        # ── Démarrage des nouveaux watchers Outlook ───────────────────────────
+        for config in outlook_configs:
+            agency_id = config["agency_id"]
+            if agency_id not in outlook_watchers:
+                stop_event = threading.Event()
+                t = threading.Thread(
+                    target=watch_agency_outlook,
+                    args=(config, stop_event),
+                    daemon=True,
+                    name=f"watcher-outlook-{agency_id}",
+                )
+                t.start()
+                outlook_watchers[agency_id] = (t, stop_event)
+                log.info(f"▶️ Watcher Outlook démarré agency={agency_id}")
 
         time.sleep(CONFIG_REFRESH_INTERVAL)
 

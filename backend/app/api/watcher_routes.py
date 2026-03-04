@@ -95,7 +95,7 @@ async def get_watcher_configs(
     db: Session = Depends(get_db),
 ):
     """
-    Retourne la liste des configs actives avec tokens Gmail.
+    Retourne la liste des configs actives avec tokens Gmail ET/OU Outlook.
     Appelé par le watcher toutes les CONFIG_REFRESH_INTERVAL secondes.
     """
     if secret != settings.WATCHER_SECRET:
@@ -104,9 +104,10 @@ async def get_watcher_configs(
     configs = (
         db.query(models.AgencyEmailConfig)
         .filter(
-            # Le watcher Gmail s'active dès qu'un token existe
-            # Le champ enabled ne contrôle que le watcher IMAP
-            models.AgencyEmailConfig.gmail_refresh_token.isnot(None),
+            or_(
+                models.AgencyEmailConfig.gmail_refresh_token.isnot(None),
+                models.AgencyEmailConfig.outlook_refresh_token.isnot(None),
+            )
         )
         .all()
     )
@@ -114,15 +115,24 @@ async def get_watcher_configs(
     result = []
     for c in configs:
         result.append({
-            "agency_id":           c.agency_id,
-            "gmail_access_token":  fernet_decrypt_str(c.gmail_access_token) if c.gmail_access_token else None,
-            "gmail_refresh_token": fernet_decrypt_str(c.gmail_refresh_token) if c.gmail_refresh_token else None,
-            "gmail_token_expiry":  c.gmail_token_expiry.isoformat() if c.gmail_token_expiry else None,
-            "gmail_email":         c.gmail_email,
-            "enabled":             c.enabled,
+            "agency_id":              c.agency_id,
+            # ── Gmail ──────────────────────────────────────────────────────────
+            "gmail_access_token":     fernet_decrypt_str(c.gmail_access_token)  if c.gmail_access_token  else None,
+            "gmail_refresh_token":    fernet_decrypt_str(c.gmail_refresh_token) if c.gmail_refresh_token else None,
+            "gmail_token_expiry":     c.gmail_token_expiry.isoformat()  if c.gmail_token_expiry  else None,
+            "gmail_email":            c.gmail_email,
+            # ── Outlook ────────────────────────────────────────────────────────
+            "outlook_access_token":   fernet_decrypt_str(c.outlook_access_token)  if c.outlook_access_token  else None,
+            "outlook_refresh_token":  fernet_decrypt_str(c.outlook_refresh_token) if c.outlook_refresh_token else None,
+            "outlook_token_expiry":   c.outlook_token_expiry.isoformat() if c.outlook_token_expiry else None,
+            "outlook_email":          c.outlook_email,
+            # ── IMAP ───────────────────────────────────────────────────────────
+            "enabled":                c.enabled,
         })
 
-    log.info(f"[watcher/configs] {len(result)} agence(s) active(s)")
+    gmail_count   = sum(1 for c in configs if c.gmail_refresh_token)
+    outlook_count = sum(1 for c in configs if c.outlook_refresh_token)
+    log.info(f"[watcher/configs] {len(result)} agence(s) — Gmail:{gmail_count} Outlook:{outlook_count}")
     return result
 
 
@@ -164,6 +174,47 @@ async def update_token(
 
     db.commit()
     log.info(f"[watcher/update-token] Token mis à jour agency={payload.agency_id}")
+    return {"success": True}
+
+
+# ── POST /watcher/update-outlook-token ────────────────────────────────────────
+
+class OutlookTokenUpdatePayload(BaseModel):
+    agency_id:             int
+    outlook_access_token:  str
+    outlook_token_expiry:  str | None = None
+
+
+@router.post("/update-outlook-token")
+async def update_outlook_token(
+    payload: OutlookTokenUpdatePayload,
+    x_watcher_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Mise à jour du access_token Outlook après un refresh par le watcher.
+    Le refresh_token ne change pas, seul l'access_token est mis à jour.
+    """
+    if x_watcher_secret != settings.WATCHER_SECRET:
+        raise HTTPException(status_code=403, detail="Secret invalide")
+
+    config = (
+        db.query(models.AgencyEmailConfig)
+        .filter(models.AgencyEmailConfig.agency_id == payload.agency_id)
+        .first()
+    )
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Config agence introuvable")
+
+    config.outlook_access_token = fernet_encrypt_str(payload.outlook_access_token)
+    if payload.outlook_token_expiry:
+        config.outlook_token_expiry = datetime.fromisoformat(
+            payload.outlook_token_expiry.replace("Z", "+00:00")
+        )
+
+    db.commit()
+    log.info(f"[watcher/update-outlook-token] Token mis à jour agency={payload.agency_id}")
     return {"success": True}
 
 
