@@ -43,7 +43,7 @@ MS_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 MS_USERINFO  = "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName"
 
 SCOPES = [
-    "Mail.Read",
+    "Mail.ReadWrite",  # inclut Mail.Read + PATCH (marquer comme lu)
     "Mail.Send",
     "User.Read",       # nécessaire pour GET /me (Graph API fallback)
     "offline_access",
