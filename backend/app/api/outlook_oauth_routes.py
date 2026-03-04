@@ -15,6 +15,8 @@ Scopes demandés :
   - openid, email  → identification de l'utilisateur
 """
 
+import base64
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -43,6 +45,7 @@ MS_USERINFO  = "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalNa
 SCOPES = [
     "Mail.Read",
     "Mail.Send",
+    "User.Read",       # nécessaire pour GET /me (Graph API fallback)
     "offline_access",
     "openid",
     "email",
@@ -50,6 +53,34 @@ SCOPES = [
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _email_from_id_token(id_token: str) -> str:
+    """
+    Extrait l'email depuis le payload JWT de l'id_token Microsoft.
+    Disponible dès lors que les scopes 'openid' et 'email' sont consentis —
+    aucun appel Graph API supplémentaire requis.
+    Ne vérifie pas la signature (utilisé uniquement pour afficher/stocker l'adresse).
+    """
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return ""
+        # Ajouter le padding base64 manquant (JWT encode sans "=")
+        payload_b64 = parts[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        # Microsoft peut utiliser "email", "preferred_username" ou "unique_name"
+        return (
+            claims.get("email")
+            or claims.get("preferred_username")
+            or claims.get("unique_name")
+            or ""
+        )
+    except Exception:
+        return ""
+
 
 def _get_or_create_email_config(db: Session, agency_id: int) -> models.AgencyEmailConfig:
     config = (
@@ -242,19 +273,42 @@ async def outlook_callback(
         )
 
     # 3. Récupération de l'adresse Outlook connectée
-    try:
-        userinfo_resp = requests.get(
-            MS_USERINFO,
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=10,
+    #
+    # Stratégie 1 : id_token JWT (aucun appel réseau, scopes openid+email suffisent)
+    id_token_str = tokens.get("id_token", "")
+    outlook_email = _email_from_id_token(id_token_str) if id_token_str else ""
+
+    if outlook_email:
+        log.info(f"[outlook_oauth] Email extrait depuis id_token : {outlook_email!r}")
+    else:
+        # Stratégie 2 : appel Graph API GET /me (nécessite User.Read)
+        try:
+            userinfo_resp = requests.get(
+                MS_USERINFO,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10,
+            )
+            if userinfo_resp.ok:
+                me = userinfo_resp.json()
+                outlook_email = me.get("mail") or me.get("userPrincipalName") or ""
+                log.info(
+                    f"[outlook_oauth] Email extrait depuis Graph /me : {outlook_email!r}"
+                    f" (champs reçus : mail={me.get('mail')!r}"
+                    f" upn={me.get('userPrincipalName')!r})"
+                )
+            else:
+                log.warning(
+                    f"[outlook_oauth] Graph /me HTTP {userinfo_resp.status_code} : "
+                    f"{userinfo_resp.text}"
+                )
+        except Exception as e:
+            log.warning(f"[outlook_oauth] Graph /me exception : {e}")
+
+    if not outlook_email:
+        log.warning(
+            "[outlook_oauth] Email introuvable dans id_token ET dans Graph /me — "
+            "connexion sans email (tokens sauvegardés quand même)"
         )
-        userinfo_resp.raise_for_status()
-        data = userinfo_resp.json()
-        # "mail" peut être null pour les comptes perso — fallback sur userPrincipalName
-        outlook_email = data.get("mail") or data.get("userPrincipalName") or ""
-    except Exception as e:
-        log.warning(f"[outlook_oauth] Impossible de récupérer l'email : {e}")
-        outlook_email = ""
 
     # 4. Vérification doublon Outlook (même email, autre agence)
     if outlook_email:
