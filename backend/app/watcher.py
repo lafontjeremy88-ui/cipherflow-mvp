@@ -704,8 +704,7 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
                 params={
                     "$filter":  "isRead eq false",
                     "$top":     str(MAX_EMAILS_PER_LOOP),
-                    "$select":  "id,subject,from,body,hasAttachments,internetMessageHeaders",
-                    "$expand":  "internetMessageHeaders",
+                    "$select":  "id,subject,from,body,hasAttachments,isRead",
                 },
                 headers=_outlook_headers(access_token),
                 timeout=20,
