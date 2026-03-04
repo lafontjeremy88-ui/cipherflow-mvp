@@ -14,6 +14,8 @@ import OAuthCallback from "./pages/OAuthCallback";
 import AccountPage from "./pages/AccountPage";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LegalNotice from "./pages/LegalNotice";
+import Onboarding from "./pages/Onboarding";
+import Terms from "./pages/Terms";
 
 // Components / Modules
 import Login from "./components/Login";
@@ -281,7 +283,7 @@ function AppInner() {
   const handleLoginSuccess = () => {
     // setToken() a déjà été appelé par login() ou exchange-token dans api.js
     setAccessToken(getToken());
-    navigate("/dashboard", { replace: true });
+    navigate("/onboarding", { replace: true });
   };
 
   // ── Redirection vers /login si non authentifié ────────────────────────────
@@ -297,6 +299,7 @@ function AppInner() {
       "/reset-password",
       "/privacy",
       "/mentions-legales",
+      "/terms",
     ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
@@ -377,6 +380,18 @@ function AppInner() {
       <Route path="/privacy" element={<PrivacyPolicy />} />
 
       <Route path="/mentions-legales" element={<LegalNotice />} />
+
+      <Route path="/terms" element={<Terms />} />
+
+      {/* Onboarding (protégé, hors AppShell) */}
+      <Route
+        path="/onboarding"
+        element={
+          <ProtectedRoute isAuthed={isAuthed}>
+            <Onboarding authFetch={authFetch} />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Protected shell */}
       <Route

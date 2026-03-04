@@ -166,14 +166,13 @@ export default function Login({ onLogin }) {
             Pas encore de compte ? <Link to="/register">Créer un compte gratuitement</Link>
           </span>
         </div>
-        <div style={{ marginTop: "20px", textAlign: "center" }}>
-          <a
-            href="/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ fontSize: "13px", opacity: 0.8 }}
-          >
+        <div style={{ marginTop: "20px", textAlign: "center", fontSize: "13px", opacity: 0.8 }}>
+          <a href="/privacy" target="_blank" rel="noopener noreferrer">
             Politique de confidentialité
+          </a>
+          {" · "}
+          <a href="/terms" target="_blank" rel="noopener noreferrer">
+            CGU
           </a>
         </div>
       </div>
