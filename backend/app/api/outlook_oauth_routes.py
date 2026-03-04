@@ -147,6 +147,22 @@ async def outlook_callback(
     Échange le code contre des tokens et les sauvegarde en base.
     Redirige vers le frontend avec le résultat.
     """
+    # 0. Vérification que les credentials Microsoft sont configurés
+    if not settings.MICROSOFT_CLIENT_ID or not settings.MICROSOFT_CLIENT_SECRET:
+        log.error(
+            "[outlook_oauth] MICROSOFT_CLIENT_ID ou MICROSOFT_CLIENT_SECRET "
+            "non configuré — ajoutez ces variables d'environnement"
+        )
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/settings?outlook=error&reason=missing_config"
+        )
+
+    if not settings.MICROSOFT_REDIRECT_URL:
+        log.error("[outlook_oauth] MICROSOFT_REDIRECT_URL non configuré")
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/settings?outlook=error&reason=missing_config"
+        )
+
     # 1. Vérification du state
     try:
         agency_id = _verify_state(state)
@@ -168,12 +184,23 @@ async def outlook_callback(
                 "grant_type":    "authorization_code",
                 "scope":         " ".join(SCOPES),
             },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=15,
         )
-        token_resp.raise_for_status()
+
+        # Log le corps brut AVANT raise_for_status pour voir l'erreur Microsoft exacte
+        if not token_resp.ok:
+            log.error(
+                f"[outlook_oauth] Token exchange HTTP {token_resp.status_code} — "
+                f"réponse Microsoft : {token_resp.text}"
+            )
+            return RedirectResponse(
+                f"{settings.FRONTEND_URL}/settings?outlook=error&reason=token_exchange"
+            )
+
         tokens = token_resp.json()
     except Exception as e:
-        log.error(f"[outlook_oauth] Échange token échoué : {e}")
+        log.error(f"[outlook_oauth] Token exchange exception inattendue : {e}")
         return RedirectResponse(
             f"{settings.FRONTEND_URL}/settings?outlook=error&reason=token_exchange"
         )
