@@ -75,6 +75,7 @@ except ImportError:
 class LoginRequest(BaseModel):
     email: str
     password: str
+    terms_accepted: bool = False
 
 class RegisterResponse(BaseModel):
     message: str
@@ -99,6 +100,8 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/register", response_model=RegisterResponse)
 async def register(req: LoginRequest, db: Session = Depends(get_db)):
+    if not req.terms_accepted:
+        raise HTTPException(status_code=422, detail="Vous devez accepter les CGU pour vous inscrire.")
     if db.query(User).filter(User.email == req.email).first():
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
 
@@ -123,6 +126,7 @@ async def register(req: LoginRequest, db: Session = Depends(get_db)):
         agency_id=new_agency.id,
         role=UserRole.AGENCY_ADMIN,
         email_verified=False,
+        terms_accepted_at=datetime.utcnow(),
     )
     db.add(new_user)
     db.commit()

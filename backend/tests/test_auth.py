@@ -15,6 +15,7 @@ class TestRegister:
         resp = client.post("/auth/register", json={
             "email": "nouveau@test.com",
             "password": "TestPass123!",
+            "terms_accepted": True,
         })
         assert resp.status_code == 200
         assert "message" in resp.json()
@@ -25,11 +26,21 @@ class TestRegister:
         role_val = user.role.value if hasattr(user.role, "value") else user.role
         assert role_val == "agency_admin"
         assert user.email_verified is False  # doit vérifier son email
+        assert user.terms_accepted_at is not None
+
+    def test_sans_cgu_retourne_422(self, client):
+        resp = client.post("/auth/register", json={
+            "email": "nocgu@test.com",
+            "password": "TestPass123!",
+            "terms_accepted": False,
+        })
+        assert resp.status_code == 422
 
     def test_email_dupliqué_retourne_400(self, client, test_user):
         resp = client.post("/auth/register", json={
             "email": test_user.email,
             "password": "TestPass123!",
+            "terms_accepted": True,
         })
         assert resp.status_code == 400
 
@@ -37,6 +48,7 @@ class TestRegister:
         resp = client.post("/auth/register", json={
             "email": "weak@test.com",
             "password": "123",
+            "terms_accepted": True,
         })
         assert resp.status_code == 400
 

@@ -129,6 +129,7 @@ class User(Base):
     reset_password_token_hash = Column(String, nullable=True, index=True)
     reset_password_expires_at = Column(DateTime, nullable=True)
     reset_password_used_at = Column(DateTime, nullable=True)
+    terms_accepted_at = Column(DateTime, nullable=True)
     agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=True)
     role = Column(String, default=UserRole.AGENT.value)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

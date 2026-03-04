@@ -18,6 +18,8 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
+  const [termsAccepted, setTermsAccepted] = useState(false);
+
   // États UI
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -35,9 +37,10 @@ export default function Register() {
       cleanEmail.includes("@") &&
       password.length >= 1 &&
       confirmPassword.length >= 1 &&
+      termsAccepted &&
       !loading
     );
-  }, [email, password, confirmPassword, loading]);
+  }, [email, password, confirmPassword, termsAccepted, loading]);
 
   /**
    * handleSubmit :
@@ -71,7 +74,7 @@ export default function Register() {
       const res = await fetch(`${API_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, password }),
+        body: JSON.stringify({ email: cleanEmail, password, terms_accepted: termsAccepted }),
       });
 
       // Lecture JSON avec fallback si body vide
@@ -144,6 +147,27 @@ export default function Register() {
               autoComplete="new-password"
               required
             />
+          </div>
+
+          {/* Case à cocher CGU */}
+          <div style={{ margin: "16px 0", display: "flex", alignItems: "flex-start", gap: "10px" }}>
+            <input
+              id="terms-checkbox"
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              style={{ marginTop: "3px", width: "16px", height: "16px", flexShrink: 0, cursor: "pointer" }}
+            />
+            <label htmlFor="terms-checkbox" style={{ fontSize: "13px", color: "rgba(255,255,255,0.80)", cursor: "pointer", lineHeight: "1.4" }}>
+              J'ai lu et j'accepte les{" "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: "#a78bfa" }}>
+                Conditions Générales d'Utilisation
+              </a>{" "}
+              et la{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: "#a78bfa" }}>
+                Politique de confidentialité
+              </a>
+            </label>
           </div>
 
           {/* Boutons */}
