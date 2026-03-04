@@ -77,10 +77,10 @@ SCOPES = [
 # 🤖 CLASSIFICATION IA (Mistral)
 # ============================================================
 
-def mistral_is_relevant(sender: str, subject: str, body: str) -> bool:
+def mistral_is_real_estate_email(from_email: str, subject: str, body: str) -> bool:
     """
     Classification rapide via Mistral small.
-    Retourne True si l'email est pertinent pour une agence immobilière.
+    Retourne True si l'email est une vraie demande immobilière.
     Fail open : retourne True en cas d'erreur ou si MISTRAL_API_KEY absent.
     """
     if not MISTRAL_API_KEY:
@@ -88,13 +88,13 @@ def mistral_is_relevant(sender: str, subject: str, body: str) -> bool:
 
     prompt = (
         "Tu es un filtre pour une agence immobilière française.\n"
-        "Est-ce que cet email est une demande de location, "
-        "candidature locataire, demande de visite, ou envoi "
-        "de documents locatifs ?\n"
-        "Réponds uniquement OUI ou NON.\n"
-        f"Expéditeur: {sender}\n"
+        "Est-ce que cet email est une vraie demande liée à la location "
+        "immobilière ? (candidature locataire, demande de visite, "
+        "envoi de documents, question sur un bien)\n"
+        "Réponds UNIQUEMENT par OUI ou NON.\n"
+        f"Expéditeur: {from_email}\n"
         f"Sujet: {subject}\n"
-        f"Corps: {body[:500]}"
+        f"Corps (500 premiers caractères): {body[:500]}"
     )
 
     try:
@@ -108,7 +108,7 @@ def mistral_is_relevant(sender: str, subject: str, body: str) -> bool:
         log.info(f"[ia] Mistral réponse={answer!r} → {'✅ OUI' if is_relevant else '❌ NON'}")
         return is_relevant
     except Exception as e:
-        log.warning(f"[ia] Erreur Mistral (fail open) : {e}")
+        log.warning(f"⚠️ MISTRAL_ERROR — fail open : {e}")
         return True
 
 
@@ -438,8 +438,8 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
         return
 
     # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
-    if not mistral_is_relevant(sender, subject, body):
-        log.info(f"❌ IGNORE (IA) — {subject[:50]}")
+    if not mistral_is_real_estate_email(sender, subject, body):
+        log.info(f"❌ IGNORE (Mistral IA) — {subject[:50]}")
         _mark_as_read(service, message_id)
         return
 
@@ -734,8 +734,8 @@ def process_one_outlook_message(
         return
 
     # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
-    if not mistral_is_relevant(sender, subject, body):
-        log.info(f"❌ IGNORE (IA) Outlook — {subject[:50]}")
+    if not mistral_is_real_estate_email(sender, subject, body):
+        log.info(f"❌ IGNORE (Mistral IA) Outlook — {subject[:50]}")
         _mark_outlook_read(message_id, access_token)
         return
 
