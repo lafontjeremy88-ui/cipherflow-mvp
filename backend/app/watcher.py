@@ -23,6 +23,18 @@ from email.utils import parseaddr
 from enum import Enum
 
 import requests
+
+try:
+    import sentry_sdk as _sentry
+    _SENTRY_ENABLED = bool(os.getenv("SENTRY_DSN", ""))
+except ImportError:
+    _sentry = None  # type: ignore
+    _SENTRY_ENABLED = False
+
+
+def _capture(exc: Exception) -> None:
+    if _SENTRY_ENABLED and _sentry:
+        _sentry.capture_exception(exc)
 from mistralai import Mistral
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
@@ -485,6 +497,7 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
             log.warning(f"⚠️ Backend {resp.status_code} — {resp.text[:200]}")
     except Exception as e:
         log.error(f"❌ Erreur envoi backend : {e}")
+        _capture(e)
 
 
 def _mark_as_read(service, message_id: str):
@@ -780,6 +793,7 @@ def process_one_outlook_message(
             log.warning(f"⚠️ Backend {resp.status_code} — {resp.text[:200]}")
     except Exception as e:
         log.error(f"❌ Erreur envoi backend Outlook : {e}")
+        _capture(e)
 
 
 # ============================================================
@@ -867,6 +881,7 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
                     process_one_outlook_message(message, agency_id, outlook_email, access_token, agency_blacklist)
                 except Exception as e:
                     log.error(f"[outlook] Erreur traitement message {message.get('id')} : {e}")
+                    _capture(e)
 
                 time.sleep(PAUSE_BETWEEN_EMAILS_SEC)
 
@@ -918,8 +933,10 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
                     process_one_message(service, msg["id"], agency_id, gmail_email, agency_blacklist)
                 except HttpError as e:
                     log.error(f"[watcher] Erreur Gmail API message {msg['id']} : {e}")
+                    _capture(e)
                 except Exception as e:
                     log.error(f"[watcher] Erreur traitement message {msg['id']} : {e}")
+                    _capture(e)
 
                 time.sleep(PAUSE_BETWEEN_EMAILS_SEC)
 

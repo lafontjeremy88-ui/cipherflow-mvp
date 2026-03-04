@@ -40,6 +40,9 @@ redis==5.0.7
 rq==1.16.2
 slowapi==0.1.9
 
+# --- Monitoring ---
+sentry-sdk[fastapi]==2.20.0
+
 # --- Google Auth ---
 google-auth==2.30.0
 google-auth-oauthlib==1.2.0
