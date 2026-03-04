@@ -66,6 +66,7 @@ CHECK_SENDER_URL         = f"{BACKEND_URL}/watcher/check-sender"
 GOOGLE_TOKEN_REFRESH_URL  = "https://oauth2.googleapis.com/token"
 MS_TOKEN_URL              = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 MS_GRAPH_MESSAGES_URL     = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
+MS_GRAPH_JUNK_URL         = "https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -162,6 +163,12 @@ def is_system_blacklisted(sender: str) -> bool:
     return any(pattern in sender_lower for pattern in SYSTEM_BLACKLIST)
 
 
+def is_agency_blacklisted(sender: str, agency_blacklist: list[str]) -> bool:
+    """Vérifie si l'expéditeur correspond à un pattern de la blacklist agence."""
+    sender_lower = sender.lower()
+    return any(pattern.lower() in sender_lower for pattern in agency_blacklist)
+
+
 def is_known_sender(sender_email: str, agency_id: int) -> bool:
     """
     Vérifie si l'expéditeur est déjà connu en base (candidat existant).
@@ -193,24 +200,31 @@ def is_known_sender(sender_email: str, agency_id: int) -> bool:
     return False
 
 
-def decide_filter(sender: str, subject: str, body: str, attachments: list, agency_id: int) -> tuple[FilterDecision, list]:
+def decide_filter(sender: str, subject: str, body: str, attachments: list, agency_id: int, agency_blacklist: list[str] = []) -> tuple[FilterDecision, list]:
     """
     NOUVELLE STRATÉGIE : Règles séquentielles (OR logic).
     Retourne (decision, reasons)
-    
+
     Priorité :
     1. Blacklist système → IGNORE
+    1b. Blacklist agence → IGNORE
     2. A des pièces jointes → ACCEPT
     3. Mots-clés immobiliers → ACCEPT (sauf si spam)
     4. Expéditeur connu → ACCEPT
     5. Sinon → IGNORE
     """
     reasons = []
-    
+
     # ── 1️⃣ BLACKLIST SYSTÈME ──────────────────────────────────────────────────
     if is_system_blacklisted(sender):
         reasons.append("system_blacklist")
         log.info(f"❌ IGNORE (blacklist système) — {sender}")
+        return FilterDecision.IGNORE, reasons
+
+    # ── 1b. BLACKLIST AGENCE ───────────────────────────────────────────────────
+    if agency_blacklist and is_agency_blacklisted(sender, agency_blacklist):
+        reasons.append("agency_blacklist")
+        log.info(f"❌ IGNORE (blacklist agence) — {sender}")
         return FilterDecision.IGNORE, reasons
     
     # ── 2️⃣ A DES PIÈCES JOINTES ───────────────────────────────────────────────
@@ -391,7 +405,7 @@ def download_attachment(service, user_id: str, message_id: str, attachment_id: s
 # 🚀 TRAITEMENT D'UN EMAIL
 # ============================================================
 
-def process_one_message(service, message_id: str, agency_id: int, gmail_email: str):
+def process_one_message(service, message_id: str, agency_id: int, gmail_email: str, agency_blacklist: list[str] = []):
     """Traite un email Gmail API et l'envoie au webhook backend."""
 
     msg_data = service.users().messages().get(
@@ -429,8 +443,8 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
             log.error(f"   ❌ Erreur téléchargement PJ {att['filename']} : {e}")
 
     # ── NOUVELLE STRATÉGIE DE FILTRAGE ────────────────────────────────────────
-    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id)
-    
+    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id, agency_blacklist)
+
     log.info(f"🧠 Décision={decision.value} | Raisons={reasons} | agency={agency_id}")
 
     if decision == FilterDecision.IGNORE:
@@ -699,6 +713,7 @@ def process_one_outlook_message(
     agency_id: int,
     outlook_email: str,
     access_token: str,
+    agency_blacklist: list[str] = [],
 ):
     """Traite un email Outlook (Graph API) et l'envoie au webhook backend."""
     message_id = message.get("id", "")
@@ -726,7 +741,7 @@ def process_one_outlook_message(
     attachments = _get_outlook_attachments(message_id, access_token, has_att)
 
     # ── Filtrage métier (même logique que Gmail) ───────────────────────────────
-    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id)
+    decision, reasons = decide_filter(sender, subject, body, attachments, agency_id, agency_blacklist)
     log.info(f"🧠 Outlook Décision={decision.value} | Raisons={reasons} | agency={agency_id}")
 
     if decision == FilterDecision.IGNORE:
@@ -773,8 +788,9 @@ def process_one_outlook_message(
 
 def watch_agency_outlook(config: dict, stop_event: threading.Event):
     """Thread de surveillance Outlook pour une agence."""
-    agency_id     = config["agency_id"]
-    outlook_email = config.get("outlook_email", "")
+    agency_id        = config["agency_id"]
+    outlook_email    = config.get("outlook_email", "")
+    agency_blacklist = config.get("agency_blacklist", [])
 
     log.info(f"👀 Watcher Outlook démarré — agency={agency_id} email={outlook_email}")
 
@@ -794,26 +810,25 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
                 stop_event.wait(POLL_INTERVAL_SEC)
                 continue
 
-            # Récupère les messages non lus de l'inbox
-            resp = requests.get(
-                MS_GRAPH_MESSAGES_URL,
-                params={
-                    "$filter":  "isRead eq false",
-                    "$top":     str(MAX_EMAILS_PER_LOOP),
-                    "$select":  "id,subject,from,body,hasAttachments,isRead",
-                },
-                headers=_outlook_headers(access_token),
-                timeout=20,
-            )
+            # Paramètres communs pour les deux dossiers
+            msg_params = {
+                "$filter": "isRead eq false",
+                "$top":    str(MAX_EMAILS_PER_LOOP),
+                "$select": "id,subject,from,body,hasAttachments,isRead",
+            }
 
-            if resp.status_code == 401:
+            # Inbox
+            resp_inbox = requests.get(MS_GRAPH_MESSAGES_URL, params=msg_params,
+                                      headers=_outlook_headers(access_token), timeout=20)
+
+            if resp_inbox.status_code == 401:
                 log.warning(f"[outlook] 401 — forçage refresh token agency={agency_id}")
                 config["outlook_token_expiry"] = None
                 stop_event.wait(5)
                 continue
 
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 60))
+            if resp_inbox.status_code == 429:
+                retry_after = int(resp_inbox.headers.get("Retry-After", 60))
                 retry_after = min(retry_after, 300)  # cap à 5 minutes
                 log.warning(
                     f"[outlook] 429 Rate limit — attente {retry_after}s agency={agency_id}"
@@ -821,19 +836,35 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
                 stop_event.wait(retry_after)
                 continue
 
-            if not resp.ok:
-                log.warning(f"⚠️ Graph API {resp.status_code} agency={agency_id} — {resp.text[:200]}")
+            if not resp_inbox.ok:
+                log.warning(f"⚠️ Graph API {resp_inbox.status_code} agency={agency_id} — {resp_inbox.text[:200]}")
                 stop_event.wait(POLL_INTERVAL_SEC)
                 continue
 
-            messages = resp.json().get("value", [])
-            log.info(f"[outlook] {len(messages)} email(s) non lus — agency={agency_id}")
+            # JunkEmail (non-fatal si erreur)
+            resp_junk = requests.get(MS_GRAPH_JUNK_URL, params=msg_params,
+                                     headers=_outlook_headers(access_token), timeout=20)
+            if not resp_junk.ok:
+                log.warning(f"[outlook] JunkEmail HTTP {resp_junk.status_code} (non-fatal) agency={agency_id}")
+
+            # Fusion + déduplication par id
+            inbox_msgs = resp_inbox.json().get("value", []) if resp_inbox.ok else []
+            junk_msgs  = resp_junk.json().get("value", []) if resp_junk.ok else []
+            seen_ids = set()
+            messages = []
+            for m in inbox_msgs + junk_msgs:
+                if m["id"] not in seen_ids:
+                    seen_ids.add(m["id"])
+                    messages.append(m)
+
+            log.info(f"[outlook] {len(messages)} email(s) non lus "
+                     f"(inbox={len(inbox_msgs)}, spam={len(junk_msgs)}) — agency={agency_id}")
 
             for message in messages:
                 if stop_event.is_set():
                     break
                 try:
-                    process_one_outlook_message(message, agency_id, outlook_email, access_token)
+                    process_one_outlook_message(message, agency_id, outlook_email, access_token, agency_blacklist)
                 except Exception as e:
                     log.error(f"[outlook] Erreur traitement message {message.get('id')} : {e}")
 
@@ -853,8 +884,9 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
 
 def watch_agency_gmail(config: dict, stop_event: threading.Event):
     """Thread de surveillance Gmail pour une agence."""
-    agency_id   = config["agency_id"]
-    gmail_email = config.get("gmail_email", "me")
+    agency_id       = config["agency_id"]
+    gmail_email     = config.get("gmail_email", "me")
+    agency_blacklist = config.get("agency_blacklist", [])
 
     log.info(f"👀 Watcher Gmail démarré — agency={agency_id} email={gmail_email}")
 
@@ -883,7 +915,7 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
                 if stop_event.is_set():
                     break
                 try:
-                    process_one_message(service, msg["id"], agency_id, gmail_email)
+                    process_one_message(service, msg["id"], agency_id, gmail_email, agency_blacklist)
                 except HttpError as e:
                     log.error(f"[watcher] Erreur Gmail API message {msg['id']} : {e}")
                 except Exception as e:
