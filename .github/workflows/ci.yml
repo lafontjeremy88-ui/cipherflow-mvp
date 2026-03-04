@@ -1,0 +1,58 @@
+name: CI — Tests
+
+on:
+  push:
+    branches: ["master", "main", "develop"]
+  pull_request:
+    branches: ["master", "main"]
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+          JWT_SECRET_KEY: "ci-test-secret-key-32chars-minimum"
+          OAUTH_STATE_SECRET: "ci-oauth-state-secret"
+          FERNET_KEY: "RrdcRxBr2IIxHpfU6EBYxNPAp0Hk_j0-z-9nEaFWJgo="
+          WATCHER_SECRET: "ci-watcher-secret"
+          MISTRAL_API_KEY: "ci-mistral-key"
+          RESEND_API_KEY: "ci-resend-key"
+          RESEND_FROM_EMAIL: "no-reply@cipherflow.company"
+          FRONTEND_URL: "http://localhost:5173"
+          ENABLE_RETENTION_WORKER: "false"
+          ENVIRONMENT: "test"
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: backend/.pytest_cache/
+          retention-days: 7
