@@ -300,6 +300,22 @@ class AgencyBlacklist(Base):
 
 
 # ============================================================
+# ⚠️ FEEDBACK EMAIL (signalement erreur de classification)
+# ============================================================
+
+class EmailFeedback(Base):
+    __tablename__ = "email_feedbacks"
+
+    id                = Column(Integer, primary_key=True)
+    email_analysis_id = Column(Integer, ForeignKey("email_analyses.id"), nullable=False, index=True)
+    agency_id         = Column(Integer, ForeignKey("agencies.id"),         nullable=False, index=True)
+    reported_by       = Column(Integer, ForeignKey("users.id"),            nullable=True)
+    reason            = Column(String(255), nullable=False)
+    auto_blacklisted  = Column(Boolean, default=False, nullable=False)
+    created_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ============================================================
 # 💰 FACTURATION
 # ============================================================
 

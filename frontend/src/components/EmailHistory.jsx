@@ -178,6 +178,7 @@ export default function EmailHistory() {
   const [linkingTenant, setLinkingTenant] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
+  const [reportModal, setReportModal] = useState(null); // { emailId } | null
 
   const urlEmailId = searchParams.get("emailId");
   const urlCategory = searchParams.get("category");
@@ -528,6 +529,31 @@ export default function EmailHistory() {
     }
   }
 
+  async function handleReport(emailId, reason) {
+    if (!emailId || !reason) return;
+    setActionError("");
+    setActionSuccess("");
+    try {
+      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+      const res = await authFetch(`${API_BASE}/feedback/email/${emailId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const extra = data.auto_blacklisted ? " (domaine auto-blacklisté)" : "";
+        setActionSuccess(`Signalement envoyé.${extra}`);
+      } else {
+        setActionError("Erreur lors du signalement.");
+      }
+    } catch {
+      setActionError("Erreur réseau.");
+    } finally {
+      setReportModal(null);
+    }
+  }
+
   async function handleBlacklist(senderEmail) {
     if (!senderEmail) return;
     const atIdx = senderEmail.indexOf("@");
@@ -553,6 +579,16 @@ export default function EmailHistory() {
   }
 
   return (
+    <>
+    {/* ── Modal de signalement ─────────────────────────────────────────────── */}
+    {reportModal && (
+      <ReportModal
+        emailId={reportModal.emailId}
+        onConfirm={(reason) => handleReport(reportModal.emailId, reason)}
+        onClose={() => setReportModal(null)}
+      />
+    )}
+
     <div className="page email-history">
       <div className="page-header">
         <div>
@@ -856,6 +892,16 @@ export default function EmailHistory() {
                       >
                         🚫 Blacklister ce domaine
                       </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setReportModal({ emailId: selectedId })}
+                        disabled={sending || deleting}
+                        title="Signaler une erreur de traitement"
+                      >
+                        ⚠️ Signaler
+                      </button>
                     </div>
                   </div>
 
@@ -890,5 +936,113 @@ export default function EmailHistory() {
         </div>
       )}
     </div>
+    </>
   );
 }
+
+// ── Composant modal de signalement ────────────────────────────────────────────
+
+const REPORT_REASONS = [
+  { value: "non_immobilier",        label: "Email hors-sujet (pas une candidature locative)" },
+  { value: "agence",                label: "Email de ma propre agence (boucle interne)" },
+  { value: "mauvaise_classification", label: "Classifié incorrectement par l'IA" },
+  { value: "autre",                 label: "Autre raison" },
+];
+
+function ReportModal({ emailId, onConfirm, onClose }) {
+  const [reason, setReason] = React.useState("");
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={modalStyles.card} onClick={(e) => e.stopPropagation()}>
+        <h3 style={modalStyles.title}>⚠️ Signaler un problème</h3>
+        <p style={modalStyles.desc}>
+          Indiquez pourquoi cet email a été mal traité. Votre retour améliore la classification IA.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px", margin: "1rem 0" }}>
+          {REPORT_REASONS.map((r) => (
+            <label key={r.value} style={modalStyles.option}>
+              <input
+                type="radio"
+                name="reason"
+                value={r.value}
+                checked={reason === r.value}
+                onChange={() => setReason(r.value)}
+                style={{ marginRight: 8 }}
+              />
+              {r.label}
+            </label>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+          <button style={modalStyles.btnCancel} onClick={onClose}>
+            Annuler
+          </button>
+          <button
+            style={{ ...modalStyles.btnConfirm, opacity: reason ? 1 : 0.5 }}
+            onClick={() => reason && onConfirm(reason)}
+            disabled={!reason}
+          >
+            Envoyer le signalement
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const modalStyles = {
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.65)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+  },
+  card: {
+    background: "var(--card-bg, #1a1d2e)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 12,
+    padding: "1.75rem",
+    maxWidth: 420,
+    width: "90%",
+  },
+  title: {
+    color: "var(--text, #f1f5f9)",
+    marginBottom: "0.5rem",
+    fontSize: "1.1rem",
+  },
+  desc: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: "0.9rem",
+    lineHeight: 1.5,
+  },
+  option: {
+    color: "rgba(255,255,255,0.8)",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    fontSize: "0.9rem",
+  },
+  btnCancel: {
+    padding: "8px 16px",
+    background: "transparent",
+    color: "rgba(255,255,255,0.6)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 6,
+    cursor: "pointer",
+  },
+  btnConfirm: {
+    padding: "8px 16px",
+    background: "#f59e0b",
+    color: "#000",
+    border: "none",
+    borderRadius: 6,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+};

@@ -20,6 +20,7 @@ from app.api.gmail_oauth_routes import router as gmail_router
 from app.api.outlook_oauth_routes import router as outlook_router
 from app.api.watcher_routes import router as watcher_router
 from app.api.admin_routes import router as admin_router
+from app.api.feedback_routes import router as feedback_router
 from app.services.retention_service import retention_worker
 
 log = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ app.include_router(file_router)
 app.include_router(tenant_router)
 app.include_router(invoice_router)
 app.include_router(settings_router)
+app.include_router(feedback_router)
 
 
 @app.get("/health")
