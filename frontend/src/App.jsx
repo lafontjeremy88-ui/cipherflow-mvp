@@ -303,8 +303,26 @@ function AppInner() {
     }
   }, [isAuthed, authChecked, location.pathname, navigate]);
 
-  // Pendant le check initial, on ne rend rien (évite le flash de /login)
-  if (!authChecked) return null;
+  // Pendant le check initial : spinner centré (évite le flash de /login)
+  if (!authChecked) return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      height: "100vh",
+      background: "var(--bg, #0f1117)",
+    }}>
+      <div style={{
+        width: 36,
+        height: 36,
+        borderRadius: "50%",
+        border: "3px solid rgba(255,255,255,0.10)",
+        borderTopColor: "var(--accent, #6366f1)",
+        animation: "cf-spin 0.7s linear infinite",
+      }} />
+      <style>{`@keyframes cf-spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
 
   return (
     <Routes>

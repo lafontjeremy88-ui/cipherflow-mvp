@@ -23,7 +23,7 @@ from email.utils import parseaddr
 from enum import Enum
 
 import requests
-from google import genai as google_genai
+from mistralai import Mistral
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -42,7 +42,7 @@ GOOGLE_CLIENT_ID         = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET     = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 MICROSOFT_CLIENT_ID      = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_CLIENT_SECRET  = os.getenv("MICROSOFT_CLIENT_SECRET", "")
-GEMINI_API_KEY           = os.getenv("GEMINI_API_KEY", "")
+MISTRAL_API_KEY          = os.getenv("MISTRAL_API_KEY", "")
 AUTO_SEND                = os.getenv("AUTO_SEND", "true").lower() == "true"
 MAX_EMAILS_PER_LOOP      = int(os.getenv("MAX_EMAILS_PER_LOOP", "5"))
 PAUSE_BETWEEN_EMAILS_SEC = float(os.getenv("PAUSE_BETWEEN_EMAILS_SEC", "2"))
@@ -74,20 +74,20 @@ SCOPES = [
 
 
 # ============================================================
-# 🤖 CLASSIFICATION IA (Gemini)
+# 🤖 CLASSIFICATION IA (Mistral)
 # ============================================================
 
-def gemini_is_relevant(sender: str, subject: str, body: str) -> bool:
+def mistral_is_relevant(sender: str, subject: str, body: str) -> bool:
     """
-    Classification rapide via Gemini Flash.
+    Classification rapide via Mistral small.
     Retourne True si l'email est pertinent pour une agence immobilière.
-    Fail open : retourne True en cas d'erreur ou si GEMINI_API_KEY absent.
+    Fail open : retourne True en cas d'erreur ou si MISTRAL_API_KEY absent.
     """
-    if not GEMINI_API_KEY:
+    if not MISTRAL_API_KEY:
         return True
 
     prompt = (
-        "Tu es un filtre pour une agence immobilière. "
+        "Tu es un filtre pour une agence immobilière française.\n"
         "Est-ce que cet email est une demande de location, "
         "candidature locataire, demande de visite, ou envoi "
         "de documents locatifs ?\n"
@@ -98,17 +98,17 @@ def gemini_is_relevant(sender: str, subject: str, body: str) -> bool:
     )
 
     try:
-        client = google_genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
+        client = Mistral(api_key=MISTRAL_API_KEY)
+        response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[{"role": "user", "content": prompt}],
         )
-        answer = (response.text or "").strip().upper()
+        answer = (response.choices[0].message.content or "").strip().upper()
         is_relevant = answer.startswith("OUI")
-        log.info(f"[ia] Gemini réponse={answer!r} → {'✅ OUI' if is_relevant else '❌ NON'}")
+        log.info(f"[ia] Mistral réponse={answer!r} → {'✅ OUI' if is_relevant else '❌ NON'}")
         return is_relevant
     except Exception as e:
-        log.warning(f"[ia] Erreur Gemini (fail open) : {e}")
+        log.warning(f"[ia] Erreur Mistral (fail open) : {e}")
         return True
 
 
@@ -437,9 +437,9 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
         _mark_as_read(service, message_id)
         return
 
-    # ── CLASSIFICATION IA (Gemini) ─────────────────────────────────────────────
-    if not gemini_is_relevant(sender, subject, body):
-        log.info(f"❌ IGNORE IA — {subject[:50]}")
+    # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
+    if not mistral_is_relevant(sender, subject, body):
+        log.info(f"❌ IGNORE (IA) — {subject[:50]}")
         _mark_as_read(service, message_id)
         return
 
@@ -733,9 +733,9 @@ def process_one_outlook_message(
         _mark_outlook_read(message_id, access_token)
         return
 
-    # ── CLASSIFICATION IA (Gemini) ─────────────────────────────────────────────
-    if not gemini_is_relevant(sender, subject, body):
-        log.info(f"❌ IGNORE IA Outlook — {subject[:50]}")
+    # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
+    if not mistral_is_relevant(sender, subject, body):
+        log.info(f"❌ IGNORE (IA) Outlook — {subject[:50]}")
         _mark_outlook_read(message_id, access_token)
         return
 

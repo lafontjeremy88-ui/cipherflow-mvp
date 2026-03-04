@@ -18,7 +18,7 @@ itsdangerous==2.2.0
 email-validator==2.2.0
 
 # --- AI & External Services ---
-google-genai==1.5.0
+mistralai>=1.0.0
 resend==2.3.0
 
 # --- File & Document Handling ---
@@ -44,5 +44,3 @@ slowapi==0.1.9
 google-auth==2.30.0
 google-auth-oauthlib==1.2.0
 google-api-python-client==2.131.0
-
-mistralai>=1.0.0

@@ -4,7 +4,7 @@ Orchestrateur du pipeline email CipherFlow.
 
 Ordre d'exécution :
   1. Analyse pièces jointes (indépendantes, erreur isolée)
-  2. Analyse email (Gemini)
+  2. Analyse email (Mistral)
   3. Sauvegarde EmailAnalysis
   4. Création / récupération dossier locataire
   5. Lien email ↔ dossier
@@ -305,7 +305,7 @@ async def _process_attachment(
 
     if not doc_result.success:
         log.warning(
-            f"[pipeline] ⚠️ Analyse Gemini échouée pour {filename} "
+            f"[pipeline] ⚠️ Analyse Mistral échouée pour {filename} "
             f"(error={doc_result.error}) — "
             f"le fichier sera sauvegardé avec doc_type='other', "
             f"la checklist ne sera pas mise à jour pour ce document."

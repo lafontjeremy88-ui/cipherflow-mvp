@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_db
 from app.database.database import get_db
 from app.database.models import (
-    DocQuality, FileAnalysis, TenantDocumentLink,
+    DocQuality, EmailAnalysis, FileAnalysis, TenantDocumentLink,
     TenantEmailLink, TenantFile, TenantFileStatus, User,
 )
 from app.services.storage_service import upload_file as r2_upload
@@ -118,6 +118,69 @@ async def list_tenant_files(
         .filter(TenantFile.agency_id == current_user.agency_id)
         .order_by(TenantFile.id.desc())
         .all()
+    )
+
+
+@router.post("/from-email/{email_id}", response_model=TenantFileDetail)
+async def create_tenant_file_from_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """
+    Crée ou retrouve le dossier locataire associé à un email analysé.
+    - Si un dossier ouvert existe déjà pour cet expéditeur → le réutilise.
+    - Sinon → crée un nouveau dossier.
+    - Crée le lien email ↔ dossier s'il n'existe pas encore.
+    """
+    # 1. Vérifie que l'email appartient à l'agence courante
+    email = db.query(EmailAnalysis).filter(
+        EmailAnalysis.id == email_id,
+        EmailAnalysis.agency_id == current_user.agency_id,
+    ).first()
+    if not email:
+        raise HTTPException(404, "Email introuvable")
+
+    sender = (email.sender_email or "").strip().lower() or None
+
+    # 2. Cherche un dossier ouvert existant pour cet expéditeur
+    tf = None
+    if sender:
+        tf = db.query(TenantFile).filter(
+            TenantFile.agency_id == current_user.agency_id,
+            TenantFile.candidate_email == sender,
+            TenantFile.is_closed == False,
+        ).first()
+
+    if not tf:
+        tf = TenantFile(
+            agency_id=current_user.agency_id,
+            candidate_email=sender,
+            status=TenantFileStatus.NEW,
+        )
+        db.add(tf)
+        db.commit()
+        db.refresh(tf)
+
+    # 3. Crée le lien email ↔ dossier si inexistant
+    existing_link = db.query(TenantEmailLink).filter(
+        TenantEmailLink.tenant_file_id == tf.id,
+        TenantEmailLink.email_analysis_id == email_id,
+    ).first()
+    if not existing_link:
+        db.add(TenantEmailLink(tenant_file_id=tf.id, email_analysis_id=email_id))
+        db.commit()
+        db.refresh(tf)
+
+    email_ids = [l.email_analysis_id for l in tf.email_links]
+    file_ids  = [l.file_analysis_id  for l in tf.document_links]
+
+    return TenantFileDetail(
+        id=tf.id, status=_tf_status(tf),
+        candidate_email=tf.candidate_email, candidate_name=tf.candidate_name,
+        checklist_json=tf.checklist_json, risk_level=tf.risk_level,
+        created_at=tf.created_at, updated_at=tf.updated_at,
+        email_ids=email_ids, file_ids=file_ids,
     )
 
 

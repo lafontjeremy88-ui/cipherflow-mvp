@@ -19,6 +19,7 @@ from app.google_oauth import router as google_oauth_router, attach_oauth
 from app.api.gmail_oauth_routes import router as gmail_router
 from app.api.outlook_oauth_routes import router as outlook_router
 from app.api.watcher_routes import router as watcher_router
+from app.api.admin_routes import router as admin_router
 from app.services.retention_service import retention_worker
 
 log = logging.getLogger(__name__)
@@ -176,6 +177,7 @@ async def email_webhook(request: Request):
 
 # ── Routers ────────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(google_oauth_router)
 app.include_router(gmail_router)
 app.include_router(outlook_router)
