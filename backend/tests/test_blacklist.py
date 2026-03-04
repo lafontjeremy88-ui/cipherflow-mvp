@@ -6,9 +6,12 @@ Tests de la blacklist personnalisée par agence.
 - Vérification GET /watcher/configs inclut agency_blacklist
 - Unit test de is_agency_blacklisted()
 """
+import os
 import pytest
 from app.database.models import AgencyBlacklist
 from app.watcher import is_agency_blacklisted
+
+_WATCHER_SECRET = os.environ.get("WATCHER_SECRET", "test-secret-ci")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -125,7 +128,7 @@ class TestWatcherConfigs:
 
         resp = client.get(
             "/watcher/configs",
-            params={"secret": "test-watcher-secret"},
+            params={"secret": _WATCHER_SECRET},
         )
         assert resp.status_code == 200
         configs = resp.json()

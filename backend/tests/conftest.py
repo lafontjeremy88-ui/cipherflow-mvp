@@ -16,21 +16,23 @@ from unittest.mock import patch
 
 # ── Env vars AVANT tout import app ────────────────────────────────────────────
 # Doit être positionné ici (module-level) avant le premier import de l'app.
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key-for-testing-only-32c")
-os.environ.setdefault("OAUTH_STATE_SECRET", "test-oauth-state-secret-key-for-hmac")
-os.environ.setdefault("FERNET_KEY", "RrdcRxBr2IIxHpfU6EBYxNPAp0Hk_j0-z-9nEaFWJgo=")
-os.environ.setdefault("WATCHER_SECRET", "test-watcher-secret")
-os.environ.setdefault("MISTRAL_API_KEY", "test-mistral-api-key")
-os.environ.setdefault("RESEND_API_KEY", "test-resend-api-key")
-os.environ.setdefault("RESEND_FROM_EMAIL", "noreply@test.com")
-os.environ.setdefault("GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-os.environ.setdefault("GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-os.environ.setdefault("GOOGLE_OAUTH_REDIRECT_URL", "http://localhost:8000/auth/google/callback")
-os.environ.setdefault("FRONTEND_URL", "http://localhost:5173")
-os.environ.setdefault("BACKEND_URL", "http://localhost:8000")
-# Désactive le worker RGPD et Redis en tests
+# Ces valeurs sont FORCÉES (pas setdefault) pour garantir que l'app et les
+# tests voient exactement le même secret, quel que soit l'environnement CI.
+os.environ["DATABASE_URL"]          = "sqlite:///:memory:"
+os.environ["WATCHER_SECRET"]        = "test-secret-ci"
 os.environ["ENABLE_RETENTION_WORKER"] = "false"
+
+os.environ.setdefault("JWT_SECRET_KEY",              "test-jwt-secret-key-for-testing-only-32c")
+os.environ.setdefault("OAUTH_STATE_SECRET",          "test-oauth-state-secret-key-for-hmac")
+os.environ.setdefault("FERNET_KEY",                  "RrdcRxBr2IIxHpfU6EBYxNPAp0Hk_j0-z-9nEaFWJgo=")
+os.environ.setdefault("MISTRAL_API_KEY",             "test-mistral-api-key")
+os.environ.setdefault("RESEND_API_KEY",              "test-resend-api-key")
+os.environ.setdefault("RESEND_FROM_EMAIL",           "noreply@test.com")
+os.environ.setdefault("GOOGLE_OAUTH_CLIENT_ID",      "test-google-client-id")
+os.environ.setdefault("GOOGLE_OAUTH_CLIENT_SECRET",  "test-google-client-secret")
+os.environ.setdefault("GOOGLE_OAUTH_REDIRECT_URL",   "http://localhost:8000/auth/google/callback")
+os.environ.setdefault("FRONTEND_URL",                "http://localhost:5173")
+os.environ.setdefault("BACKEND_URL",                 "http://localhost:8000")
 
 from app.database.database import get_db
 from app.database.models import Base, Agency, User, UserRole, AppSettings

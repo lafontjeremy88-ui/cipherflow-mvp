@@ -8,10 +8,12 @@ POST /webhook/email
   - Secret vide    → 403
   - Alias inconnu  → 422
 """
+import os
 import pytest
 from unittest.mock import patch, MagicMock
 
-WATCHER_SECRET = "test-watcher-secret"
+# Lu depuis l'env pour correspondre exactement à ce qu'a chargé app.main
+WATCHER_SECRET = os.environ.get("WATCHER_SECRET", "test-secret-ci")
 
 BASE_PAYLOAD = {
     "from_email": "candidat@test.com",
