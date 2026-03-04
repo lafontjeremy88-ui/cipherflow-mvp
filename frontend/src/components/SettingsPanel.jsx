@@ -301,7 +301,20 @@ function OutlookConnectSection({ authFetch }) {
       window.history.replaceState({}, "", window.location.pathname);
     } else if (outlookResult === "error") {
       const reason = params.get("reason") || "inconnu";
-      setMessage({ type: "error", text: "Erreur de connexion Outlook (" + reason + ")" });
+      const OUTLOOK_ERROR_MESSAGES = {
+        server_error:          "Connexion Outlook annulée ou refusée. Réessayez.",
+        access_denied:         "Connexion Outlook annulée ou refusée. Réessayez.",
+        temporarily_unavailable: "Connexion Outlook annulée ou refusée. Réessayez.",
+        missing_config:        "Configuration Microsoft manquante. Contactez l'administrateur.",
+        invalid_state:         "Session expirée. Relancez la connexion depuis le bouton.",
+        no_code:               "Connexion Outlook annulée ou refusée. Réessayez.",
+        already_connected:     "Cette boîte Outlook est déjà connectée à une autre agence.",
+        token_exchange:        "Erreur lors de l'échange de tokens. Vérifiez la configuration Azure.",
+        missing_tokens:        "Microsoft n'a pas fourni de refresh token. Vérifiez les scopes et le consentement.",
+      };
+      const text = OUTLOOK_ERROR_MESSAGES[reason]
+        || ("Erreur de connexion Outlook. Réessayez. (" + reason + ")");
+      setMessage({ type: "error", text });
       window.history.replaceState({}, "", window.location.pathname);
     }
 

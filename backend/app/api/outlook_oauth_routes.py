@@ -17,6 +17,7 @@ Scopes demandés :
 
 import logging
 from datetime import datetime, timedelta
+from typing import Optional
 from urllib.parse import urlencode
 
 import requests
@@ -138,16 +139,41 @@ async def outlook_connect(
 
 @router.get("/callback")
 async def outlook_callback(
-    code:  str = Query(...),
-    state: str = Query(...),
-    db:    Session = Depends(get_db),
+    code:              Optional[str] = Query(None),
+    state:             Optional[str] = Query(None),
+    error:             Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
+    db:                Session = Depends(get_db),
 ):
     """
     Callback Microsoft OAuth.
-    Échange le code contre des tokens et les sauvegarde en base.
-    Redirige vers le frontend avec le résultat.
+    Microsoft peut rappeler avec ?code=...&state=... (succès)
+    ou avec ?error=...&state=... (erreur côté Microsoft).
     """
-    # 0. Vérification que les credentials Microsoft sont configurés
+    # 0-a. Erreur renvoyée directement par Microsoft
+    if error:
+        log.warning(
+            f"[outlook_oauth] Erreur Microsoft dans le callback : {error}"
+            + (f" — {error_description}" if error_description else "")
+        )
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/settings?outlook=error&reason={error}"
+        )
+
+    # 0-b. Paramètres obligatoires manquants
+    if not code:
+        log.error("[outlook_oauth] Callback reçu sans code ni error — requête invalide")
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/settings?outlook=error&reason=no_code"
+        )
+
+    if not state:
+        log.error("[outlook_oauth] Callback reçu sans state")
+        return RedirectResponse(
+            f"{settings.FRONTEND_URL}/settings?outlook=error&reason=invalid_state"
+        )
+
+    # Vérification que les credentials Microsoft sont configurés
     if not settings.MICROSOFT_CLIENT_ID or not settings.MICROSOFT_CLIENT_SECRET:
         log.error(
             "[outlook_oauth] MICROSOFT_CLIENT_ID ou MICROSOFT_CLIENT_SECRET "
