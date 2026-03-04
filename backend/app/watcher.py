@@ -91,6 +91,11 @@ SYSTEM_BLACKLIST = [
     "noreply@gitlab",
     "notification@",
     "notifications@",
+    # Microsoft système — ignorés avant toute recherche de mots-clés
+    "@microsoft.com",
+    "@accountprotection.microsoft.com",
+    "@emailnotifications.microsoft.com",
+    "no-reply@microsoft.com",
 ]
 
 # ── Mots-clés immobiliers (sujet OU corps) ───────────────────────────────────
@@ -524,19 +529,27 @@ def refresh_outlook_token_if_needed(config: dict) -> dict | None:
 # ============================================================
 
 def _outlook_headers(access_token: str) -> dict:
-    return {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
 
 
 def _mark_outlook_read(message_id: str, access_token: str):
     """Marque un email Outlook comme lu via Graph API."""
     try:
         url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
-        requests.patch(
+        resp = requests.patch(
             url,
             json={"isRead": True},
             headers=_outlook_headers(access_token),
             timeout=10,
         )
+        if resp.ok:
+            log.info(f"[outlook] ✅ marqué lu id={message_id}")
+        else:
+            log.warning(f"[outlook] Impossible de marquer comme lu {message_id} — HTTP {resp.status_code} : {resp.text[:200]}")
     except Exception as e:
         log.warning(f"[outlook] Impossible de marquer comme lu {message_id} : {e}")
 
