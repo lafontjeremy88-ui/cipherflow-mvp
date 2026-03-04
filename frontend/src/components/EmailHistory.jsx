@@ -528,6 +528,30 @@ export default function EmailHistory() {
     }
   }
 
+  async function handleBlacklist(senderEmail) {
+    if (!senderEmail) return;
+    const atIdx = senderEmail.indexOf("@");
+    const pattern = atIdx !== -1 ? senderEmail.slice(atIdx) : senderEmail;
+    if (!window.confirm(`Blacklister le domaine "${pattern}" pour ignorer tous les prochains emails de cette source ?`)) return;
+    setActionError("");
+    setActionSuccess("");
+    try {
+      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+      const res = await authFetch(API_BASE + "/settings/blacklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern }),
+      });
+      if (res.ok) {
+        setActionSuccess(`Domaine "${pattern}" ajouté à la blacklist.`);
+      } else {
+        setActionError("Erreur lors de l'ajout à la blacklist.");
+      }
+    } catch {
+      setActionError("Erreur réseau.");
+    }
+  }
+
   return (
     <div className="page email-history">
       <div className="page-header">
@@ -818,6 +842,19 @@ export default function EmailHistory() {
                         disabled={sending || deleting}
                       >
                         {deleting ? "Suppression…" : "Supprimer de la liste"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => handleBlacklist(
+                          selected?.sender_email || selected?.from_email || selected?.from ||
+                          selectedFromList?.sender_email || selectedFromList?.from_email || selectedFromList?.from || ""
+                        )}
+                        disabled={sending || deleting}
+                        title="Blacklister le domaine de cet expéditeur"
+                      >
+                        🚫 Blacklister ce domaine
                       </button>
                     </div>
                   </div>

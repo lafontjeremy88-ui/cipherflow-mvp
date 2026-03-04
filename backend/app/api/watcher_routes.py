@@ -114,6 +114,9 @@ async def get_watcher_configs(
 
     result = []
     for c in configs:
+        blacklist = db.query(models.AgencyBlacklist).filter(
+            models.AgencyBlacklist.agency_id == c.agency_id
+        ).all()
         result.append({
             "agency_id":              c.agency_id,
             # ── Gmail ──────────────────────────────────────────────────────────
@@ -128,6 +131,8 @@ async def get_watcher_configs(
             "outlook_email":          c.outlook_email,
             # ── IMAP ───────────────────────────────────────────────────────────
             "enabled":                c.enabled,
+            # ── Blacklist agence ───────────────────────────────────────────────
+            "agency_blacklist":       [b.pattern for b in blacklist],
         })
 
     gmail_count   = sum(1 for c in configs if c.gmail_refresh_token)
