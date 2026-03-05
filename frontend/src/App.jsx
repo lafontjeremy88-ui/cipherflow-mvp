@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Component } from "react";
 import {
   Routes,
   Route,
@@ -16,6 +16,8 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LegalNotice from "./pages/LegalNotice";
 import Onboarding from "./pages/Onboarding";
 import Terms from "./pages/Terms";
+import Error500 from "./pages/Error500";
+import Error404 from "./pages/Error404";
 
 // Components / Modules
 import Login from "./components/Login";
@@ -186,7 +188,7 @@ function AppShell({ authFetch, onLogout }) {
             element={<AccountPage authFetch={authFetch} />}
           />
 
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Error404 />} />
         </Routes>
       </main>
     </div>
@@ -406,6 +408,33 @@ function AppInner() {
   );
 }
 
+// -----------------------------
+// ErrorBoundary
+// -----------------------------
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("[ErrorBoundary]", error, info);
+  }
+
+  render() {
+    if (this.state.hasError) return <Error500 />;
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  return <AppInner />;
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
 }
