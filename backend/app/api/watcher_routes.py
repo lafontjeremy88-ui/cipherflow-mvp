@@ -223,6 +223,35 @@ async def update_outlook_token(
     return {"success": True}
 
 
+# ── POST /watcher/heartbeat ───────────────────────────────────────────────────
+
+class HeartbeatPayload(BaseModel):
+    agency_id: int
+
+
+@router.post("/heartbeat")
+async def watcher_heartbeat(
+    payload: HeartbeatPayload,
+    x_watcher_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Enregistre un heartbeat pour l'agence : confirme que le watcher tourne.
+    Appelé à chaque cycle de polling depuis watcher.py.
+    """
+    if x_watcher_secret != settings.WATCHER_SECRET:
+        raise HTTPException(status_code=403, detail="Secret invalide")
+
+    agency = db.query(models.Agency).filter(models.Agency.id == payload.agency_id).first()
+    if not agency:
+        raise HTTPException(status_code=404, detail="Agence introuvable")
+
+    agency.last_watcher_heartbeat = datetime.utcnow()
+    db.commit()
+    log.debug(f"[watcher/heartbeat] agency={payload.agency_id}")
+    return {"success": True}
+
+
 # ── GET /watcher/check-sender ─────────────────────────────────────────────────
 
 @router.get("/check-sender")

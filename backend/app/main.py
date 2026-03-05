@@ -38,10 +38,12 @@ from app.api.watcher_routes import router as watcher_router
 from app.api.admin_routes import router as admin_router
 from app.api.feedback_routes import router as feedback_router
 from app.services.retention_service import retention_worker
+from app.services.heartbeat_service import heartbeat_monitor
 
 log = logging.getLogger(__name__)
 
-ENABLE_RETENTION = os.getenv("ENABLE_RETENTION_WORKER", "true").strip().lower() == "true"
+ENABLE_RETENTION  = os.getenv("ENABLE_RETENTION_WORKER",   "true").strip().lower() == "true"
+ENABLE_HEARTBEAT  = os.getenv("ENABLE_HEARTBEAT_MONITOR",  "true").strip().lower() == "true"
 
 
 @asynccontextmanager
@@ -59,12 +61,18 @@ async def lifespan(app: FastAPI):
         )
     log.info("[startup] Secrets critiques vérifiés ✅")
 
+    import asyncio
     if ENABLE_RETENTION:
-        import asyncio
         asyncio.create_task(retention_worker())
         log.info("[startup] Retention worker RGPD démarré ✅")
     else:
         log.warning("[startup] Retention worker RGPD désactivé")
+
+    if ENABLE_HEARTBEAT:
+        asyncio.create_task(heartbeat_monitor())
+        log.info("[startup] Heartbeat monitor démarré ✅")
+    else:
+        log.warning("[startup] Heartbeat monitor désactivé")
     yield
 
 

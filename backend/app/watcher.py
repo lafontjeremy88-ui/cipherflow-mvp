@@ -35,6 +35,19 @@ except ImportError:
 def _capture(exc: Exception) -> None:
     if _SENTRY_ENABLED and _sentry:
         _sentry.capture_exception(exc)
+
+
+def _send_heartbeat(agency_id: int) -> None:
+    """Notifie le backend que le watcher est actif (non bloquant)."""
+    try:
+        requests.post(
+            HEARTBEAT_URL,
+            json={"agency_id": agency_id},
+            headers={"x-watcher-secret": WATCHER_SECRET},
+            timeout=5,
+        )
+    except Exception as e:
+        log.debug(f"[heartbeat] Envoi échoué agency={agency_id} : {e}")
 from mistralai import Mistral
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
@@ -74,6 +87,7 @@ CONFIGS_URL              = f"{BACKEND_URL}/watcher/configs"
 TOKEN_UPDATE_URL         = f"{BACKEND_URL}/watcher/update-token"
 OUTLOOK_UPDATE_URL       = f"{BACKEND_URL}/watcher/update-outlook-token"
 CHECK_SENDER_URL         = f"{BACKEND_URL}/watcher/check-sender"
+HEARTBEAT_URL            = f"{BACKEND_URL}/watcher/heartbeat"
 
 GOOGLE_TOKEN_REFRESH_URL  = "https://oauth2.googleapis.com/token"
 MS_TOKEN_URL              = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
@@ -888,6 +902,7 @@ def watch_agency_outlook(config: dict, stop_event: threading.Event):
         except Exception as e:
             log.warning(f"⚠️ Erreur boucle Outlook agency={agency_id} : {e}")
 
+        _send_heartbeat(agency_id)
         stop_event.wait(POLL_INTERVAL_SEC)
 
     log.info(f"🛑 Watcher Outlook arrêté — agency={agency_id}")
@@ -943,6 +958,7 @@ def watch_agency_gmail(config: dict, stop_event: threading.Event):
         except Exception as e:
             log.warning(f"⚠️ Erreur boucle Gmail agency={agency_id} : {e}")
 
+        _send_heartbeat(agency_id)
         stop_event.wait(POLL_INTERVAL_SEC)
 
     log.info(f"🛑 Watcher arrêté — agency={agency_id}")

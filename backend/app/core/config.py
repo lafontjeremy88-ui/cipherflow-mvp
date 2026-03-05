@@ -31,6 +31,7 @@ class Settings:
     # ── Email sortant (Resend) ─────────────────────────
     RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
     RESEND_FROM_EMAIL: str = os.getenv("RESEND_FROM_EMAIL", "noreply@cipherflow.company")
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "")
 
     # ── CORS ───────────────────────────────────────────
     ALLOWED_ORIGINS: list = [
