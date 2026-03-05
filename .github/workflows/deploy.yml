@@ -1,4 +1,4 @@
-name: Deploy — Railway (production)
+name: Deploy — Vercel (production)
 
 on:
   push:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── 1. Les tests DOIVENT passer avant tout déploiement ─────────────────────
+  # ── 1. Tests (Railway attend le succès de ce job via "Wait for CI") ─────────
   test:
     name: Tests avant déploiement
     runs-on: ubuntu-latest
@@ -48,24 +48,8 @@ jobs:
         run: |
           python -m pytest tests/ -v --tb=short
 
-  # ── 2. Déploiement Railway (backend) — seulement si tests OK ───────────────
-  deploy-backend:
-    name: Deploy backend → Railway
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy backend
-        run: railway up --service backend --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-  # ── 3. Déploiement Vercel (frontend) — seulement si tests OK ───────────────
+  # ── 2. Déploiement Vercel (frontend) — seulement si tests OK ───────────────
+  # Railway déploie automatiquement le backend via "Wait for CI" dans ses settings.
   deploy-frontend:
     name: Deploy frontend → Vercel
     runs-on: ubuntu-latest
