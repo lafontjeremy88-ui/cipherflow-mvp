@@ -39,16 +39,6 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://cipherflow-mvp.vercel.app").rs
 SCOPES = "openid email profile"
 IS_PROD = settings.ENV in ("prod", "production")
 
-# ── Whitelist beta (optionnelle) ───────────────────────────────────────────────
-# Variable d'environnement ALLOWED_EMAILS : liste CSV d'emails autorisés.
-# Si absente ou vide → tous les emails sont acceptés (mode production ouvert).
-_allowed_env = os.getenv("ALLOWED_EMAILS", "").strip()
-ALLOWED_EMAILS: list[str] = (
-    [e.strip().lower() for e in _allowed_env.split(",") if e.strip()]
-    if _allowed_env
-    else []
-)
-
 oauth = OAuth()
 oauth.register(
     name="google",
@@ -223,13 +213,6 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
 
         if not email or not sub:
             raise HTTPException(status_code=400, detail="Google userinfo incomplet")
-
-        # ── Whitelist beta (si configurée) ────────────────────────────────────
-        if ALLOWED_EMAILS and email.lower() not in ALLOWED_EMAILS:
-            log.warning("[google_oauth] Email non autorisé (whitelist active)")
-            return RedirectResponse(
-                url=f"{FRONTEND_URL}/?oauth_error=unauthorized", status_code=302
-            )
 
         user = get_or_create_user_from_google(
             db=db,
