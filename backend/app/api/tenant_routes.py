@@ -7,13 +7,17 @@ FIX P0: upload_document_for_tenant écrit désormais dans Cloudflare R2
 """
 
 import hashlib
+import io
 import json
+import logging
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -23,7 +27,9 @@ from app.database.models import (
     DocQuality, EmailAnalysis, FileAnalysis, TenantDocumentLink,
     TenantEmailLink, TenantFile, TenantFileStatus, User,
 )
-from app.services.storage_service import upload_file as r2_upload
+from app.services.storage_service import download_file, upload_file as r2_upload
+
+log = logging.getLogger(__name__)
 from app.services.tenant_service import (
     attach_files_to_tenant_file,
     recompute_checklist,
@@ -264,6 +270,133 @@ async def delete_tenant_file(
     db.delete(tf)
     db.commit()
     return {"status": "deleted"}
+
+
+def _generate_summary_pdf(tf, emails_data: list, documents: list) -> bytes:
+    """Génère un PDF de synthèse du dossier locataire."""
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Dossier locataire - Resume", ln=True)
+    pdf.set_font("Helvetica", size=11)
+    pdf.ln(4)
+
+    candidate = tf.candidate_name or tf.candidate_email or f"#{tf.id}"
+    status_val = tf.status.value if hasattr(tf.status, "value") else str(tf.status)
+
+    for label, value in [
+        ("Candidat", candidate),
+        ("Email", tf.candidate_email or "-"),
+        ("Statut", status_val),
+        ("Exporte le", datetime.utcnow().strftime("%d/%m/%Y %H:%M") + " UTC"),
+    ]:
+        pdf.cell(40, 8, f"{label} :", ln=False)
+        pdf.cell(0, 8, str(value), ln=True)
+
+    pdf.ln(6)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, f"Emails ({len(emails_data)})", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    for e in emails_data:
+        subj = (e.get("subject") or "(sans sujet)")[:80]
+        sender = e.get("sender_email") or ""
+        pdf.cell(0, 6, f"  - {subj} ({sender})", ln=True)
+        if e.get("summary"):
+            truncated = (e["summary"] or "")[:200]
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.multi_cell(0, 5, f"    {truncated}")
+            pdf.set_font("Helvetica", size=10)
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, f"Documents ({len(documents)})", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    for d in documents:
+        doc_type = d.file_type or "Document"
+        pdf.cell(0, 6, f"  - {doc_type} — {d.filename}", ln=True)
+        if d.summary:
+            truncated = (d.summary or "")[:200]
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.multi_cell(0, 5, f"    {truncated}")
+            pdf.set_font("Helvetica", size=10)
+
+    return pdf.output()
+
+
+@router.get("/{tenant_id}/export")
+async def export_tenant_file(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Export complet du dossier locataire en ZIP (emails.json + documents/ + summary.pdf)."""
+    aid = current_user.agency_id
+    tf = db.query(TenantFile).filter(
+        TenantFile.id == tenant_id,
+        TenantFile.agency_id == aid,
+    ).first()
+    if not tf:
+        raise HTTPException(404, "Dossier introuvable")
+
+    # 1. Emails liés
+    emails_data = []
+    for link in tf.email_links:
+        ea = db.query(EmailAnalysis).filter(EmailAnalysis.id == link.email_analysis_id).first()
+        if ea:
+            emails_data.append({
+                "id": ea.id,
+                "sender_email": ea.sender_email,
+                "subject": ea.subject,
+                "category": ea.category,
+                "urgency": ea.urgency,
+                "summary": ea.summary,
+                "received_at": ea.created_at.isoformat() if ea.created_at else None,
+            })
+
+    # 2. Documents liés
+    file_analyses = []
+    for link in tf.document_links:
+        fa = db.query(FileAnalysis).filter(FileAnalysis.id == link.file_analysis_id).first()
+        if fa:
+            file_analyses.append(fa)
+
+    # 3. Construction ZIP en mémoire
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("emails.json", json.dumps(emails_data, ensure_ascii=False, indent=2))
+
+        for fa in file_analyses:
+            try:
+                file_bytes = download_file(fa.filename)
+                ext = Path(fa.filename).suffix or ""
+                safe_name = f"{fa.file_type or 'document'}_{fa.id}{ext}"
+                zf.writestr(f"documents/{safe_name}", file_bytes)
+            except Exception as e:
+                log.warning(f"[export] Impossible de télécharger {fa.filename}: {e}")
+
+        try:
+            summary_pdf = _generate_summary_pdf(tf, emails_data, file_analyses)
+            zf.writestr("summary.pdf", summary_pdf)
+        except Exception as e:
+            log.warning(f"[export] Erreur génération PDF summary: {e}")
+
+    buf.seek(0)
+
+    candidate = tf.candidate_name or tf.candidate_email or f"dossier_{tenant_id}"
+    safe_candidate = "".join(c if c.isalnum() or c in "-_" else "_" for c in candidate)
+    filename = f"dossier_{safe_candidate}.zip"
+
+    log.info(f"[export] Dossier #{tenant_id} exporté par user={current_user.id} agency={aid}")
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{tenant_id}/upload-document")

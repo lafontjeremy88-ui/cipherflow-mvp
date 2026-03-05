@@ -101,6 +101,7 @@ export default function TenantFilesPanel({ authFetch }) {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [analysingWorker, setAnalysingWorker] = useState(false); // ✅ worker RQ en cours
   const [deleteTenantLoading, setDeleteTenantLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
 
   const [error, setError] = useState("");
   const [confirmState, setConfirmState] = useState({
@@ -194,6 +195,35 @@ export default function TenantFilesPanel({ authFetch }) {
   const openConfirmDeleteTenant = () => {
     if (!selectedTenantId) return;
     setConfirmTenantDelete({ open: true, tenantId: selectedTenantId });
+  };
+
+  const handleExportZip = async () => {
+    if (!authFetchOk || !selectedTenantId) return;
+    setError("");
+    setExportLoading(true);
+    try {
+      const res = await authFetch(`/tenant-files/${selectedTenantId}/export`);
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Impossible de générer l'export");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const candidate = tenantDetail?.candidate_name || tenantDetail?.candidate_email || `dossier_${selectedTenantId}`;
+      const safeName = candidate.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dossier_${safeName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Erreur lors de l'export du dossier.");
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   // ✅ Suppression effective du dossier (appelée par le bouton de la modal)
@@ -896,15 +926,26 @@ export default function TenantFilesPanel({ authFetch }) {
               <span className="tf-row-left">Détails</span>
 
               {tenantDetail && (
-                <button
-                  type="button"
-                  className="tf-btn tf-btn-danger"
-                  onClick={openConfirmDeleteTenant}
-                  disabled={deleteTenantLoading}
-                >
-                  <Trash2 size={16} />
-                  {deleteTenantLoading ? "Suppression..." : "Supprimer le dossier"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="tf-btn tf-btn-ghost"
+                    onClick={handleExportZip}
+                    disabled={exportLoading}
+                  >
+                    <Download size={16} />
+                    {exportLoading ? "Export..." : "Exporter le dossier"}
+                  </button>
+                  <button
+                    type="button"
+                    className="tf-btn tf-btn-danger"
+                    onClick={openConfirmDeleteTenant}
+                    disabled={deleteTenantLoading}
+                  >
+                    <Trash2 size={16} />
+                    {deleteTenantLoading ? "Suppression..." : "Supprimer le dossier"}
+                  </button>
+                </div>
               )}
             </div>
 
