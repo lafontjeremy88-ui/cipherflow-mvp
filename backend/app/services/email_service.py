@@ -55,7 +55,48 @@ Email reçu :
 Réponds avec ce JSON exact :
 {{
   "category": "dossier_locataire | devis | reclamation | information | autre",
-  "urgency": "urgent | normal | faible",
+  "urgency": Niveau d'urgence de l'email. Choisir UNE valeur parmi : urgent, normal, faible.
+
+REGLES STRICTES :
+
+-> "urgent" SI l'email contient l'un de ces signaux :
+   SINISTRES & PANNES
+   - Degat des eaux, inondation, fuite d'eau, infiltration
+   - Panne de chauffage, pas d'eau chaude (en periode froide)
+   - Incendie, degradation grave du logement
+   - Probleme electrique dangereux, court-circuit
+   - Logement insalubre ou inhabitable
+
+   IMPAYES & CONTENTIEUX
+   - Retard ou impossibilite de payer le loyer
+   - Mise en demeure, huissier, tribunal, avocat
+   - Menace de procedure judiciaire ou d'expulsion
+   - Litige locatif grave
+
+   URGENCES LOCATAIRES
+   - Depart immediat ou preavis tres court (< 7 jours)
+   - Demande urgente explicite ("urgent", "URGENT", "d'urgence")
+   - Securite des occupants en danger
+
+-> "normal" SI l'email est une communication courante :
+   - Candidature locative avec ou sans documents
+   - Envoi de pieces justificatives pour un dossier
+   - Question sur un bien, demande de visite
+   - Renouvellement de bail standard
+   - Relance ou suivi de dossier en cours
+   - Devis ou facture de prestataire
+   - Email administratif sans caractere urgent
+
+-> "faible" SI l'email est sans interet operationnel :
+   - Spam, publicite, newsletter
+   - Email hors sujet ou destine par erreur a l'agence
+   - Notification automatique d'un systeme (Sentry, monitoring)
+   - Email interne ou boucle de l'agence elle-meme
+   - Accuse de reception automatique
+
+IMPORTANT : En cas de doute entre urgent et normal, choisir normal.
+En cas de doute entre normal et faible, choisir faible.
+
   "is_devis": false,
   "summary": "Résumé en 2-3 phrases",
   "suggested_title": "Titre court pour l'interface",
