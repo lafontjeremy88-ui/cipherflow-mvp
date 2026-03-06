@@ -1033,35 +1033,65 @@ function ReportModal({ emailId, onConfirm, onClose }) {
   const [reason, setReason] = React.useState("");
 
   return (
-    <div style={modalStyles.overlay} onClick={onClose}>
-      <div style={modalStyles.card} onClick={(e) => e.stopPropagation()}>
-        <h3 style={modalStyles.title}>⚠️ Signaler un problème</h3>
-        <p style={modalStyles.desc}>
+    <div
+      className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[9999]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl border border-[#E2E8F0] max-w-md w-full mx-4 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Titre */}
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-amber-500 text-lg">⚠️</span>
+          <h3 className="text-lg font-semibold text-[#0F172A]">Signaler un problème</h3>
+        </div>
+        <p className="text-sm text-[#475569] mt-1 mb-5">
           Indiquez pourquoi cet email a été mal traité. Votre retour améliore la classification IA.
         </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px", margin: "1rem 0" }}>
-          {REPORT_REASONS.map((r) => (
-            <label key={r.value} style={modalStyles.option}>
-              <input
-                type="radio"
-                name="reason"
-                value={r.value}
-                checked={reason === r.value}
-                onChange={() => setReason(r.value)}
-                style={{ marginRight: 8 }}
-              />
-              {r.label}
-            </label>
-          ))}
+        {/* Options */}
+        <div className="flex flex-col gap-3">
+          {REPORT_REASONS.map((r) => {
+            const selected = reason === r.value;
+            return (
+              <button
+                key={r.value}
+                type="button"
+                onClick={() => setReason(r.value)}
+                className={`flex items-center gap-3 w-full text-left rounded-xl p-3 border transition-all duration-200 cursor-pointer ${
+                  selected
+                    ? "bg-[#EFF6FF] border-[#2563EB]"
+                    : "bg-[#F8FAFC] border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-[#EFF6FF]"
+                }`}
+              >
+                <span
+                  className={`flex-shrink-0 w-4 h-4 rounded-full border-2 transition-all ${
+                    selected
+                      ? "bg-[#2563EB] border-[#2563EB]"
+                      : "bg-white border-[#CBD5E1]"
+                  }`}
+                />
+                <span className="text-sm font-medium text-[#0F172A]">{r.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-          <button style={modalStyles.btnCancel} onClick={onClose}>
+        {/* Boutons */}
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg text-sm bg-transparent border border-[#E2E8F0] text-[#475569] hover:bg-[#F8FAFC] transition-all"
+            onClick={onClose}
+          >
             Annuler
           </button>
           <button
-            style={{ ...modalStyles.btnConfirm, opacity: reason ? 1 : 0.5 }}
+            type="button"
+            className={`px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-all ${
+              !reason ? "opacity-50 cursor-not-allowed" : ""
+            }`}
             onClick={() => reason && onConfirm(reason)}
             disabled={!reason}
           >
@@ -1072,57 +1102,3 @@ function ReportModal({ emailId, onConfirm, onClose }) {
     </div>
   );
 }
-
-const modalStyles = {
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.65)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 9999,
-  },
-  card: {
-    background: "var(--card-bg, #1a1d2e)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 12,
-    padding: "1.75rem",
-    maxWidth: 420,
-    width: "90%",
-  },
-  title: {
-    color: "var(--text, #f1f5f9)",
-    marginBottom: "0.5rem",
-    fontSize: "1.1rem",
-  },
-  desc: {
-    color: "rgba(255,255,255,0.6)",
-    fontSize: "0.9rem",
-    lineHeight: 1.5,
-  },
-  option: {
-    color: "rgba(255,255,255,0.8)",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    fontSize: "0.9rem",
-  },
-  btnCancel: {
-    padding: "8px 16px",
-    background: "transparent",
-    color: "rgba(255,255,255,0.6)",
-    border: "1px solid rgba(255,255,255,0.15)",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  btnConfirm: {
-    padding: "8px 16px",
-    background: "#f59e0b",
-    color: "#000",
-    border: "none",
-    borderRadius: 6,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-};
