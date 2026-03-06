@@ -24,6 +24,17 @@ function getDocLabel(code) {
   return DOC_LABELS[normalized] || normalized;
 }
 
+function cleanFilename(raw) {
+  if (!raw) return raw;
+  // Garder uniquement ce qui est après " — " (préfixe type "payslip — ")
+  if (raw.includes(" — ")) {
+    raw = raw.split(" — ").slice(1).join(" — ");
+  }
+  // Supprimer les suffixes dupliqués " (1) (1)" en fin de nom
+  raw = raw.replace(/(\s*\(\d+\))+(\.[a-z0-9]+)?$/i, (_, __, ext) => ext || "");
+  return raw.trim();
+}
+
 function getFileId(f) {
   // Supporte les deux formats backend: {id: 59, ...} OU {file_id: 59, ...}
   return f?.id ?? f?.file_id ?? null;
@@ -628,7 +639,7 @@ export default function TenantFilesPanel({ authFetch }) {
 
       const a = document.createElement("a");
       a.href = url;
-      a.download = file.filename || `document_${file.id}`;
+      a.download = cleanFilename(file.filename) || `document_${file.id}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1076,7 +1087,7 @@ export default function TenantFilesPanel({ authFetch }) {
                       <option value="">Attacher un document existant…</option>
                       {unlinkedFiles.slice(0, 200).map((f) => (
                         <option key={f.id} value={f.id}>
-                          #{f.id} — {f.file_type || "Doc"} — {f.filename}
+                          #{f.id} — {f.file_type || "Doc"} — {cleanFilename(f.filename)}
                         </option>
                       ))}
                     </select>
@@ -1120,7 +1131,7 @@ export default function TenantFilesPanel({ authFetch }) {
                   <div key={f.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 hover:bg-surface-bg transition-colors duration-150">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-ink truncate">
-                        {f.file_type || "Document"} — {f.filename}
+                        {f.file_type || "Document"} — {cleanFilename(f.filename)}
                       </p>
                       <p className="text-xs text-ink-tertiary mt-0.5">
                         {f.created_at ? new Date(f.created_at).toLocaleString() : ""}
