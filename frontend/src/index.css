@@ -9,7 +9,15 @@
    ========================================================= */
 
 :root {
-  /* Legacy vars (auth pages, some modals) */
+  /* Design tokens */
+  --color-bg: #F8FAFC;
+  --color-card: #FFFFFF;
+  --color-border: #E2E8F0;
+  --color-primary: #2563EB;
+  --color-text: #0F172A;
+  --color-muted: #94A3B8;
+
+  /* Legacy aliases (auth pages, some modals) */
   --bg: #F8FAFC;
   --card: #FFFFFF;
   --text: #0F172A;

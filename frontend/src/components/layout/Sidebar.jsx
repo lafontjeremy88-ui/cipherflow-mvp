@@ -68,9 +68,11 @@ export default function Sidebar({ onLogout }) {
       {/* Brand */}
       <div className="px-5 py-5 border-b border-surface-border">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center text-white font-bold text-sm">
-            CF
-          </div>
+          <img
+            src="/logo.png"
+            alt="CipherFlow"
+            className="h-8 w-8 object-contain flex-shrink-0"
+          />
           <div>
             <p className="font-bold text-sm text-ink">CipherFlow</p>
             <p className="text-xs text-ink-tertiary">Automatisation immobilière</p>

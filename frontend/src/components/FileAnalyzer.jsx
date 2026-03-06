@@ -1,7 +1,54 @@
-import React, { useState, useEffect } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, Download, RefreshCw, FileCheck, Trash2, Eye } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Upload, FileText, CheckCircle, AlertTriangle, Loader2,
+  Download, RefreshCw, FileCheck, Trash2, Eye
+} from "lucide-react";
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
+
+function getTypeBadgeClass(type) {
+  const t = (type || "").toLowerCase();
+  if (t.includes("facture") || t.includes("invoice"))
+    return "bg-blue-50 text-blue-700 border border-blue-200";
+  if (t.includes("contrat") || t.includes("bail"))
+    return "bg-violet-50 text-violet-700 border border-violet-200";
+  if (t.includes("paie") || t.includes("salaire") || t.includes("bulletin"))
+    return "bg-green-50 text-green-700 border border-green-200";
+  if (t.includes("impôt") || t.includes("tax"))
+    return "bg-amber-50 text-amber-700 border border-amber-200";
+  return "bg-slate-50 text-slate-600 border border-slate-200";
+}
+
+function SolvencyBadge({ doc }) {
+  const rawAmount = parseFloat(String(doc.amount || "").replace(/[^0-9.,]/g, "").replace(",", "."));
+  const type = (doc.file_type || "").toLowerCase();
+  const isIncome = type.includes("paie") || type.includes("salaire") || type.includes("impôt");
+
+  if (!isIncome || isNaN(rawAmount) || rawAmount === 0) {
+    return <span className="font-semibold text-ink">{doc.amount}</span>;
+  }
+
+  const LOYER_REFERENCE = 600;
+  const ratio = rawAmount / LOYER_REFERENCE;
+
+  const badge =
+    ratio >= 3
+      ? { label: `Solvable (${ratio.toFixed(1)}x)`, cls: "bg-green-50 text-green-700 border border-green-200" }
+      : ratio >= 2.5
+      ? { label: `Juste (${ratio.toFixed(1)}x)`, cls: "bg-amber-50 text-amber-700 border border-amber-200" }
+      : { label: `Risqué (${ratio.toFixed(1)}x)`, cls: "bg-red-50 text-red-700 border border-red-200" };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <span className="font-semibold text-ink">{doc.amount}</span>
+      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
+    </div>
+  );
+}
+
+/* ── Main component ──────────────────────────────────────────────────────── */
 
 const FileAnalysis = ({ token, authFetch }) => {
   const [file, setFile] = useState(null);
@@ -9,20 +56,17 @@ const FileAnalysis = ({ token, authFetch }) => {
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef(null);
 
-  useEffect(() => {
-    fetchHistory();
-  }, [authFetch]);
+  useEffect(() => { fetchHistory(); }, [authFetch]);
 
   const fetchHistory = async () => {
     if (!authFetch) return;
     setHistoryLoading(true);
     try {
       const res = await authFetch(`${API_BASE}/api/files/history`);
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data);
-      }
+      if (res.ok) setHistory(await res.json());
     } catch (error) {
       console.error("Erreur historique:", error);
     } finally {
@@ -30,34 +74,27 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setAnalysis(null);
-    }
+  const handleFileSelect = (f) => {
+    if (f) { setFile(f); setAnalysis(null); }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFileSelect(f);
   };
 
   const handleAnalyze = async () => {
     if (!file) return;
     setLoading(true);
     setAnalysis(null);
-
     const formData = new FormData();
     formData.append("file", file);
-
     try {
-      const res = await authFetch(`${API_BASE}/api/analyze-file`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setAnalysis(data);
-        fetchHistory();
-      } else {
-        alert("Erreur lors de l'analyse");
-      }
+      const res = await authFetch(`${API_BASE}/api/analyze-file`, { method: "POST", body: formData });
+      if (res.ok) { setAnalysis(await res.json()); fetchHistory(); }
+      else alert("Erreur lors de l'analyse");
     } catch (error) {
       console.error(error);
       alert("Erreur réseau");
@@ -66,26 +103,13 @@ const FileAnalysis = ({ token, authFetch }) => {
     }
   };
 
-  // --- 👁️ NOUVELLE FONCTION : VISIONNER ---
   const handleView = async (id) => {
     if (!authFetch) return;
     try {
-        // On appelle l'endpoint "view" du backend
-        const res = await authFetch(`${API_BASE}/api/files/view/${id}`);
-        if (res.ok) {
-            // On transforme la réponse en "Blob" (fichier en mémoire)
-            const blob = await res.blob();
-            // On crée une URL temporaire locale
-            const url = window.URL.createObjectURL(blob);
-            // On ouvre cette URL dans un nouvel onglet
-            window.open(url, '_blank');
-        } else {
-            alert("Impossible de visualiser le fichier.");
-        }
-    } catch (e) {
-        console.error(e);
-        alert("Erreur lors de l'ouverture.");
-    }
+      const res = await authFetch(`${API_BASE}/api/files/view/${id}`);
+      if (res.ok) { const url = window.URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
+      else alert("Impossible de visualiser le fichier.");
+    } catch (e) { console.error(e); alert("Erreur lors de l'ouverture."); }
   };
 
   const handleDownload = async (id, filename) => {
@@ -93,295 +117,230 @@ const FileAnalysis = ({ token, authFetch }) => {
     try {
       const res = await authFetch(`${API_BASE}/api/files/download/${id}`);
       if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
+        const url = window.URL.createObjectURL(await res.blob());
         const a = document.createElement("a");
-        a.href = url;
-        a.download = filename || `document_${id}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = url; a.download = filename || `document_${id}`;
+        document.body.appendChild(a); a.click(); a.remove();
         window.URL.revokeObjectURL(url);
-      } else {
-        alert("Impossible de télécharger le fichier.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Erreur lors du téléchargement.");
-    }
+      } else alert("Impossible de télécharger le fichier.");
+    } catch (e) { console.error(e); alert("Erreur lors du téléchargement."); }
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce document ?")) return;
     try {
       const res = await authFetch(`${API_BASE}/api/files/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setHistory(history.filter(f => f.id !== id));
-      } else {
-        alert("Erreur lors de la suppression.");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Erreur réseau.");
-    }
-  };
-
-  const getTypeBadgeStyle = (type) => {
-    const t = (type || "").toLowerCase();
-    if (t.includes("facture") || t.includes("invoice")) return { bg: "rgba(59, 130, 246, 0.2)", text: "#60a5fa" };
-    if (t.includes("contrat") || t.includes("bail")) return { bg: "rgba(168, 85, 247, 0.2)", text: "#c084fc" };
-    if (t.includes("paie") || t.includes("salaire") || t.includes("bulletin")) return { bg: "rgba(16, 185, 129, 0.2)", text: "#34d399" };
-    if (t.includes("impôt") || t.includes("tax")) return { bg: "rgba(245, 158, 11, 0.2)", text: "#fbbf24" };
-    return { bg: "rgba(148, 163, 184, 0.2)", text: "#cbd5e1" };
-  };
-
-  // --- LOGIQUE SOLVABILITÉ ---
-  const renderSolvencyBadge = (doc) => {
-    const rawString = String(doc.amount).replace(/[^0-9.,]/g, "").replace(",", ".");
-    const rawAmount = parseFloat(rawString);
-    
-    const type = (doc.file_type || "").toLowerCase();
-    const isIncome = type.includes("paie") || type.includes("salaire") || type.includes("impôt");
-
-    if (!isIncome || isNaN(rawAmount) || rawAmount === 0) {
-      return <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>;
-    }
-
-    const LOYER_REFERENCE = 600;
-    const ratio = rawAmount / LOYER_REFERENCE;
-
-    if (ratio >= 3) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
-          <span style={{ fontSize: "0.7rem", color: "#10b981", background: "rgba(16,185,129,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", display: "inline-flex", alignItems: "center", gap: "4px", border: "1px solid rgba(16,185,129,0.2)" }}>
-            <CheckCircle size={10} /> Solvable ({ratio.toFixed(1)}x)
-          </span>
-        </div>
-      );
-    } else if (ratio >= 2.5) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
-          <span style={{ fontSize: "0.7rem", color: "#f59e0b", background: "rgba(245,158,11,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", border: "1px solid rgba(245,158,11,0.2)" }}>
-            Dossier Juste ({ratio.toFixed(1)}x)
-          </span>
-        </div>
-      );
-    } else {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-          <span style={{ color: "white", fontWeight: "bold" }}>{doc.amount}</span>
-          <span style={{ fontSize: "0.7rem", color: "#ef4444", background: "rgba(239,68,68,0.1)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", display: "inline-flex", alignItems: "center", gap: "4px", border: "1px solid rgba(239,68,68,0.2)" }}>
-            <AlertTriangle size={10} /> Risqué ({ratio.toFixed(1)}x)
-          </span>
-        </div>
-      );
-    }
+      if (res.ok) setHistory(history.filter(f => f.id !== id));
+      else alert("Erreur lors de la suppression.");
+    } catch (err) { console.error(err); alert("Erreur réseau."); }
   };
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", paddingBottom: "4rem" }}>
-      
-      {/* HEADER */}
-      <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "white", display: "flex", alignItems: "center", gap: "10px" }}>
-          <FileCheck size={28} color="#6366f1" /> Vérification de Dossiers
-        </h2>
-        <p style={{ color: "#94a3b8" }}>Analysez automatiquement les pièces justificatives des locataires.</p>
+    <div className="space-y-6 max-w-[1200px] mx-auto pb-16">
+
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-3 mb-1">
+          <div className="w-9 h-9 rounded-lg bg-violet-50 flex items-center justify-center">
+            <FileCheck size={20} className="text-violet-600" />
+          </div>
+          <h2 className="text-xl font-semibold text-ink">Vérification de Dossiers</h2>
+        </div>
+        <p className="text-sm text-ink-secondary ml-12">Analysez automatiquement les pièces justificatives des locataires.</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem", marginBottom: "3rem" }}>
-        
-        {/* ZONE D'UPLOAD */}
-        <div className="card" style={{ background: "#1e293b", padding: "2rem", borderRadius: "12px", border: "1px solid #334155" }}>
-          <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.1rem", fontWeight: "bold" }}>Nouveau Document</h3>
-          
-          <div 
-            style={{ 
-              border: "2px dashed #475569", 
-              borderRadius: "12px", 
-              padding: "3rem", 
-              textAlign: "center", 
-              background: "#0f172a",
-              cursor: "pointer",
-              transition: "border-color 0.2s"
-            }}
-            onClick={() => document.getElementById("fileInput").click()}
-            onMouseEnter={(e) => e.currentTarget.style.borderColor = "#6366f1"}
-            onMouseLeave={(e) => e.currentTarget.style.borderColor = "#475569"}
+      {/* Upload + Résultat */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        {/* Zone upload */}
+        <div className="bg-white border border-surface-border rounded-xl shadow-card p-6">
+          <h3 className="text-sm font-semibold text-ink mb-4">Nouveau document</h3>
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => inputRef.current?.click()}
+            className={[
+              "border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-200",
+              dragging
+                ? "bg-blue-50 border-blue-300"
+                : "bg-surface-bg border-surface-border hover:border-primary-600 hover:bg-blue-50/40",
+            ].join(" ")}
           >
-            <input 
-              id="fileInput" 
-              type="file" 
-              accept=".pdf,.jpg,.png,.jpeg" 
-              onChange={handleFileChange} 
-              style={{ display: "none" }} 
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf,.jpg,.png,.jpeg"
+              onChange={(e) => handleFileSelect(e.target.files?.[0])}
+              className="hidden"
             />
-            
-            <div style={{ background: "rgba(99, 102, 241, 0.1)", width: "60px", height: "60px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1rem auto" }}>
-              <Upload size={28} color="#6366f1" />
+
+            <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${dragging ? "bg-blue-100" : "bg-surface-muted"}`}>
+              <Upload size={28} className={dragging ? "text-primary-600" : "text-ink-tertiary"} />
             </div>
-            
+
             {file ? (
-              <div>
-                <p style={{ color: "white", fontWeight: "bold", fontSize: "1.1rem" }}>{file.name}</p>
-                <p style={{ color: "#94a3b8", fontSize: "0.9rem" }}>{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+              <div className="text-center">
+                <p className="font-semibold text-ink">{file.name}</p>
+                <p className="text-xs text-ink-tertiary mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
               </div>
             ) : (
-              <div>
-                <p style={{ color: "white", fontWeight: "bold", marginBottom: "5px" }}>Cliquez pour déposer un dossier</p>
-                <p style={{ color: "#94a3b8", fontSize: "0.9rem" }}>PDF, JPG, PNG acceptés</p>
+              <div className="text-center">
+                <p className="text-sm font-medium text-ink">
+                  {dragging ? "Relâchez pour déposer" : "Glissez un document ici"}
+                </p>
+                <p className="text-xs text-ink-tertiary mt-0.5">ou cliquez pour parcourir</p>
+                <p className="text-xs text-ink-tertiary mt-2">PDF, JPG, PNG — max 10 MB</p>
               </div>
             )}
           </div>
 
-          <button 
-            onClick={handleAnalyze} 
+          <button
+            onClick={handleAnalyze}
             disabled={!file || loading}
-            style={{ 
-              width: "100%", 
-              marginTop: "1.5rem", 
-              padding: "14px", 
-              background: loading ? "#334155" : "#6366f1", 
-              color: "white", 
-              border: "none", 
-              borderRadius: "8px", 
-              fontWeight: "bold", 
-              cursor: loading || !file ? "not-allowed" : "pointer",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: "10px"
-            }}
+            className="w-full mt-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? <><Loader2 className="spin" /> Analyse IA en cours...</> : "Lancer l'analyse"}
+            {loading ? (
+              <><Loader2 size={18} className="animate-spin" /> Analyse IA en cours…</>
+            ) : (
+              "Lancer l'analyse"
+            )}
           </button>
         </div>
 
-        {/* RÉSULTAT ANALYSE LIVE */}
-        <div className="card" style={{ background: "#1e293b", padding: "2rem", borderRadius: "12px", border: "1px solid #334155", display: "flex", flexDirection: "column" }}>
-          <h3 style={{ color: "white", marginBottom: "1.5rem", fontSize: "1.1rem", fontWeight: "bold" }}>Résultat de l'analyse</h3>
-          
+        {/* Résultat analyse */}
+        <div className="bg-white border border-surface-border rounded-xl shadow-card p-6 flex flex-col">
+          <h3 className="text-sm font-semibold text-ink mb-4">Résultat de l'analyse</h3>
+
           {analysis ? (
-            <div style={{ flex: 1, animation: "fadeIn 0.3s" }}>
-              <div style={{ padding: "1.5rem", background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "12px", marginBottom: "1.5rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#34d399", fontWeight: "bold", marginBottom: "5px" }}>
-                  <CheckCircle size={20} /> Analyse Terminée
-                </div>
-                <p style={{ color: "#e2e8f0", fontSize: "0.9rem" }}>Le document a été traité avec succès.</p>
-              </div>
-
-              <div style={{ display: "grid", gap: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Type détecté</span>
-                  <span style={{ color: "white", fontWeight: "bold" }}>{analysis.type || "Inconnu"}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Source</span>
-                  <span style={{ color: "white", fontWeight: "bold" }}>{analysis.sender || "Non identifié"}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
-                  <span style={{ color: "#94a3b8" }}>Revenu / Montant</span>
-                  <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: "1.1rem" }}>{analysis.amount}</span>
+            <div className="flex-1 space-y-4">
+              <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg border border-green-200">
+                <CheckCircle size={18} className="text-green-600 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-green-800">Analyse terminée</p>
+                  <p className="text-xs text-green-700">Le document a été traité avec succès.</p>
                 </div>
               </div>
 
-              <div style={{ marginTop: "1.5rem" }}>
-                <span style={{ color: "#94a3b8", display: "block", marginBottom: "8px", fontSize: "0.9rem" }}>Résumé IA</span>
-                <div style={{ background: "#0f172a", padding: "1rem", borderRadius: "8px", color: "#cbd5e1", lineHeight: "1.5" }}>
-                  {analysis.summary}
-                </div>
+              <div className="space-y-3">
+                {[
+                  { label: "Type détecté", value: analysis.type || "Inconnu" },
+                  { label: "Source", value: analysis.sender || "Non identifié" },
+                  { label: "Montant / Revenu", value: analysis.amount || "—" },
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex items-center justify-between py-2 border-b border-surface-border last:border-0">
+                    <span className="text-xs text-ink-tertiary uppercase tracking-wide">{label}</span>
+                    <span className="text-sm font-semibold text-ink">{value}</span>
+                  </div>
+                ))}
               </div>
+
+              {analysis.summary && (
+                <div>
+                  <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-2">Résumé IA</p>
+                  <div className="bg-surface-bg rounded-lg p-3 text-sm text-ink-secondary leading-relaxed">
+                    {analysis.summary}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#64748b", border: "2px dashed #334155", borderRadius: "12px" }}>
-              <FileText size={48} style={{ marginBottom: "1rem", opacity: 0.5 }} />
-              <p>Les résultats de l'analyse s'afficheront ici.</p>
+            <div className="flex-1 flex flex-col items-center justify-center text-center border-2 border-dashed border-surface-border rounded-xl py-10">
+              <FileText size={40} className="text-surface-border mb-3" />
+              <p className="text-sm text-ink-tertiary">Les résultats s'afficheront ici</p>
+              <p className="text-xs text-ink-tertiary mt-1">Déposez un document et lancez l'analyse</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* HISTORIQUE DES DOCUMENTS */}
-      <div style={{ borderTop: "1px solid #334155", paddingTop: "2rem" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
-          <h3 style={{ fontSize: "1.4rem", fontWeight: "bold", color: "white" }}>📂 Documents Traités</h3>
-          <button onClick={fetchHistory} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer" }}><RefreshCw size={20} /></button>
+      {/* Historique */}
+      <div className="bg-white border border-surface-border rounded-xl shadow-card overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
+          <h3 className="text-sm font-semibold text-ink">Documents traités</h3>
+          <button
+            onClick={fetchHistory}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-muted text-ink-secondary transition-colors"
+            title="Rafraîchir"
+          >
+            <RefreshCw size={16} />
+          </button>
         </div>
 
         {historyLoading ? (
-          <div style={{ color: "#94a3b8", textAlign: "center", padding: "20px" }}>Chargement...</div>
+          <div className="flex items-center justify-center py-12 text-sm text-ink-tertiary gap-2">
+            <Loader2 size={18} className="animate-spin" /> Chargement…
+          </div>
         ) : history.length === 0 ? (
-          <div style={{ padding: "20px", background: "#1e293b", borderRadius: "8px", textAlign: "center", color: "#94a3b8" }}>Aucun document dans l'historique.</div>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-14 h-14 bg-surface-muted rounded-2xl flex items-center justify-center mb-3">
+              <FileText size={24} className="text-ink-tertiary" />
+            </div>
+            <p className="text-sm font-medium text-ink">Aucun document analysé</p>
+            <p className="text-xs text-ink-tertiary mt-1">Uploadez votre premier document ci-dessus</p>
+          </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Fichier</th>
-                  <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Type Détecté</th>
-                  <th style={{ textAlign: "left", color: "#94a3b8", padding: "10px" }}>Entité</th>
-                  <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Revenus / Analyse</th>
-                  <th style={{ textAlign: "right", color: "#94a3b8", padding: "10px" }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((doc) => {
-                  const badgeStyle = getTypeBadgeStyle(doc.file_type);
-                  return (
-                    <tr key={doc.id} style={{ background: "#1e293b", transition: "transform 0.1s" }}>
-                      <td style={{ padding: "15px", borderTopLeftRadius: "8px", borderBottomLeftRadius: "8px", color: "white", fontWeight: "bold", display: "flex", alignItems: "center", gap: "10px" }}>
-                        <FileText size={18} color="#94a3b8" /> {doc.filename}
-                      </td>
-                      <td style={{ padding: "15px" }}>
-                        <span style={{ background: badgeStyle.bg, color: badgeStyle.text, padding: "4px 10px", borderRadius: "6px", fontSize: "0.8rem", fontWeight: "bold", textTransform: "uppercase" }}>
-                          {doc.file_type}
-                        </span>
-                      </td>
-                      <td style={{ padding: "15px", color: "#cbd5e1" }}>{doc.sender}</td>
-                      
-                      {/* COLONNE INTELLIGENTE */}
-                      <td style={{ padding: "15px", textAlign: "right" }}>
-                        {renderSolvencyBadge(doc)}
-                      </td>
-                      
-                      {/* ACTIONS */}
-                      <td style={{ padding: "15px", textAlign: "right", borderTopRightRadius: "8px", borderBottomRightRadius: "8px" }}>
-                        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-                            {/* BOUTON VISIONNER */}
-                            <button 
-                              onClick={() => handleView(doc.id)} 
-                              style={{ background: "#3b82f6", color: "white", border: "none", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }}
-                              title="Visionner"
-                            >
-                              <Eye size={16} />
-                            </button>
+          <div className="overflow-x-auto">
+            {/* Header */}
+            <div className="grid grid-cols-5 gap-4 px-6 py-3 bg-surface-bg border-b border-surface-border text-xs font-semibold text-ink-tertiary uppercase tracking-wider">
+              <span>Fichier</span>
+              <span>Type détecté</span>
+              <span>Entité</span>
+              <span className="text-right">Revenus / Analyse</span>
+              <span className="text-right">Actions</span>
+            </div>
 
-                            {/* BOUTON TÉLÉCHARGER */}
-                            <button
-                              onClick={() => handleDownload(doc.id, doc.filename)}
-                              style={{ background: "#0f172a", border: "1px solid #334155", color: "#94a3b8", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "inline-grid", placeItems: "center" }}
-                              title="Télécharger"
-                            >
-                              <Download size={16} />
-                            </button>
+            {/* Rows */}
+            <div className="divide-y divide-surface-border">
+              {history.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="grid grid-cols-5 gap-4 px-6 py-4 items-center hover:bg-surface-bg transition-colors duration-150"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText size={16} className="text-ink-tertiary flex-shrink-0" />
+                    <span className="text-sm font-medium text-ink truncate">{doc.filename}</span>
+                  </div>
 
-                            {/* BOUTON SUPPRIMER */}
-                            <button 
-                              onClick={() => handleDelete(doc.id)} 
-                              style={{ background: "#331e1e", border: "1px solid #450a0a", color: "#f87171", padding: "8px", borderRadius: "6px", cursor: "pointer", display: "grid", placeItems: "center" }}
-                              title="Supprimer"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  <div>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold uppercase ${getTypeBadgeClass(doc.file_type)}`}>
+                      {doc.file_type}
+                    </span>
+                  </div>
+
+                  <span className="text-sm text-ink-secondary">{doc.sender}</span>
+
+                  <div className="text-right">
+                    <SolvencyBadge doc={doc} />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleView(doc.id)}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                      title="Visionner"
+                    >
+                      <Eye size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleDownload(doc.id, doc.filename)}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-surface-muted text-ink-secondary hover:bg-surface-border transition-colors"
+                      title="Télécharger"
+                    >
+                      <Download size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(doc.id)}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

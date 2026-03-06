@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Mail } from "lucide-react";
 import { authFetch } from "../services/api";
 
 /**
@@ -667,7 +668,24 @@ export default function EmailHistory() {
       {loading ? (
         <div className="muted">Chargement de l’historique…</div>
       ) : filtered.length === 0 ? (
-        <div className="muted">Aucun email trouvé.</div>
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
+            <Mail className="h-8 w-8 text-blue-400" />
+          </div>
+          <h3 className="text-base font-semibold text-ink mb-2">
+            {items.length === 0 ? "Aucun email pour l’instant" : "Aucun résultat"}
+          </h3>
+          <p className="text-sm text-ink-tertiary max-w-xs">
+            {items.length === 0
+              ? "Connectez votre boîte Gmail dans les Paramètres pour commencer la surveillance automatique."
+              : "Modifiez vos filtres ou votre recherche pour trouver des emails."}
+          </p>
+          {items.length === 0 && (
+            <a href="/settings" className="mt-6 px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 transition-all duration-200 no-underline">
+              Aller aux Paramètres
+            </a>
+          )}
+        </div>
       ) : (
         <div className="eh-layout">
           {/* LISTE */}

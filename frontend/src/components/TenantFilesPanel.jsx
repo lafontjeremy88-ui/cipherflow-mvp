@@ -799,116 +799,112 @@ export default function TenantFilesPanel({ authFetch }) {
     );
   }, [filesHistory, linkedFileIds]);
 
+  const btnGhost = "inline-flex items-center gap-2 px-3 py-2 bg-white border border-surface-border rounded-lg text-sm text-ink-secondary font-medium hover:bg-surface-muted transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed";
+  const btnPrimary = "inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed";
+  const btnSecondary = "inline-flex items-center gap-2 px-3 py-2 bg-white border border-surface-border rounded-lg text-sm font-medium text-ink-secondary hover:bg-surface-muted transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+  const btnDanger = "inline-flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed";
+  const inputCls = "w-full px-3 py-2 bg-white border border-surface-border rounded-lg text-sm text-ink placeholder-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-primary-600/30 focus:border-primary-600 transition-all duration-200";
+
   if (!authFetchOk) {
     return (
-      <div className="tf-page">
-        <div className="tf-warn">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>
-            Erreur de configuration
-          </div>
-          <div>
-            <code>authFetch</code> n’a pas été passé à{" "}
-            <code>&lt;TenantFilesPanel /&gt;</code>.
-          </div>
+      <div className="max-w-[1400px] mx-auto">
+        <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+          <strong>Erreur de configuration :</strong> <code>authFetch</code> n’a pas été passé à <code>&lt;TenantFilesPanel /&gt;</code>.
         </div>
       </div>
     );
   }
 
   return (
-    <div className="tf-page">
-      <div className="tf-head">
+    <div className="space-y-6 max-w-[1400px] mx-auto pb-16">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="tf-title">Dossiers locataires</h2>
-          <div className="tf-sub">
-            Centralise les fichiers et rattache les documents aux locataires.
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
+              <FolderOpen size={20} className="text-blue-600" />
+            </div>
+            <h2 className="text-xl font-semibold text-ink">Dossiers locataires</h2>
           </div>
+          <p className="text-sm text-ink-secondary ml-12">Centralise les fichiers et rattache les documents aux locataires.</p>
         </div>
 
-        <div className="tf-actions">
-          <button
-            className="tf-btn tf-btn-ghost"
-            onClick={fetchTenants}
-            disabled={tenantsLoading}
-          >
-            <RefreshCw size={16} />{" "}
-            {tenantsLoading ? "Chargement..." : "Rafraîchir locataires"}
-          </button>
-
-          <button
-            className="tf-btn tf-btn-primary"
-            onClick={fetchFilesHistory}
-            disabled={filesLoading}
-          >
-            <FolderOpen size={16} />{" "}
-            {filesLoading ? "Chargement..." : "Rafraîchir fichiers"}
+        <div className="flex items-center gap-3">
+          <button className={btnGhost} onClick={fetchTenants} disabled={tenantsLoading}>
+            <RefreshCw size={15} />
+            {tenantsLoading ? "Chargement..." : "Rafraîchir"}
           </button>
         </div>
       </div>
 
       {!!error && (
-        <div className="tf-warn" style={{ borderColor: "rgba(239,68,68,.45)" }}>
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Erreur</div>
-          <div style={{ opacity: 0.95 }}>{error}</div>
+        <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+          <strong>Erreur :</strong> {error}
         </div>
       )}
 
-      <div className="tf-grid">
-        <div className="tf-card">
-          <div className="tf-card-title">Locataires</div>
+      {/* Grid principal */}
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6 items-start">
 
-          <div className="tf-new-tenant-row">
+        {/* Colonne gauche — liste des locataires */}
+        <div className="bg-white border border-surface-border rounded-xl shadow-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-surface-border text-sm font-semibold text-ink">
+            Locataires
+          </div>
+
+          {/* Créer un dossier */}
+          <div className="flex gap-2 p-4 border-b border-surface-border">
             <input
               type="email"
-              className="tf-input"
+              className={inputCls}
               placeholder="Email candidat (optionnel)"
               value={newTenantEmail}
               onChange={(e) => setNewTenantEmail(e.target.value)}
             />
-            <button
-              type="button"
-              className="tf-btn tf-btn-secondary"
-              onClick={handleCreateTenant}
-              disabled={creatingTenant}
-            >
-              {creatingTenant ? "Création..." : "Nouveau dossier"}
+            <button type="button" className={btnPrimary} onClick={handleCreateTenant} disabled={creatingTenant}>
+              {creatingTenant ? "..." : "+ Nouveau"}
             </button>
           </div>
 
+          {/* Liste */}
           {tenantsLoading ? (
-            <div className="tf-muted">Chargement...</div>
+            <div className="flex items-center justify-center py-10 text-sm text-ink-tertiary">Chargement…</div>
           ) : tenants.length === 0 ? (
-            <div className="tf-muted">Aucun locataire.</div>
+            <div className="flex flex-col items-center justify-center py-12 text-center p-4">
+              <FolderOpen size={40} className="text-surface-border mb-3" />
+              <p className="text-sm font-medium text-ink">Aucun dossier créé</p>
+              <p className="text-xs text-ink-tertiary mt-1">Créez votre premier dossier ci-dessus</p>
+            </div>
           ) : (
-            <div className="tf-list">
+            <div className="divide-y divide-surface-border">
               {tenants.map((t) => {
                 const active = String(selectedTenantId) === String(t.id);
-
-                // ✅ si c’est le dossier sélectionné, on affiche le statut UI calculé
                 const statusToShow = active ? uiTenantStatus || t.status : t.status;
+                const statusCls =
+                  statusToShow === "complete"
+                    ? "bg-green-50 text-green-700 border border-green-200"
+                    : statusToShow === "new"
+                    ? "bg-blue-50 text-blue-700 border border-blue-200"
+                    : "bg-amber-50 text-amber-700 border border-amber-200";
 
                 return (
                   <button
                     key={t.id}
-                    className={`tf-item ${active ? "is-active" : ""}`}
-                    onClick={() => setSelectedTenantId(t.id)}
                     type="button"
+                    onClick={() => setSelectedTenantId(t.id)}
+                    className={[
+                      "w-full flex flex-col gap-1 px-4 py-3 text-left transition-colors duration-150",
+                      active ? "bg-primary-50" : "hover:bg-surface-bg",
+                    ].join(" ")}
                   >
-                    <div className="tf-item-title">
+                    <span className={`text-sm font-medium ${active ? "text-primary-700" : "text-ink"}`}>
                       {t.candidate_name || `Dossier #${t.id}`}
-                    </div>
-                    <div className="tf-item-sub">
-                      <span>{t.candidate_email || "-"}</span>
+                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-ink-tertiary truncate">{t.candidate_email || "—"}</span>
                       {statusToShow && (
-                        <span
-                          className={`tf-status ${
-                            statusToShow === "complete"
-                              ? "complete"
-                              : statusToShow === "new"
-                              ? "new"
-                              : "incomplete"
-                          }`}
-                        >
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase flex-shrink-0 ${statusCls}`}>
                           {statusToShow}
                         </span>
                       )}
@@ -920,157 +916,125 @@ export default function TenantFilesPanel({ authFetch }) {
           )}
         </div>
 
-        <div className="tf-right">
-          <div className="tf-card">
-            <div className="tf-card-title tf-row">
-              <span className="tf-row-left">Détails</span>
+        {/* Colonne droite */}
+        <div className="space-y-4">
 
+          {/* Card Détails */}
+          <div className="bg-white border border-surface-border rounded-xl shadow-card">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
+              <h3 className="text-sm font-semibold text-ink">Détails du dossier</h3>
               {tenantDetail && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    type="button"
-                    className="tf-btn tf-btn-ghost"
-                    onClick={handleExportZip}
-                    disabled={exportLoading}
-                  >
-                    <Download size={16} />
-                    {exportLoading ? "Export..." : "Exporter le dossier"}
+                <div className="flex items-center gap-2">
+                  <button type="button" className={btnGhost} onClick={handleExportZip} disabled={exportLoading}>
+                    <Download size={15} />
+                    {exportLoading ? "Export..." : "Exporter"}
                   </button>
-                  <button
-                    type="button"
-                    className="tf-btn tf-btn-danger"
-                    onClick={openConfirmDeleteTenant}
-                    disabled={deleteTenantLoading}
-                  >
-                    <Trash2 size={16} />
-                    {deleteTenantLoading ? "Suppression..." : "Supprimer le dossier"}
+                  <button type="button" className={btnDanger} onClick={openConfirmDeleteTenant} disabled={deleteTenantLoading}>
+                    <Trash2 size={15} />
+                    {deleteTenantLoading ? "Suppression..." : "Supprimer"}
                   </button>
                 </div>
               )}
             </div>
 
             {tenantLoading ? (
-              <div className="tf-muted">Chargement...</div>
+              <div className="flex items-center justify-center py-12 text-sm text-ink-tertiary">Chargement…</div>
             ) : !tenantDetail ? (
-              <div className="tf-muted">Sélectionne un locataire à gauche.</div>
+              <div className="flex flex-col items-center justify-center py-14 text-center">
+                <FileText size={40} className="text-surface-border mb-3" />
+                <p className="text-sm font-medium text-ink">Aucun dossier sélectionné</p>
+                <p className="text-xs text-ink-tertiary mt-1">Sélectionne un locataire dans la liste</p>
+              </div>
             ) : (
               <>
-                <div className="tf-kv">
+                {/* Champs d’édition */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 px-6 py-5">
                   <div>
-                    <div className="tf-k">Email candidat</div>
-                    <div className="tf-v">
-                      <input
-                        type="email"
-                        className="tf-input"
-                        placeholder="Email candidat (optionnel)"
-                        value={editingEmail}
-                        onChange={(e) => setEditingEmail(e.target.value)}
-                      />
-                    </div>
+                    <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-1.5">Email candidat</p>
+                    <input
+                      type="email"
+                      className={inputCls}
+                      placeholder="Email candidat (optionnel)"
+                      value={editingEmail}
+                      onChange={(e) => setEditingEmail(e.target.value)}
+                    />
                   </div>
 
                   <div>
-                    <div className="tf-k">Statut</div>
-                    <div className="tf-v">
-                      {uiTenantStatus ? (
-                        <span
-                          className={`tf-status ${
-                            uiTenantStatus === "complete"
-                              ? "complete"
-                              : uiTenantStatus === "new"
-                              ? "new"
-                              : "incomplete"
-                          }`}
-                          title={
-                            uiTenantStatus !== tenantDetail.status
-                              ? "Statut calculé depuis la checklist (UI)"
-                              : "Statut backend"
-                          }
-                        >
-                          {uiTenantStatus}
+                    <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-1.5">Nom du dossier</p>
+                    <input
+                      type="text"
+                      className={inputCls}
+                      placeholder="Nom / alias (optionnel)"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="flex flex-col justify-end">
+                    <button type="button" className={btnPrimary} onClick={handleSaveTenantMeta} disabled={savingMeta}>
+                      {savingMeta ? "Enregistrement..." : "Enregistrer"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Statut + docs liés */}
+                <div className="flex items-center gap-6 px-6 pb-5 border-b border-surface-border">
+                  <div>
+                    <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-1">Statut</p>
+                    {uiTenantStatus ? (
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold uppercase ${
+                        uiTenantStatus === "complete"
+                          ? "bg-green-50 text-green-700 border border-green-200"
+                          : uiTenantStatus === "new"
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "bg-amber-50 text-amber-700 border border-amber-200"
+                      }`}>
+                        {uiTenantStatus}
+                      </span>
+                    ) : <span className="text-sm text-ink-tertiary">—</span>}
+                  </div>
+                  <div>
+                    <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-1">Documents liés</p>
+                    <span className="text-sm font-semibold text-ink">{linkedFileIds.length}</span>
+                  </div>
+                </div>
+
+                {/* Checklist */}
+                {checklist && (
+                  <div className="px-6 py-5 border-b border-surface-border">
+                    <div className="flex items-center gap-2 mb-4">
+                      <p className="text-sm font-semibold text-ink">Checklist du dossier</p>
+                      {missingDocs.length > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-600 border border-red-200">
+                          {missingDocs.length} manquante{missingDocs.length > 1 ? "s" : ""}
                         </span>
-                      ) : (
-                        "-"
                       )}
                     </div>
-                  </div>
-
-                  <div>
-                    <div className="tf-k">Documents liés</div>
-                    <div className="tf-v">{linkedFileIds.length}</div>
-                  </div>
-                </div>
-
-                <div className="tf-kv">
-                  <div>
-                    <div className="tf-k">Nom du dossier</div>
-                    <div className="tf-v">
-                      <input
-                        type="text"
-                        className="tf-input"
-                        placeholder="Nom / alias du dossier (optionnel)"
-                        value={editingName}
-                        onChange={(e) => setEditingName(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="tf-k">&nbsp;</div>
-                    <div className="tf-v">
-                      <button
-                        type="button"
-                        className="tf-btn tf-btn-primary"
-                        onClick={handleSaveTenantMeta}
-                        disabled={savingMeta}
-                      >
-                        {savingMeta ? "Enregistrement..." : "Enregistrer"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div />
-                </div>
-
-                {checklist && (
-                  <div className="tf-checklist">
-                    <div className="tf-checklist-head">
-                      <div className="tf-checklist-header">
-                        <span>Checklist du dossier</span>{" "}
-                        {missingDocs.length > 0 && (
-                          <span className="tf-missing-badge">
-                            {missingDocs.length} manquante
-                            {missingDocs.length > 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="tf-checklist-grid">
-                      <div className="tf-checklist-col">
-                        <div className="tf-checklist-col-title">Reçues</div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-2">Reçues</p>
                         {receivedDocs.length === 0 ? (
-                          <div className="tf-muted">Aucune pièce reçue.</div>
+                          <p className="text-xs text-ink-tertiary">Aucune pièce reçue.</p>
                         ) : (
-                          <div className="tf-badges">
+                          <div className="flex flex-wrap gap-2">
                             {receivedDocs.map((d) => (
-                              <span className="tf-pill tf-pill-success" key={`rec-${d}`}>
-                                ✅ {getDocLabel(d)}
+                              <span key={`rec-${d}`} className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                                {getDocLabel(d)}
                               </span>
                             ))}
                           </div>
                         )}
                       </div>
-
-                      <div className="tf-checklist-col">
-                        <div className="tf-checklist-col-title">Manquantes</div>
+                      <div>
+                        <p className="text-xs text-ink-tertiary uppercase tracking-wide mb-2">Manquantes</p>
                         {missingDocs.length === 0 ? (
-                          <div className="tf-muted">Aucune pièce manquante.</div>
+                          <p className="text-xs text-ink-tertiary">Aucune pièce manquante.</p>
                         ) : (
-                          <div className="tf-badges">
+                          <div className="flex flex-wrap gap-2">
                             {missingDocs.map((d) => (
-                              <span className="tf-pill tf-pill-danger" key={`mis-${d}`}>
-                                ❌ {getDocLabel(d)}
+                              <span key={`mis-${d}`} className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
+                                {getDocLabel(d)}
                               </span>
                             ))}
                           </div>
@@ -1080,46 +1044,31 @@ export default function TenantFilesPanel({ authFetch }) {
                   </div>
                 )}
 
-                <div className="tf-attach-row">
+                {/* Upload + attacher */}
+                <div className="flex flex-wrap items-center gap-3 px-6 py-4">
                   <input
                     type="file"
                     accept=".pdf,.png,.jpg,.jpeg"
                     onChange={handleUploadForTenant}
                     disabled={!selectedTenantId || uploadLoading || !authFetchOk}
-                    style={{ display: "none" }}
+                    className="hidden"
                     id="tenant-upload-input"
                   />
-
-                  <label htmlFor="tenant-upload-input" className="tf-btn tf-btn-secondary">
+                  <label htmlFor="tenant-upload-input" className={btnSecondary}>
                     {uploadLoading ? "Téléversement..." : "Téléverser un fichier"}
                   </label>
-
-                  <span className="tf-muted">PDF, PNG, JPG – taille max 10 Mo</span>
-
-                  {/* ✅ Badge affiché pendant que le worker RQ analyse le document */}
+                  <span className="text-xs text-ink-tertiary">PDF, PNG, JPG – max 10 Mo</span>
                   {analysingWorker && (
-                    <span style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "4px 12px",
-                      borderRadius: 999,
-                      background: "rgba(109,94,248,0.15)",
-                      border: "1px solid rgba(109,94,248,0.4)",
-                      color: "rgba(167,139,250,1)",
-                      fontSize: "0.82rem",
-                      fontWeight: 700,
-                      animation: "pulse 1.6s ease-in-out infinite",
-                    }}>
-                      ✦ Analyse IA en cours…
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-200 animate-pulse">
+                      Analyse IA en cours…
                     </span>
                   )}
                 </div>
 
                 {unlinkedFiles.length > 0 && (
-                  <div className="tf-attach-row" style={{ marginTop: 12 }}>
+                  <div className="flex items-center gap-2 px-6 pb-5">
                     <select
-                      className="tf-input"
+                      className={inputCls}
                       value={selectedFileIdToAttach}
                       onChange={(e) => setSelectedFileIdToAttach(e.target.value)}
                       disabled={!selectedTenantId || filesLoading}
@@ -1131,14 +1080,8 @@ export default function TenantFilesPanel({ authFetch }) {
                         </option>
                       ))}
                     </select>
-
-                    <button
-                      type="button"
-                      className="tf-btn tf-btn-primary"
-                      onClick={handleAttach}
-                      disabled={!selectedFileIdToAttach || attachLoading}
-                    >
-                      {attachLoading ? "Attachement..." : "Attacher"}
+                    <button type="button" className={btnPrimary} onClick={handleAttach} disabled={!selectedFileIdToAttach || attachLoading}>
+                      {attachLoading ? "..." : "Attacher"}
                     </button>
                   </div>
                 )}
@@ -1146,65 +1089,55 @@ export default function TenantFilesPanel({ authFetch }) {
             )}
           </div>
 
-          <div className="tf-card">
-            <div className="tf-card-title tf-row">
-              <span className="tf-row-left">
-                <FileText size={18} /> Pièces du dossier
+          {/* Card Pièces du dossier */}
+          <div className="bg-white border border-surface-border rounded-xl shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-ink-tertiary" />
+                <h3 className="text-sm font-semibold text-ink">Pièces du dossier</h3>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-600">
+                {linkedFiles.length}
               </span>
-              <span className="tf-chip">{linkedFiles.length}</span>
             </div>
 
             {!tenantDetail ? (
-              <div className="tf-muted">Sélectionne un locataire pour voir ses pièces.</div>
+              <div className="flex flex-col items-center justify-center py-14 text-center">
+                <FileText size={36} className="text-surface-border mb-3" />
+                <p className="text-sm text-ink-tertiary">Sélectionne un locataire pour voir ses pièces.</p>
+              </div>
             ) : linkedFileIds.length === 0 ? (
-              <div className="tf-muted">Aucun document attaché.</div>
+              <div className="flex flex-col items-center justify-center py-14 text-center">
+                <FileText size={36} className="text-surface-border mb-3" />
+                <p className="text-sm font-medium text-ink">Aucun document attaché</p>
+                <p className="text-xs text-ink-tertiary mt-1">Téléversez ou attachez un document ci-dessus</p>
+              </div>
             ) : linkedFiles.length === 0 ? (
-              <div className="tf-muted">Chargement des documents du dossier...</div>
+              <div className="flex items-center justify-center py-10 text-sm text-ink-tertiary">Chargement des documents…</div>
             ) : (
-              // ✅ plus de scroll interne : on ajoute une classe
-              <div className="tf-files tf-files-no-scroll">
+              <div className="divide-y divide-surface-border">
                 {linkedFiles.map((f) => (
-                  <div className="tf-file" key={f.id}>
-                    <div className="tf-file-main">
-                      <div className="tf-file-title">
-                        #{f.id} — {f.file_type || "Doc"} — {f.filename}
-                      </div>
-                      <div className="tf-file-sub">
+                  <div key={f.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 hover:bg-surface-bg transition-colors duration-150">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-ink truncate">
+                        {f.file_type || "Document"} — {f.filename}
+                      </p>
+                      <p className="text-xs text-ink-tertiary mt-0.5">
                         {f.created_at ? new Date(f.created_at).toLocaleString() : ""}
-                      </div>
+                      </p>
                     </div>
-
-                    <div className="tf-file-actions">
-                      <button
-                        type="button"
-                        className="tf-btn tf-btn-ghost"
-                        onClick={() => handleViewFile(f.id)}
-                      >
-                        <Eye size={16} /> Voir
+                    <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+                      <button type="button" className={btnGhost} onClick={() => handleViewFile(f.id)}>
+                        <Eye size={14} /> Voir
                       </button>
-
-                      <button
-                        type="button"
-                        className="tf-btn tf-btn-ghost"
-                        onClick={() => handleDownloadFile(f)}
-                      >
-                        <Download size={16} /> Télécharger
+                      <button type="button" className={btnGhost} onClick={() => handleDownloadFile(f)}>
+                        <Download size={14} /> Télécharger
                       </button>
-
-                      <button
-                        type="button"
-                        className="tf-btn tf-btn-ghost"
-                        onClick={() => openConfirmUnlink(f.id)}
-                      >
-                        <Link2 size={16} /> Retirer du dossier
+                      <button type="button" className={btnGhost} onClick={() => openConfirmUnlink(f.id)}>
+                        <Link2 size={14} /> Retirer
                       </button>
-
-                      <button
-                        type="button"
-                        className="tf-btn tf-btn-danger"
-                        onClick={() => openConfirmDelete(f.id)}
-                      >
-                        <Trash2 size={16} /> Supprimer définitivement
+                      <button type="button" className={btnDanger} onClick={() => openConfirmDelete(f.id)}>
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </div>
@@ -1215,95 +1148,53 @@ export default function TenantFilesPanel({ authFetch }) {
         </div>
       </div>
 
-      {/* Modal de confirmation pour les fichiers */}
+      {/* Modal — fichiers */}
       {confirmState.open && (
-        <div className="tf-modal-backdrop">
-          <div
-            className={`tf-modal ${
-              confirmState.mode === "delete" ? "tf-modal-danger" : "tf-modal-warning"
-            }`}
-          >
-            <div className="tf-modal-header">
-              {confirmState.mode === "delete"
-                ? "Supprimer définitivement le document ?"
-                : "Retirer le document du dossier ?"}
-            </div>
-
-            <div className="tf-modal-body">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-base font-semibold text-ink mb-2">
+              {confirmState.mode === "delete" ? "Supprimer définitivement le document ?" : "Retirer le document du dossier ?"}
+            </h3>
+            <p className="text-sm text-ink-secondary mb-6">
               {confirmState.mode === "delete" ? (
-                <>
-                  Ce document sera <strong>supprimé définitivement</strong> (irréversible).
-                </>
+                <>Ce document sera <strong>supprimé définitivement</strong> (irréversible).</>
               ) : (
-                <>
-                  Le document sera <strong>retiré de ce dossier</strong> mais restera dans
-                  l'historique.
-                </>
+                <>Le document sera <strong>retiré de ce dossier</strong> mais restera dans l’historique.</>
               )}
-            </div>
-
-            <div className="tf-modal-actions">
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button type="button" className={btnGhost} onClick={handleConfirmCancel}>Annuler</button>
               <button
                 type="button"
-                className="tf-btn tf-btn-ghost"
-                onClick={handleConfirmCancel}
-              >
-                Annuler
-              </button>
-
-              <button
-                type="button"
-                className={
-                  confirmState.mode === "delete"
-                    ? "tf-btn tf-btn-danger"
-                    : "tf-btn tf-btn-primary"
-                }
+                className={confirmState.mode === "delete" ? btnDanger : btnPrimary}
                 onClick={handleConfirmValidate}
               >
-                {confirmState.mode === "delete"
-                  ? "Supprimer définitivement"
-                  : "Retirer du dossier"}
+                {confirmState.mode === "delete" ? "Supprimer définitivement" : "Retirer du dossier"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ✅ Nouvelle modal de confirmation pour la suppression de dossier */}
+      {/* Modal — supprimer dossier */}
       {confirmTenantDelete.open && (
-        <div className="tf-modal-backdrop">
-          <div className="tf-modal tf-modal-danger">
-            <div className="tf-modal-header">
-              Supprimer définitivement ce dossier locataire ?
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-base font-semibold text-ink mb-2">Supprimer définitivement ce dossier locataire ?</h3>
+            <div className="text-sm text-ink-secondary mb-6 space-y-2">
+              <p>Le dossier sera <strong>supprimé</strong> ainsi que ses <strong>liens</strong> avec les documents et emails.</p>
+              <p>Les documents resteront disponibles dans l’historique global des fichiers.</p>
             </div>
-
-            <div className="tf-modal-body">
-              <p>
-                Le dossier sera <strong>supprimé</strong> ainsi que ses{" "}
-                <strong>liens</strong> avec les documents et emails.
-              </p>
-              <p>
-                Les documents resteront disponibles dans l&apos;historique global des
-                fichiers.
-              </p>
-            </div>
-
-            <div className="tf-modal-actions">
+            <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
-                className="tf-btn tf-btn-ghost"
+                className={btnGhost}
                 onClick={() => setConfirmTenantDelete({ open: false, tenantId: null })}
                 disabled={deleteTenantLoading}
               >
                 Annuler
               </button>
-
-              <button
-                type="button"
-                className="tf-btn tf-btn-danger"
-                onClick={handleDeleteTenant}
-                disabled={deleteTenantLoading}
-              >
+              <button type="button" className={btnDanger} onClick={handleDeleteTenant} disabled={deleteTenantLoading}>
                 {deleteTenantLoading ? "Suppression..." : "Supprimer le dossier"}
               </button>
             </div>
