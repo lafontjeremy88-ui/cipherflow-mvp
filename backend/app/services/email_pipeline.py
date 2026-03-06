@@ -30,6 +30,7 @@ from app.database import models
 from app.database.models import TenantDocType
 from app.services.email_service import analyze_email, generate_reply
 from app.services.document_service import analyze_document, DocumentAnalysisResult
+from app.services.mistral_service import MistralRateLimitError
 from app.services.storage_service import upload_file
 from app.services.tenant_service import (
     ensure_tenant_file,
@@ -100,6 +101,8 @@ async def run_email_pipeline(payload: dict) -> None:
                     if doc_candidate_name and not candidate_name_from_docs:
                         candidate_name_from_docs = doc_candidate_name
             except Exception as e:
+                if isinstance(e, MistralRateLimitError):
+                    raise
                 log.error(f"[pipeline] PJ échouée ({att.get('filename', '?')}) : {e}")
 
         # ── ÉTAPE 2 : Analyse email ────────────────────────────────────────────
@@ -327,6 +330,8 @@ async def _process_attachment(
             content_type=content_type,
         )
     except Exception as doc_err:
+        if isinstance(doc_err, MistralRateLimitError):
+            raise
         log.error(f"[pipeline] analyze_document() a planté pour {filename} : {doc_err}")
         doc_result = DocumentAnalysisResult(
             doc_type=TenantDocType.OTHER.value,

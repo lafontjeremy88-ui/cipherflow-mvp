@@ -343,6 +343,7 @@ export default function PrivacyPolicy() {
             <span style={{fontSize:'13px', color:'#94A3B8'}}>© 2026 CipherFlow — Tous droits réservés</span>
           </div>
           <div style={{display:'flex', gap:'20px'}}>
+            <a href="/mentions-legales" style={{fontSize:'13px', color:'#94A3B8', textDecoration:'none'}}>Mentions légales</a>
             <a href="/privacy" style={{fontSize:'13px', color:'#2563EB', fontWeight:'500', textDecoration:'none'}}>Confidentialité</a>
             <a href="/terms" style={{fontSize:'13px', color:'#94A3B8', textDecoration:'none'}}>CGU</a>
             <a href="mailto:contact@cipherflow.company" style={{fontSize:'13px', color:'#94A3B8', textDecoration:'none'}}>Contact</a>

@@ -8,7 +8,7 @@ from typing import Optional
 
 from app.core.config import settings
 from app.database.models import TenantDocType, DocQuality
-from app.services.mistral_service import analyze_with_mistral
+from app.services.mistral_service import analyze_with_mistral, MistralRateLimitError
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +194,8 @@ Règles doc_type :
         return _parse_response(result.text)
 
     except Exception as first_err:
+        if isinstance(first_err, MistralRateLimitError):
+            raise
         err_str = str(first_err)
         is_image = mime.startswith("image/")
 
@@ -223,6 +225,8 @@ Règles doc_type :
                     error=str(je),
                 )
             except Exception as retry_err:
+                if isinstance(retry_err, MistralRateLimitError):
+                    raise
                 log.error(f"[document_service] Erreur après retry PIL : {retry_err}")
                 return DocumentAnalysisResult(
                     summary="L'analyse de la pièce jointe n'est pas disponible.",

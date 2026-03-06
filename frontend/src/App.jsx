@@ -18,7 +18,7 @@ import VerifyEmail from "./pages/VerifyEmail";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
-import LegalNotice from "./pages/LegalNotice";
+import MentionsLegales from "./pages/MentionsLegales";
 import Terms from "./pages/Terms";
 import Onboarding from "./pages/Onboarding";
 import Error500 from "./pages/Error500";
@@ -121,7 +121,7 @@ function AppInner() {
     const publicPaths = [
       "/login", "/register", "/oauth/callback", "/verify-email",
       "/forgot-password", "/reset-password", "/privacy",
-      "/mentions-legales", "/terms",
+      "/mentions-legales", "/legal", "/terms",
     ];
     if (!isAuthed && !publicPaths.includes(location.pathname)) {
       navigate("/login", { replace: true });
@@ -159,7 +159,8 @@ function AppInner() {
       <Route path="/oauth/callback" element={<OAuthCallback onDone={handleLoginSuccess} />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
-      <Route path="/mentions-legales" element={<LegalNotice />} />
+      <Route path="/mentions-legales" element={<MentionsLegales />} />
+      <Route path="/legal" element={<MentionsLegales />} />
       <Route path="/terms" element={<Terms />} />
 
       {/* Onboarding (protégé, hors AppLayout) */}
