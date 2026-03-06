@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python:*)",
       "Bash(pip install:*)",
-      "Bash(wc -l c:/Users/zamit/Desktop/cipherflow/inbox-ia-pro/frontend/src/pages/*.jsx c:/Users/zamit/Desktop/cipherflow/inbox-ia-pro/frontend/src/components/*.jsx)"
+      "Bash(wc -l c:/Users/zamit/Desktop/cipherflow/inbox-ia-pro/frontend/src/pages/*.jsx c:/Users/zamit/Desktop/cipherflow/inbox-ia-pro/frontend/src/components/*.jsx)",
+      "Bash(ls -la /c/Users/zamit/Desktop/cipherflow/inbox-ia-pro/backend/*.sql)"
     ]
   }
 }

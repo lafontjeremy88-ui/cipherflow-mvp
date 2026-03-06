@@ -25,15 +25,10 @@ resend==2.3.0
 fpdf2==2.7.9
 Pillow==10.3.0
 pillow-heif==0.18.0
-python-bidi==0.4.2
-arabic-reshaper==3.0.0
 minio==7.2.9
 
 # --- Templates ---
 jinja2==3.1.4
-
-# --- WebSockets ---
-websockets==13.0
 
 # --- Redis Queue (PRO ARCHITECTURE) ---
 redis==5.0.7
