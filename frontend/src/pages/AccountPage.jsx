@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-
-function cx(...classes) {
-  return classes.filter(Boolean).join(" ");
-}
+import { useNavigate } from "react-router-dom";
+import {
+  User, Mail, Shield, Key, Trash2, CheckCircle,
+  AlertCircle, Settings, Loader2
+} from "lucide-react";
 
 export default function AccountPage({ authFetch }) {
   const [loading, setLoading] = useState(true);
@@ -111,143 +112,246 @@ export default function AccountPage({ authFetch }) {
     }
   };
 
+  const navigate = useNavigate();
+
+  const inputCls = "w-full px-4 py-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0F172A] placeholder-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] focus:bg-white transition-all duration-200";
+
+  const initials = (data?.email || data?.first_name || "?")[0].toUpperCase();
+
   if (loading) {
     return (
-      <div className="card">
-        <h2>Mon compte</h2>
-        <div className="muted">Chargement…</div>
+      <div className="max-w-3xl mx-auto flex items-center justify-center py-20">
+        <Loader2 size={28} className="animate-spin text-[#94A3B8]" />
       </div>
     );
   }
 
   return (
-    <div style={{ display: "grid", gap: 20, maxWidth: 720 }}>
-      {/* En-tête */}
+    <div className="max-w-3xl mx-auto pb-16 space-y-6">
+
+      {/* Titre */}
       <div>
-        <h2 style={{ marginTop: 0, marginBottom: 4 }}>Mon compte</h2>
-        <p className="muted" style={{ marginTop: 0 }}>
+        <h1 className="text-2xl font-bold text-[#0F172A]">Mon Compte</h1>
+        <p className="text-sm text-[#94A3B8] mt-1">
           Gérez vos informations personnelles et la sécurité de votre compte.
         </p>
       </div>
 
-      {successMsg && <div className="alert alert-success">{successMsg}</div>}
-      {err        && <div className="alert alert-error">{err}</div>}
+      {/* Onglets */}
+      <div className="flex gap-1 bg-[#F1F5F9] p-1 rounded-lg w-fit">
+        <button
+          className="px-4 py-2 text-sm font-medium rounded-md text-[#475569] hover:text-[#0F172A] transition-all duration-200"
+          onClick={() => navigate('/settings')}
+        >
+          Général
+        </button>
+        <button className="px-4 py-2 text-sm font-medium rounded-md bg-white shadow-sm text-[#0F172A] transition-all duration-200">
+          Mon Compte
+        </button>
+      </div>
 
-      {/* ── Informations ────────────────────────────────────────── */}
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Informations</h3>
+      {/* Alertes globales */}
+      {successMsg && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 text-green-700 text-sm rounded-xl">
+          <CheckCircle size={16} /> {successMsg}
+        </div>
+      )}
+      {err && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+          <AlertCircle size={16} /> {err}
+        </div>
+      )}
 
-        <div className="form-grid">
-          <div className="field">
-            <label>Email</label>
-            <input value={data?.email || ""} readOnly />
+      {/* ── SECTION PROFIL ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <User className="h-4 w-4 text-blue-600" />
           </div>
-
-          <div className="field">
-            <label>Rôle</label>
-            <input value={data?.role || ""} readOnly />
-          </div>
-
-          <div className="field">
-            <label>État du compte</label>
-            <input value={data?.account_status || ""} readOnly />
-          </div>
-
-          <div className="field">
-            <label>Membre depuis</label>
-            <input
-              value={
-                data?.created_at
-                  ? new Date(data.created_at).toLocaleDateString("fr-FR")
-                  : ""
-              }
-              readOnly
-            />
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Profil</h2>
+            <p className="text-xs text-[#94A3B8]">Vos informations personnelles</p>
           </div>
         </div>
 
-        <div className="form-grid" style={{ marginTop: 16 }}>
-          <div className="field" style={{ gridColumn: "1 / -1" }}>
-            <label>Nom complet</label>
-            <input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Prénom Nom"
-            />
+        <div className="px-6 py-5">
+          {/* Avatar + infos */}
+          <div className="flex items-center gap-5 mb-6">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#2563EB] to-[#0EA5A4] flex items-center justify-center text-white text-xl font-bold shadow-sm flex-shrink-0">
+              {initials}
+            </div>
+            <div>
+              <p className="text-base font-semibold text-[#0F172A]">{fullName || data?.email || "—"}</p>
+              <p className="text-sm text-[#94A3B8]">{data?.email}</p>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                  <CheckCircle className="h-3 w-3" /> Compte vérifié
+                </span>
+                {isAdmin && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-50 text-violet-700 text-xs font-medium rounded-full border border-violet-200">
+                    Admin
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Formulaire */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Nom complet</label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Prénom Nom"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Rôle</label>
+              <input type="text" value={data?.role || ""} readOnly className={inputCls + " opacity-60 cursor-not-allowed"} />
+            </div>
           </div>
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+        <div className="px-6 py-4 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between">
           <button
-            className={cx("btn btn-primary", saving && "disabled")}
-            onClick={onSave}
+            className="text-sm text-[#94A3B8] hover:text-[#475569] transition-colors"
+            onClick={load}
             disabled={saving}
           >
-            {saving ? "Sauvegarde…" : "Enregistrer"}
-          </button>
-          <button className="btn btn-ghost" onClick={load} disabled={saving}>
             Recharger
+          </button>
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={15} className="animate-spin" /> : null}
+            {saving ? "Enregistrement…" : "Enregistrer les modifications"}
           </button>
         </div>
       </div>
 
-      {/* ── Sécurité ─────────────────────────────────────────────── */}
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Sécurité</h3>
-        <p className="muted" style={{ marginBottom: 14, fontSize: 14 }}>
-          Vous recevrez un lien de réinitialisation à{" "}
-          <strong>{data?.email}</strong>.
-        </p>
-        <button
-          className="btn btn-ghost"
-          onClick={onRequestPasswordReset}
-          disabled={pwdLoading}
-        >
-          {pwdLoading ? "Envoi…" : "Changer mon mot de passe"}
-        </button>
-        {pwdMsg.text && (
-          <div
-            className={pwdMsg.type === "success" ? "alert alert-success" : "alert alert-error"}
-            style={{ marginTop: 12 }}
-          >
-            {pwdMsg.text}
+      {/* ── SECTION EMAIL & CONNEXION ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-teal-50 rounded-lg">
+            <Mail className="h-4 w-4 text-teal-600" />
           </div>
-        )}
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Email & Connexion</h2>
+            <p className="text-xs text-[#94A3B8]">Méthode d'authentification utilisée</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 space-y-3">
+          {/* Email principal */}
+          <div className="flex items-center justify-between p-4 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0]">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white border border-[#E2E8F0] rounded-lg">
+                <Mail className="h-4 w-4 text-[#475569]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#0F172A]">{data?.email || "—"}</p>
+                <p className="text-xs text-[#94A3B8]">Email principal du compte</p>
+              </div>
+            </div>
+            <span className="px-2 py-0.5 bg-green-50 text-green-700 text-xs font-medium rounded-full border border-green-200">
+              Vérifié
+            </span>
+          </div>
+
+          {/* Membre depuis */}
+          <div className="flex items-center justify-between p-4 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0]">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white border border-[#E2E8F0] rounded-lg">
+                <Key className="h-4 w-4 text-[#475569]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#0F172A]">Membre depuis</p>
+                <p className="text-xs text-[#94A3B8]">
+                  {data?.created_at ? new Date(data.created_at).toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" }) : "—"}
+                </p>
+              </div>
+            </div>
+            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+              {data?.account_status || "actif"}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* ── Zone dangereuse ──────────────────────────────────────── */}
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Zone dangereuse</h3>
-        <p className="muted" style={{ marginBottom: 14, fontSize: 14 }}>
-          La suppression est <strong>irréversible</strong> et entraîne la
-          perte de toutes vos données.
-        </p>
-        <button
-          className="btn btn-ghost"
-          style={{ borderColor: "#f87171", color: "#f87171" }}
-          onClick={onDeleteAccount}
-        >
-          Supprimer mon compte
-        </button>
+      {/* ── SECTION SÉCURITÉ ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-violet-50 rounded-lg">
+            <Shield className="h-4 w-4 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Sécurité</h2>
+            <p className="text-xs text-[#94A3B8]">Gérez l'accès à votre compte</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 space-y-3">
+          {/* Réinitialisation mot de passe */}
+          <div className="flex items-center justify-between p-4 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0]">
+            <div>
+              <p className="text-sm font-medium text-[#0F172A]">Changer mon mot de passe</p>
+              <p className="text-xs text-[#94A3B8]">Un lien sera envoyé à <strong>{data?.email}</strong></p>
+            </div>
+            <button
+              onClick={onRequestPasswordReset}
+              disabled={pwdLoading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-xs font-medium text-[#475569] rounded-lg hover:border-[#2563EB] hover:text-[#2563EB] transition-all duration-200 disabled:opacity-50"
+            >
+              {pwdLoading ? <Loader2 size={13} className="animate-spin" /> : null}
+              {pwdLoading ? "Envoi…" : "Envoyer le lien"}
+            </button>
+          </div>
+          {pwdMsg.text && (
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${pwdMsg.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+              {pwdMsg.type === "success" ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
+              {pwdMsg.text}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* RGPD discret */}
-      <p className="muted" style={{ fontSize: 12, textAlign: "center", marginTop: 0 }}>
-        <a
-          href="/privacy"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ textDecoration: "underline" }}
-        >
+      {/* ── ZONE DANGEREUSE ── */}
+      <div className="bg-white border border-red-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-red-100 flex items-center gap-3">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <Trash2 className="h-4 w-4 text-red-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-red-700">Zone de danger</h2>
+            <p className="text-xs text-red-400">Actions irréversibles</p>
+          </div>
+        </div>
+        <div className="px-6 py-5">
+          <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg border border-red-200">
+            <div>
+              <p className="text-sm font-medium text-red-800">Supprimer mon compte</p>
+              <p className="text-xs text-red-400 mt-0.5">Cette action est permanente et irréversible.</p>
+            </div>
+            <button
+              onClick={onDeleteAccount}
+              className="px-4 py-2 bg-white border border-red-300 text-red-600 text-sm font-medium rounded-lg hover:bg-red-600 hover:text-white hover:border-red-600 transition-all duration-200"
+            >
+              Supprimer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* RGPD */}
+      <p className="text-center text-xs text-[#94A3B8]">
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#475569] transition-colors">
           Politique de confidentialité
         </a>
         {" · "}
-        <a
-          href="/mentions-legales"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ textDecoration: "underline" }}
-        >
+        <a href="/mentions-legales" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#475569] transition-colors">
           Mentions légales
         </a>
       </p>

@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Settings,
   LogOut,
+  UserCircle,
 } from "lucide-react";
 import { getEmail } from "../../services/api";
 
@@ -93,6 +94,7 @@ export default function Sidebar({ onLogout }) {
 
         <SectionLabel>Système</SectionLabel>
         <NavItem to="/settings" icon={Settings} label="Paramètres" />
+        <NavItem to="/account" icon={UserCircle} label="Mon Compte" />
       </nav>
 
       {/* Footer */}

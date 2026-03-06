@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Save, Building, User, PenTool, FileSignature,
+  Save, Building2, User, PenTool, FileSignature,
   Image as ImageIcon, Upload, Loader2, CheckCircle,
-  AlertCircle, Mail, Wifi, WifiOff, ExternalLink, Trash2
+  AlertCircle, Mail, Wifi, WifiOff, ExternalLink, Trash2,
+  Palette, Bot, Filter, ShieldOff, Zap
 } from 'lucide-react';
 
 const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
@@ -472,51 +474,51 @@ function BlacklistSection({ authFetch }) {
     } catch { setErr("Erreur réseau."); }
   };
 
-  return (
-    <Card>
-      <CardTitle>Filtres personnalisés (blacklist)</CardTitle>
-      <p className="text-sm text-ink-secondary mb-4">
-        Les emails dont l'expéditeur contient l'un de ces patterns seront ignorés automatiquement.
-      </p>
+  const blInputCls = "w-full px-4 py-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0F172A] placeholder-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] focus:bg-white transition-all duration-200";
 
-      <div className="flex gap-2 mb-4">
+  return (
+    <div>
+      <div className="flex gap-3 mb-4">
         <input
           value={newPattern}
           onChange={e => setNewPattern(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleAdd()}
           placeholder="ex: @spam.com ou mauvaisexp@"
-          className={`${inputCls} flex-1`}
+          className={`${blInputCls} flex-1`}
         />
         <button
           onClick={handleAdd}
           disabled={loading || !newPattern.trim()}
-          className="px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          className="px-5 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
         >
-          Ajouter
+          + Ajouter
         </button>
       </div>
 
       {err && <p className="text-sm text-red-600 mb-3">{err}</p>}
 
       {patterns.length === 0 ? (
-        <p className="text-sm text-ink-tertiary">Aucun filtre configuré.</p>
+        <div className="flex items-center gap-2 py-4 justify-center">
+          <ShieldOff className="h-4 w-4 text-[#CBD5E1]" />
+          <p className="text-sm text-[#94A3B8]">Aucun filtre configuré.</p>
+        </div>
       ) : (
-        <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
           {patterns.map(p => (
-            <div key={p.id} className="flex items-center gap-3 px-4 py-2.5 bg-surface-bg rounded-lg border border-surface-border">
-              <span className="flex-1 text-sm font-mono text-ink">{p.pattern}</span>
+            <span key={p.id} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F1F5F9] border border-[#E2E8F0] rounded-full text-xs font-mono text-[#475569]">
+              {p.pattern}
               <button
                 onClick={() => handleDelete(p.id)}
-                className="text-ink-tertiary hover:text-red-500 transition-colors"
+                className="text-[#94A3B8] hover:text-red-500 transition-colors ml-0.5"
                 title="Supprimer"
               >
-                <Trash2 size={15} />
+                <Trash2 size={12} />
               </button>
-            </div>
+            </span>
           ))}
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -583,53 +585,108 @@ const SettingsPanel = ({ token, authFetch }) => {
     finally { setLoading(false); }
   };
 
-  return (
-    <div className="max-w-[960px] mx-auto pb-16 space-y-1">
+  const navigate = useNavigate();
 
-      {/* Identité */}
-      <Card>
-        <CardTitle><Building size={16} /> Identité de l'agence</CardTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className={labelCls}><span className="flex items-center gap-1"><Building size={14} /> Nom de l'entreprise</span></label>
-            <input name="company_name" value={settings.company_name || ""} onChange={handleChange} className={inputCls} placeholder="Ex: Agence Immobilière" />
+  const sectionInputCls = "w-full px-4 py-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0F172A] placeholder-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 focus:border-[#2563EB] focus:bg-white transition-all duration-200";
+
+  return (
+    <div className="max-w-3xl mx-auto pb-16 space-y-6">
+
+      {/* Titre de section */}
+      <div>
+        <h1 className="text-2xl font-bold text-[#0F172A]">Paramètres</h1>
+        <p className="text-sm text-[#94A3B8] mt-1">
+          Personnalisez votre agence et configurez la réception automatique des emails.
+        </p>
+      </div>
+
+      {/* Onglets */}
+      <div className="flex gap-1 bg-[#F1F5F9] p-1 rounded-lg w-fit">
+        <button className="px-4 py-2 text-sm font-medium rounded-md bg-white shadow-sm text-[#0F172A] transition-all duration-200">
+          Général
+        </button>
+        <button
+          className="px-4 py-2 text-sm font-medium rounded-md text-[#475569] hover:text-[#0F172A] transition-all duration-200"
+          onClick={() => navigate('/account')}
+        >
+          Mon Compte
+        </button>
+      </div>
+
+      {/* Feedback global */}
+      {message && <FeedbackMsg msg={message} />}
+
+      {/* ── SECTION 1 — Identité ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <Building2 className="h-4 w-4 text-blue-600" />
           </div>
           <div>
-            <label className={labelCls}><span className="flex items-center gap-1"><User size={14} /> Nom de l'Agent IA</span></label>
-            <input name="agent_name" value={settings.agent_name || ""} onChange={handleChange} className={inputCls} placeholder="Ex: Sophie" />
+            <h2 className="text-sm font-semibold text-[#0F172A]">Identité de l'Entreprise</h2>
+            <p className="text-xs text-[#94A3B8]">Informations de votre agence immobilière</p>
           </div>
         </div>
-      </Card>
+        <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Nom de l'entreprise</label>
+            <input name="company_name" value={settings.company_name || ""} onChange={handleChange} className={sectionInputCls} placeholder="Ex: Agence Martin" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Nom de l'Agent IA</label>
+            <input name="agent_name" value={settings.agent_name || ""} onChange={handleChange} className={sectionInputCls} placeholder="Ex: Sophie" />
+          </div>
+        </div>
+      </div>
 
-      {/* Logo */}
-      <Card>
-        <CardTitle><ImageIcon size={16} /> Branding &amp; Logo</CardTitle>
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="w-24 h-24 border-2 border-dashed border-surface-border rounded-xl flex items-center justify-center overflow-hidden bg-surface-bg hover:border-primary-600 hover:bg-blue-50/40 transition-all duration-200 cursor-pointer" onClick={() => document.getElementById("logo-upload-input")?.click()}>
+      {/* ── SECTION 2 — Branding & Logo ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-violet-50 rounded-lg">
+            <Palette className="h-4 w-4 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Branding & Logo</h2>
+            <p className="text-xs text-[#94A3B8]">Logo affiché dans l'interface et les emails</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 flex items-center gap-6 flex-wrap">
+          <div
+            className="w-20 h-20 border-2 border-dashed border-[#E2E8F0] rounded-xl flex items-center justify-center overflow-hidden bg-[#F8FAFC] cursor-pointer hover:border-[#2563EB] hover:bg-[#EFF6FF] transition-all duration-200 group"
+            onClick={() => document.getElementById("logo-upload-input")?.click()}
+          >
             {settings.logo
               ? <img src={settings.logo} alt="Logo" className="max-w-full max-h-full object-contain" />
-              : <ImageIcon size={32} className="text-ink-tertiary" />
+              : <ImageIcon className="h-7 w-7 text-[#CBD5E1] group-hover:text-[#2563EB] transition-colors" />
             }
           </div>
           <div>
-            <p className="text-sm font-medium text-ink mb-2">Mettre à jour le logo</p>
-            <label className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium cursor-pointer transition-all">
+            <p className="text-sm font-medium text-[#0F172A] mb-1">Mettre à jour le logo</p>
+            <p className="text-xs text-[#94A3B8] mb-3">PNG, JPG ou JPEG — max 2MB</p>
+            <label className="flex items-center gap-2 px-4 py-2 bg-white border border-[#E2E8F0] text-sm font-medium text-[#475569] rounded-lg hover:bg-[#F8FAFC] hover:border-[#2563EB] hover:text-[#2563EB] transition-all duration-200 cursor-pointer">
               {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
               {uploading ? "Traitement…" : "Choisir un fichier"}
               <input id="logo-upload-input" type="file" accept="image/png, image/jpeg" onChange={handleLogoUpload} disabled={uploading} className="hidden" />
             </label>
-            <p className="text-xs text-ink-tertiary mt-1.5">PNG, JPEG — recommandé 256×256 px</p>
           </div>
         </div>
-      </Card>
+      </div>
 
-      {/* Comportement IA */}
-      <Card>
-        <CardTitle><PenTool size={16} /> Comportement de l'IA</CardTitle>
-        <div className="space-y-4">
+      {/* ── SECTION 3 — Comportement IA ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-teal-50 rounded-lg">
+            <Bot className="h-4 w-4 text-teal-600" />
+          </div>
           <div>
-            <label className={labelCls}>Ton de la réponse</label>
-            <select name="tone" value={settings.tone || "pro"} onChange={handleChange} className={inputCls + " cursor-pointer"}>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Comportement de l'IA</h2>
+            <p className="text-xs text-[#94A3B8]">Personnalisez le ton et la signature des réponses</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Ton de la réponse</label>
+            <select name="tone" value={settings.tone || "pro"} onChange={handleChange} className={sectionInputCls + " cursor-pointer"}>
               <option value="pro">👔 Professionnel</option>
               <option value="amical">👋 Amical & Chaleureux</option>
               <option value="direct">⚡ Direct & Concis</option>
@@ -639,70 +696,96 @@ const SettingsPanel = ({ token, authFetch }) => {
             </select>
           </div>
           <div>
-            <label className={labelCls}><span className="flex items-center gap-1"><FileSignature size={14} /> Signature email automatique</span></label>
-            <textarea name="signature" value={settings.signature || ""} onChange={handleChange} placeholder={"Cordialement,\nL'équipe"} rows={4} className={inputCls + " resize-vertical"} />
+            <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Signature email automatique</label>
+            <textarea name="signature" value={settings.signature || ""} onChange={handleChange} placeholder={"Cordialement,\nL'équipe"} rows={4} className={sectionInputCls + " resize-vertical"} />
           </div>
         </div>
-      </Card>
+      </div>
 
-      {/* Réponse automatique */}
-      <Card>
-        <CardTitle>Réponse automatique</CardTitle>
-        <div className={`flex items-center gap-4 p-4 rounded-lg border mb-4 transition-colors ${settings.auto_reply_enabled ? "bg-green-50 border-green-200" : "bg-surface-bg border-surface-border"}`}>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-ink">Réponse automatique active</p>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              {settings.auto_reply_enabled
-                ? "Les candidatures reçoivent une réponse automatique"
-                : "Activez pour envoyer automatiquement les réponses IA"}
-            </p>
+      {/* ── SECTION 4 — Réponse automatique ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-green-50 rounded-lg">
+            <Zap className="h-4 w-4 text-green-600" />
           </div>
-          <Toggle checked={!!settings.auto_reply_enabled} onChange={handleChange} name="auto_reply_enabled" />
-        </div>
-
-        {settings.auto_reply_enabled && (
-          <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200 mb-4">
-            <span className="text-amber-700 text-sm">⚠️</span>
-            <p className="text-xs text-amber-700">Les emails seront envoyés automatiquement en votre nom</p>
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Réponse automatique</h2>
+            <p className="text-xs text-[#94A3B8]">Envoi automatique des réponses IA aux candidatures</p>
           </div>
-        )}
-
-        <div>
-          <label className={labelCls}>Délai avant envoi (minutes)</label>
-          <input name="auto_reply_delay_minutes" type="number" min="0" value={settings.auto_reply_delay_minutes ?? 0} onChange={handleChange} disabled className={inputCls + " opacity-50 cursor-not-allowed"} />
-          <p className="text-xs text-ink-tertiary mt-1">Fonctionnalité en préparation</p>
         </div>
-      </Card>
+        <div className="px-6 py-5">
+          <div className={`flex items-center gap-4 p-4 rounded-lg border mb-4 transition-colors ${settings.auto_reply_enabled ? "bg-green-50 border-green-200" : "bg-[#F8FAFC] border-[#E2E8F0]"}`}>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-[#0F172A]">Réponse automatique active</p>
+              <p className="text-xs text-[#475569] mt-0.5">
+                {settings.auto_reply_enabled
+                  ? "Les candidatures reçoivent une réponse automatique"
+                  : "Activez pour envoyer automatiquement les réponses IA"}
+              </p>
+            </div>
+            <Toggle checked={!!settings.auto_reply_enabled} onChange={handleChange} name="auto_reply_enabled" />
+          </div>
+          {settings.auto_reply_enabled && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200 mb-4">
+              <span className="text-amber-700 text-sm">⚠️</span>
+              <p className="text-xs text-amber-700">Les emails seront envoyés automatiquement en votre nom.</p>
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-[#475569] mb-2 uppercase tracking-wide">Délai avant envoi (minutes)</label>
+            <input name="auto_reply_delay_minutes" type="number" min="0" value={settings.auto_reply_delay_minutes ?? 0} onChange={handleChange} disabled className={sectionInputCls + " opacity-50 cursor-not-allowed"} />
+            <p className="text-xs text-[#94A3B8] mt-1">Fonctionnalité en préparation</p>
+          </div>
+        </div>
+      </div>
 
-      {/* Bouton sauvegarder */}
-      <div className="flex items-center justify-between p-4 bg-surface-bg rounded-xl border border-surface-border mb-6">
-        <FeedbackMsg msg={message} />
-        {!message && <p className="text-sm text-ink-tertiary">Modifications non enregistrées</p>}
+      {/* ── Bouton sauvegarder ── */}
+      <div className="flex items-center justify-end gap-4 px-1">
         <button
           onClick={handleSave}
           disabled={loading}
-          className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-lg text-sm font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Save size={16} /> {loading ? "Sauvegarde…" : "Sauvegarder"}
+          <Save size={16} /> {loading ? "Sauvegarde…" : "Sauvegarder les paramètres"}
         </button>
       </div>
 
-      {/* Réception des emails */}
-      <div>
-        <h3 className="text-sm font-semibold text-ink mb-1">Réception des emails</h3>
-        <p className="text-sm text-ink-secondary mb-4">
-          Connectez votre boîte email pour que CipherFlow traite automatiquement les dossiers locataires entrants.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      {/* ── SECTION 5 — Connexions Email ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-orange-50 rounded-lg">
+            <Mail className="h-4 w-4 text-orange-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Connexions Email</h2>
+            <p className="text-xs text-[#94A3B8]">Boîtes surveillées automatiquement par l'IA</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 grid grid-cols-1 md:grid-cols-2 gap-5">
           <GmailConnectSection authFetch={authFetch} />
           <OutlookConnectSection authFetch={authFetch} />
         </div>
       </div>
 
-      <div className="mt-5">
-        <ImapConfigSection authFetch={authFetch} />
-        <BlacklistSection authFetch={authFetch} />
+      {/* ── SECTION 6 — IMAP manuel ── */}
+      <ImapConfigSection authFetch={authFetch} />
+
+      {/* ── SECTION 7 — Filtres personnalisés ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <Filter className="h-4 w-4 text-red-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Filtres personnalisés</h2>
+            <p className="text-xs text-[#94A3B8]">Les emails dont l'expéditeur contient ces patterns seront ignorés.</p>
+          </div>
+        </div>
+        <div className="px-6 py-5">
+          <BlacklistSection authFetch={authFetch} />
+        </div>
       </div>
+
     </div>
   );
 };
