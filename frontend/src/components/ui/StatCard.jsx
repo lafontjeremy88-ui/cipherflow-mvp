@@ -44,31 +44,29 @@ export default function StatCard({
     <div
       onClick={onClick}
       className={[
-        "bg-white rounded-xl border border-surface-border shadow-card p-6",
+        "bg-white rounded-xl border border-surface-border shadow-card p-5",
         "transition-all duration-200 ease-in-out",
         isClickable
           ? "cursor-pointer hover:shadow-card-hover hover:-translate-y-0.5"
           : "hover:shadow-card-hover",
       ].join(" ")}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-medium tracking-wide text-ink-tertiary uppercase mb-1">
-            {label}
-          </p>
-          <p className="text-3xl font-bold text-ink mt-1">{value}</p>
-          {sublabel && (
-            <p className="text-xs text-ink-tertiary mt-1">{sublabel}</p>
-          )}
-        </div>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-[#475569]">{label}</span>
         {Icon && (
           <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center ${colors.bg} ${colors.icon} flex-shrink-0`}
+            className={`p-2 rounded-lg flex items-center justify-center ${colors.bg} ${colors.icon} flex-shrink-0`}
           >
-            <Icon size={20} />
+            <Icon size={16} />
           </div>
         )}
       </div>
+      <div className="text-3xl font-bold text-[#0F172A] mb-1">
+        {value ?? 0}
+      </div>
+      {sublabel && (
+        <div className="text-xs text-[#94A3B8]">{sublabel}</div>
+      )}
     </div>
   );
 }

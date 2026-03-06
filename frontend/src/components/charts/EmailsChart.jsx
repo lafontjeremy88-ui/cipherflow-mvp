@@ -10,18 +10,22 @@ import {
 } from "recharts";
 
 function generateWeekData() {
-  const days = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-  return days.map((day) => ({
-    label: day,
-    emails: Math.floor(Math.random() * 12) + 1,
-  }));
+  const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date()
+    d.setDate(d.getDate() - (6 - i))
+    const label = `${days[d.getDay()]} ${d.getDate()}`
+    return { label, emails: Math.floor(Math.random() * 12) + 1 }
+  })
 }
 
 function generateMonthData() {
-  return Array.from({ length: 30 }, (_, i) => ({
-    label: `J${i + 1}`,
-    emails: Math.floor(Math.random() * 15) + 1,
-  }));
+  return Array.from({ length: 30 }, (_, i) => {
+    const d = new Date()
+    d.setDate(d.getDate() - (29 - i))
+    const label = `${d.getDate()}/${d.getMonth() + 1}`
+    return { label, emails: Math.floor(Math.random() * 15) + 1 }
+  })
 }
 
 function CustomTooltip({ active, payload, label }) {
@@ -30,7 +34,7 @@ function CustomTooltip({ active, payload, label }) {
     <div className="bg-white border border-surface-border rounded-xl px-3 py-2 shadow-card-hover">
       <p className="text-xs font-semibold text-ink-secondary mb-0.5">{label}</p>
       <p className="text-sm font-bold text-ink">
-        {payload[0]?.value} email{payload[0]?.value > 1 ? "s" : ""}
+        {payload[0]?.value} email{payload[0]?.value > 1 ? "s" : ""} traité{payload[0]?.value > 1 ? "s" : ""}
       </p>
     </div>
   );
@@ -74,6 +78,7 @@ export default function EmailsChart() {
             tick={{ fontSize: 11, fill: "#94A3B8" }}
             axisLine={false}
             tickLine={false}
+            interval={period === 'month' ? 4 : 0}
           />
           <YAxis
             tick={{ fontSize: 11, fill: "#94A3B8" }}

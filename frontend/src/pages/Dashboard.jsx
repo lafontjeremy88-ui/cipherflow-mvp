@@ -59,6 +59,7 @@ function normalizeStats(payload) {
     high_urgency: Number(kpis?.high_urgency || kpis?.urgent || 0),
     tenant_files: Number(kpis?.tenant_files || kpis?.tenantfiles || kpis?.dossiers || 0),
     tenant_files_incomplete: Number(kpis?.tenant_files_incomplete || 0),
+    documents_verified: Number(kpis?.documents_verified ?? 0),
     distribution,
     recents: Array.isArray(payload?.recents)
       ? payload.recents
@@ -89,6 +90,49 @@ function truncate(s, n = 65) {
 
 function fmtPct(x) {
   return `${Math.round(Number.isFinite(x) ? x : 0)}%`;
+}
+
+// ── User helper ───────────────────────────────────────────────────────────────
+
+function getUserNameFromToken() {
+  try {
+    const token = localStorage.getItem('access_token')
+    if (!token) return null
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    const email = payload.email || payload.sub || null
+    return email ? email.split('@')[0] : null
+  } catch {
+    return null
+  }
+}
+
+// ── Dashboard greeting ────────────────────────────────────────────────────────
+
+function DashboardGreeting({ userName }) {
+  const now = new Date()
+  const hour = now.getHours()
+  const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir'
+  const dateStr = now.toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+  const dateFormatted = dateStr.charAt(0).toUpperCase() + dateStr.slice(1)
+  return (
+    <div className="flex items-center justify-between mb-6">
+      <div>
+        <h2 className="text-xl font-semibold text-[#0F172A]">
+          {greeting}{userName ? `, ${userName}` : ''} 👋
+        </h2>
+        <p className="text-sm text-[#94A3B8] mt-0.5">{dateFormatted}</p>
+      </div>
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-full">
+        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+        <span className="text-xs font-medium text-green-700">Surveillance active</span>
+      </div>
+    </div>
+  )
 }
 
 // ── Tooltip donut ─────────────────────────────────────────────────────────────
@@ -136,6 +180,7 @@ export default function Dashboard({ authFetch }) {
     high_urgency: 0,
     tenant_files: 0,
     tenant_files_incomplete: 0,
+    documents_verified: 0,
     distribution: [],
     recents: [],
   });
@@ -211,6 +256,8 @@ export default function Dashboard({ authFetch }) {
         </div>
       )}
 
+      <DashboardGreeting userName={getUserNameFromToken()} />
+
       {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {loading ? (
@@ -222,14 +269,14 @@ export default function Dashboard({ authFetch }) {
             <StatCard
               icon={Mail}
               label="Emails analysés"
-              value={stats.total_emails}
+              value={stats.total_emails ?? 0}
               color="blue"
               onClick={() => navigate("/emails/history")}
             />
             <StatCard
               icon={FolderOpen}
               label="Dossiers locataires"
-              value={stats.tenant_files}
+              value={stats.tenant_files ?? 0}
               sublabel={stats.tenant_files_incomplete > 0 ? `${stats.tenant_files_incomplete} incomplet(s)` : undefined}
               color="teal"
               onClick={() => navigate("/tenant-files")}
@@ -237,14 +284,14 @@ export default function Dashboard({ authFetch }) {
             <StatCard
               icon={FileText}
               label="Documents vérifiés"
-              value="—"
+              value={stats.documents_verified ?? 0}
               color="violet"
               onClick={() => navigate("/documents")}
             />
             <StatCard
               icon={AlertTriangle}
               label="Alertes (urgence haute)"
-              value={stats.high_urgency}
+              value={stats.high_urgency ?? 0}
               color="orange"
               onClick={() => navigate("/emails/history?filter=high_urgency")}
             />
@@ -294,31 +341,37 @@ export default function Dashboard({ authFetch }) {
                 </div>
               ))}
             </div>
-          ) : stats.recents.length === 0 ? (
-            <div className="text-sm text-ink-tertiary py-4 text-center">
-              Aucune activité pour l'instant.
-            </div>
           ) : (
             <div className="space-y-1">
               <p className="text-xs font-semibold text-ink-tertiary uppercase tracking-wide mb-2">Aujourd'hui</p>
-              {stats.recents.slice(0, 5).map((r) => {
-                const subject = truncate(r.subject || "Email");
-                const category = r.category || "Autre";
-                const priority = (r.priority || r.urgency || "").toString().toLowerCase();
-                const isHigh = priority.includes("high") || priority.includes("haute");
+              {stats.recents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <div className="w-10 h-10 bg-[#F1F5F9] rounded-xl flex items-center justify-center mb-3">
+                    <Activity className="h-5 w-5 text-[#CBD5E1]" />
+                  </div>
+                  <p className="text-sm text-[#94A3B8]">Aucune activité pour l'instant</p>
+                  <p className="text-xs text-[#CBD5E1] mt-1">Les événements apparaîtront ici</p>
+                </div>
+              ) : (
+                stats.recents.slice(0, 5).map((r) => {
+                  const subject = truncate(r.subject || "Email");
+                  const category = r.category || "Autre";
+                  const priority = (r.priority || r.urgency || "").toString().toLowerCase();
+                  const isHigh = priority.includes("high") || priority.includes("haute");
 
-                return (
-                  <ActivityItem
-                    key={r.id || subject}
-                    icon={Mail}
-                    iconBg={isHigh ? "bg-red-50" : "bg-blue-50"}
-                    iconColor={isHigh ? "text-red-500" : "text-blue-600"}
-                    title={subject}
-                    subtitle={`${category} · ${r.date || ""}`}
-                    onClick={() => navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")}
-                  />
-                );
-              })}
+                  return (
+                    <ActivityItem
+                      key={r.id || subject}
+                      icon={Mail}
+                      iconBg={isHigh ? "bg-red-50" : "bg-blue-50"}
+                      iconColor={isHigh ? "text-red-500" : "text-blue-600"}
+                      title={subject}
+                      subtitle={`${category} · ${r.date || ""}`}
+                      onClick={() => navigate(r?.id ? `/emails/history?emailId=${r.id}` : "/emails/history")}
+                    />
+                  );
+                })
+              )}
             </div>
           )}
         </Card>
@@ -358,20 +411,19 @@ export default function Dashboard({ authFetch }) {
                 </ResponsiveContainer>
               </div>
 
-              <div className="mt-3 space-y-1.5">
+              <div className="flex flex-wrap gap-2 mt-4 justify-center">
                 {topCategories.map((c, idx) => (
                   <button
                     key={c.name}
                     onClick={() => goToCategory(c.name)}
-                    className="flex items-center gap-2 w-full hover:bg-surface-bg rounded-lg px-2 py-1 -mx-2 transition-colors duration-150"
+                    className="flex items-center gap-1.5 hover:opacity-75 transition-opacity"
                   >
-                    <span
-                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                    <div
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                       style={{ background: getCategoryColor(c.name, idx) }}
                     />
-                    <span className="text-sm text-ink flex-1 text-left truncate">{c.name}</span>
-                    <span className="text-xs font-semibold text-ink-secondary">{fmtPct(c.pct)}</span>
-                    <span className="text-xs text-ink-tertiary w-6 text-right">{c.value}</span>
+                    <span className="text-xs text-[#475569]">{c.name}</span>
+                    <span className="text-xs font-semibold text-[#0F172A]">{c.value}</span>
                   </button>
                 ))}
               </div>
