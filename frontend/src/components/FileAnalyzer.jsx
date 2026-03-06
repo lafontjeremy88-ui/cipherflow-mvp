@@ -4,7 +4,7 @@ import {
   Download, RefreshCw, FileCheck, Trash2, Eye
 } from "lucide-react";
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+import { API_URL as API_BASE } from "../services/api";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -58,8 +58,16 @@ const FileAnalysis = ({ token, authFetch }) => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
 
   useEffect(() => { fetchHistory(); }, [authFetch]);
+
+  useEffect(() => {
+    if (!errorMessage && !successMessage) return;
+    const t = setTimeout(() => { setErrorMessage(null); setSuccessMessage(null); }, 4000);
+    return () => clearTimeout(t);
+  }, [errorMessage, successMessage]);
 
   const fetchHistory = async () => {
     if (!authFetch) return;
@@ -94,10 +102,10 @@ const FileAnalysis = ({ token, authFetch }) => {
     try {
       const res = await authFetch(`${API_BASE}/api/analyze-file`, { method: "POST", body: formData });
       if (res.ok) { setAnalysis(await res.json()); fetchHistory(); }
-      else alert("Erreur lors de l'analyse");
+      else setErrorMessage("Erreur lors de l'analyse");
     } catch (error) {
       console.error(error);
-      alert("Erreur réseau");
+      setErrorMessage("Erreur réseau");
     } finally {
       setLoading(false);
     }
@@ -108,8 +116,8 @@ const FileAnalysis = ({ token, authFetch }) => {
     try {
       const res = await authFetch(`${API_BASE}/api/files/view/${id}`);
       if (res.ok) { const url = window.URL.createObjectURL(await res.blob()); window.open(url, "_blank"); }
-      else alert("Impossible de visualiser le fichier.");
-    } catch (e) { console.error(e); alert("Erreur lors de l'ouverture."); }
+      else setErrorMessage("Impossible de visualiser le fichier.");
+    } catch (e) { console.error(e); setErrorMessage("Erreur lors de l'ouverture."); }
   };
 
   const handleDownload = async (id, filename) => {
@@ -122,8 +130,8 @@ const FileAnalysis = ({ token, authFetch }) => {
         a.href = url; a.download = filename || `document_${id}`;
         document.body.appendChild(a); a.click(); a.remove();
         window.URL.revokeObjectURL(url);
-      } else alert("Impossible de télécharger le fichier.");
-    } catch (e) { console.error(e); alert("Erreur lors du téléchargement."); }
+      } else setErrorMessage("Impossible de télécharger le fichier.");
+    } catch (e) { console.error(e); setErrorMessage("Erreur lors du téléchargement."); }
   };
 
   const handleDelete = async (id) => {
@@ -131,12 +139,23 @@ const FileAnalysis = ({ token, authFetch }) => {
     try {
       const res = await authFetch(`${API_BASE}/api/files/${id}`, { method: "DELETE" });
       if (res.ok) setHistory(history.filter(f => f.id !== id));
-      else alert("Erreur lors de la suppression.");
-    } catch (err) { console.error(err); alert("Erreur réseau."); }
+      else setErrorMessage("Erreur lors de la suppression.");
+    } catch (err) { console.error(err); setErrorMessage("Erreur réseau."); }
   };
 
   return (
     <div className="space-y-6 max-w-[1200px] mx-auto pb-16">
+
+      {(errorMessage || successMessage) && (
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm font-medium ${
+          errorMessage
+            ? "bg-red-50 border-red-200 text-red-700"
+            : "bg-green-50 border-green-200 text-green-700"
+        }`}>
+          <AlertTriangle size={16} className="flex-shrink-0" />
+          <span>{errorMessage || successMessage}</span>
+        </div>
+      )}
 
       {/* Header */}
       <div>

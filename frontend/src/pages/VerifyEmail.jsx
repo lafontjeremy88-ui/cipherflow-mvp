@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-const API_BASE =
-  import.meta?.env?.VITE_API_BASE ||
-  "https://cipherflow-mvp-production.up.railway.app";
+import { API_URL as API_BASE } from '../services/api';
 
 function useQuery() {
   const { search } = useLocation();

@@ -1127,16 +1127,16 @@ export default function TenantFilesPanel({ authFetch }) {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-                      <button type="button" className={btnGhost} onClick={() => handleViewFile(f.id)}>
+                      <button type="button" className={btnGhost} onClick={() => handleViewFile(f.id)} title="Voir le document" aria-label="Voir le document">
                         <Eye size={14} /> Voir
                       </button>
-                      <button type="button" className={btnGhost} onClick={() => handleDownloadFile(f)}>
+                      <button type="button" className={btnGhost} onClick={() => handleDownloadFile(f)} title="Télécharger le document" aria-label="Télécharger le document">
                         <Download size={14} /> Télécharger
                       </button>
-                      <button type="button" className={btnGhost} onClick={() => openConfirmUnlink(f.id)}>
+                      <button type="button" className={btnGhost} onClick={() => openConfirmUnlink(f.id)} title="Retirer du dossier" aria-label="Retirer du dossier">
                         <Link2 size={14} /> Retirer
                       </button>
-                      <button type="button" className={btnDanger} onClick={() => openConfirmDelete(f.id)}>
+                      <button type="button" className={btnDanger} onClick={() => openConfirmDelete(f.id)} title="Supprimer le document" aria-label="Supprimer le document">
                         <Trash2 size={14} />
                       </button>
                     </div>

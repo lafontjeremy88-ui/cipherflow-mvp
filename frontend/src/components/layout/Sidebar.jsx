@@ -1,11 +1,10 @@
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, Link, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Mail,
   BarChart2,
   FileText,
-  ShieldCheck,
   FolderOpen,
   Settings,
   LogOut,
@@ -89,7 +88,6 @@ export default function Sidebar({ onLogout }) {
         <NavItem to="/emails/history" icon={Mail} label="Emails" />
         <NavItem to="/emails/analyze" icon={BarChart2} label="Analyse" />
         <NavItem to="/documents" icon={FileText} label="Documents" />
-        <NavSubItem to="/documents" icon={ShieldCheck} label="Vérification IA" />
         <NavItem to="/tenant-files" icon={FolderOpen} label="Dossiers locataires" />
 
         <SectionLabel>Système</SectionLabel>
@@ -122,13 +120,13 @@ export default function Sidebar({ onLogout }) {
         <div className="px-3 mt-3 pt-3 border-t border-surface-border">
           <p className="text-[10px] text-ink-tertiary leading-relaxed">
             Données protégées —{" "}
-            <a href="/privacy" className="underline hover:text-ink-secondary" target="_blank" rel="noopener noreferrer">
+            <Link to="/privacy" className="underline hover:text-ink-secondary">
               Confidentialité
-            </a>{" "}
+            </Link>{" "}
             ·{" "}
-            <a href="/mentions-legales" className="underline hover:text-ink-secondary" target="_blank" rel="noopener noreferrer">
+            <Link to="/mentions-legales" className="underline hover:text-ink-secondary">
               Mentions légales
-            </a>
+            </Link>
           </p>
         </div>
       </div>

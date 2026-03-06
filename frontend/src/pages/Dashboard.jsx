@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { Mail, AlertTriangle, FileText, FolderOpen, TrendingUp, Activity } from "lucide-react";
-import { authFetch as authFetchFromApi } from "../services/api";
+import { authFetch as authFetchFromApi, getEmail } from "../services/api";
 
 import StatCard from "../components/ui/StatCard";
 import Card from "../components/ui/Card";
@@ -94,21 +94,16 @@ function fmtPct(x) {
 
 // ── User helper ───────────────────────────────────────────────────────────────
 
-function getUserNameFromToken() {
-  try {
-    const token = localStorage.getItem('access_token')
-    if (!token) return null
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    const email = payload.email || payload.sub || null
-    return email ? email.split('@')[0] : null
-  } catch {
-    return null
-  }
+function getUserName() {
+  const email = getEmail?.() || localStorage.getItem('cipherflow_email')
+  if (!email) return null
+  const prefix = email.split('@')[0]
+  return prefix.charAt(0).toUpperCase() + prefix.slice(1)
 }
 
 // ── Dashboard greeting ────────────────────────────────────────────────────────
 
-function DashboardGreeting({ userName }) {
+function DashboardGreeting({ userName, isWatcherActive }) {
   const now = new Date()
   const hour = now.getHours()
   const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir'
@@ -119,6 +114,7 @@ function DashboardGreeting({ userName }) {
     year: 'numeric',
   })
   const dateFormatted = dateStr.charAt(0).toUpperCase() + dateStr.slice(1)
+  const active = isWatcherActive !== false
   return (
     <div className="flex items-center justify-between mb-6">
       <div>
@@ -127,9 +123,13 @@ function DashboardGreeting({ userName }) {
         </h2>
         <p className="text-sm text-[#94A3B8] mt-0.5">{dateFormatted}</p>
       </div>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-full">
-        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-        <span className="text-xs font-medium text-green-700">Surveillance active</span>
+      <div className={`flex items-center gap-2 px-3 py-1.5 border rounded-full ${
+        active ? "bg-green-50 border-green-200" : "bg-surface-muted border-surface-border"
+      }`}>
+        <div className={`w-2 h-2 rounded-full ${active ? "bg-green-500 animate-pulse" : "bg-ink-tertiary"}`}></div>
+        <span className={`text-xs font-medium ${active ? "text-green-700" : "text-ink-secondary"}`}>
+          {active ? "Surveillance active" : "Surveillance inactive"}
+        </span>
       </div>
     </div>
   )
@@ -256,7 +256,7 @@ export default function Dashboard({ authFetch }) {
         </div>
       )}
 
-      <DashboardGreeting userName={getUserNameFromToken()} />
+      <DashboardGreeting userName={getUserName()} isWatcherActive={gmailConnected || outlookConnected} />
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

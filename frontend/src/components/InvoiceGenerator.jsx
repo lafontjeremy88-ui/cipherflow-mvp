@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FileText, Download, Loader2, Plus, Trash2, Calendar, Eye, RefreshCw } from 'lucide-react';
+import { FileText, Download, Loader2, Plus, Trash2, Calendar, Eye, RefreshCw, AlertTriangle } from 'lucide-react';
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+import { API_URL as API_BASE } from '../services/api';
 
 const InvoiceGenerator = ({ token, authFetch }) => {
   const [loading, setLoading] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const [history, setHistory] = useState([]); 
   const [companySettings, setCompanySettings] = useState({
     company_name: "Mon Entreprise",
@@ -32,6 +34,12 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       console.error("Erreur historique", e);
     }
   }, [authFetch]);
+
+  useEffect(() => {
+    if (!errorMessage && !successMessage) return;
+    const t = setTimeout(() => { setErrorMessage(null); setSuccessMessage(null); }, 4000);
+    return () => clearTimeout(t);
+  }, [errorMessage, successMessage]);
 
   useEffect(() => {
     if (authFetch) {
@@ -74,7 +82,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
   });
 
   const handleView = async () => {
-    if (!authFetch) return alert("Erreur: Authentification manquante");
+    if (!authFetch) { setErrorMessage("Erreur: Authentification manquante"); return; }
     setViewLoading(true);
     try {
       const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
@@ -87,14 +95,14 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       window.open(url, '_blank');
       fetchHistory(); 
     } catch (e) {
-      alert("Erreur génération aperçu");
+      setErrorMessage("Erreur génération aperçu");
     } finally {
       setViewLoading(false);
     }
   };
 
   const handleDownload = async () => {
-    if (!authFetch) return alert("Erreur: Authentification manquante");
+    if (!authFetch) { setErrorMessage("Erreur: Authentification manquante"); return; }
     setLoading(true);
     try {
       const res = await authFetch(`${API_BASE}/api/generate-invoice`, {
@@ -113,7 +121,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
       window.URL.revokeObjectURL(url);
       fetchHistory(); 
     } catch (e) {
-      alert("Erreur téléchargement");
+      setErrorMessage("Erreur téléchargement");
     } finally {
       setLoading(false);
     }
@@ -128,7 +136,7 @@ const InvoiceGenerator = ({ token, authFetch }) => {
             const url = window.URL.createObjectURL(blob);
             window.open(url, '_blank');
         } else {
-            alert("Impossible de récupérer ce PDF");
+            setErrorMessage("Impossible de récupérer ce PDF");
         }
     } catch(e) {
         console.error(e);
@@ -150,11 +158,11 @@ const InvoiceGenerator = ({ token, authFetch }) => {
             a.remove();
             window.URL.revokeObjectURL(url);
         } else {
-            alert("Impossible de télécharger ce PDF");
+            setErrorMessage("Impossible de télécharger ce PDF");
         }
     } catch(e) {
         console.error(e);
-        alert("Erreur de téléchargement");
+        setErrorMessage("Erreur de téléchargement");
     }
   };
 
@@ -167,17 +175,30 @@ const InvoiceGenerator = ({ token, authFetch }) => {
         if (res.ok) {
             setHistory(history.filter(item => item.id !== id));
         } else {
-            alert("Erreur lors de la suppression.");
+            setErrorMessage("Erreur lors de la suppression.");
         }
     } catch (e) {
         console.error("Erreur delete:", e);
-        alert("Erreur réseau.");
+        setErrorMessage("Erreur réseau.");
     }
   };
 
   return (
     <div style={{ padding: "2rem", color: "white", maxWidth: "1600px", margin: "0 auto" }}>
-      
+
+      {(errorMessage || successMessage) && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: "10px",
+          padding: "12px 16px", borderRadius: "8px", marginBottom: "16px",
+          background: errorMessage ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.1)",
+          border: `1px solid ${errorMessage ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.3)"}`,
+          color: errorMessage ? "#f87171" : "#34d399", fontSize: "0.9rem",
+        }}>
+          <AlertTriangle size={16} />
+          <span>{errorMessage || successMessage}</span>
+        </div>
+      )}
+
       {/* HEADER */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
         <h2 style={{ fontSize: "1.8rem", fontWeight: "bold" }}>Générateur de Quittances</h2>

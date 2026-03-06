@@ -31,7 +31,11 @@ export default function Header() {
       <h1 className="text-xl font-semibold text-ink">{title}</h1>
 
       <div className="flex items-center gap-3">
-        <button className="relative w-9 h-9 rounded-lg flex items-center justify-center text-ink-secondary hover:bg-surface-muted transition-all duration-150">
+        <button
+          className="relative w-9 h-9 rounded-lg flex items-center justify-center text-ink-secondary hover:bg-surface-muted transition-all duration-150"
+          aria-label="Notifications"
+          title="Notifications"
+        >
           <Bell size={18} />
         </button>
 

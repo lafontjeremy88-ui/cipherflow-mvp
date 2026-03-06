@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mail } from "lucide-react";
-import { authFetch } from "../services/api";
+import { authFetch, API_URL as API_BASE } from "../services/api";
 
 /**
  * EmailHistory.jsx
@@ -535,7 +535,6 @@ export default function EmailHistory() {
     setActionError("");
     setActionSuccess("");
     try {
-      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
       const res = await authFetch(`${API_BASE}/feedback/email/${emailId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -563,7 +562,6 @@ export default function EmailHistory() {
     setActionError("");
     setActionSuccess("");
     try {
-      const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
       const res = await authFetch(API_BASE + "/settings/blacklist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -590,18 +588,18 @@ export default function EmailHistory() {
       />
     )}
 
-    <div className="page email-history">
-      <div className="page-header">
+    <div>
+      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
         <div>
-          <h1>Historique des emails</h1>
-          <p className="muted">
+          <h1 className="text-xl font-semibold text-ink">Historique des emails</h1>
+          <p className="text-sm text-ink-secondary mt-0.5">
             Recherche, filtre et ouvre un email pour afficher le contenu.
           </p>
         </div>
 
-        <div className="toolbar">
+        <div className="flex items-center gap-3 flex-wrap">
           <input
-            className="input"
+            className="px-3 py-2 border border-surface-border rounded-lg text-sm bg-white text-ink placeholder:text-ink-tertiary focus:outline-none focus:ring-2 focus:ring-primary-600 focus:border-transparent"
             placeholder="Rechercher… (objet, expéditeur, catégorie)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -609,7 +607,7 @@ export default function EmailHistory() {
 
           {/* Type de message (Catégorie) */}
           <select
-            className="select"
+            className="px-3 py-2 border border-surface-border rounded-lg text-sm bg-white text-ink focus:outline-none cursor-pointer"
             value={category}
             onChange={(e) => {
               const nextCat = e.target.value;
@@ -630,7 +628,7 @@ export default function EmailHistory() {
 
           {/* Tri / Priorité */}
           <select
-            className="select"
+            className="px-3 py-2 border border-surface-border rounded-lg text-sm bg-white text-ink focus:outline-none cursor-pointer"
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value)}
             title="Tri / Priorité"
@@ -643,13 +641,17 @@ export default function EmailHistory() {
             <option value="prio_low">Priorité : basse</option>
           </select>
 
-          <button className="btn" onClick={loadHistory} disabled={loading}>
+          <button
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-surface-muted text-ink hover:bg-surface-border transition-colors border border-surface-border"
+            onClick={loadHistory}
+            disabled={loading}
+          >
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
 
           {/* mini reset */}
           <button
-            className="btn btn-ghost"
+            className="px-4 py-2 rounded-lg text-sm font-medium text-ink-secondary hover:bg-surface-muted transition-colors"
             onClick={() => {
               setQuery("");
               setSortMode("recent");
@@ -666,7 +668,7 @@ export default function EmailHistory() {
       </div>
 
       {loading ? (
-        <div className="muted">Chargement de l’historique…</div>
+        <div className="text-sm text-ink-secondary">Chargement de l’historique…</div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
@@ -687,51 +689,55 @@ export default function EmailHistory() {
           )}
         </div>
       ) : (
-        <div className="eh-layout">
+        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
           {/* LISTE */}
-          <div className="card eh-panel">
-            <div className="card-header">
-              <h2 className="card-title">Liste</h2>
-              <span className="badge">{filtered.length}</span>
+          <div className="bg-white border border-surface-border rounded-xl shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+              <h2 className="text-sm font-semibold text-ink">Liste</h2>
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface-muted text-ink-secondary">
+                {filtered.length}
+              </span>
             </div>
 
-            <div className="eh-list">
+            <div className="overflow-y-auto max-h-[600px] divide-y divide-surface-border">
               {filtered.map((e) => {
                 const active = String(e.id) === String(selectedId);
                 const lvl = getUrgencyLevel(e.urgency);
 
-                const pill =
+                const pillCls =
                   lvl === "high"
-                    ? "eh-pill eh-pill-high"
+                    ? "text-xs px-2 py-0.5 rounded-full font-semibold bg-red-50 text-red-700 border border-red-200"
                     : lvl === "medium"
-                    ? "eh-pill eh-pill-medium"
-                    : "eh-pill eh-pill-none";
+                    ? "text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                    : "text-xs px-2 py-0.5 rounded-full font-semibold bg-surface-muted text-ink-tertiary";
 
                 return (
                   <button
                     key={e.id}
                     type="button"
-                    className={`eh-item ${active ? "is-active" : ""}`}
+                    className={`w-full text-left px-4 py-3 transition-colors duration-150 cursor-pointer block ${
+                      active ? "bg-primary-50 border-l-2 border-l-primary-600" : "hover:bg-surface-bg"
+                    }`}
                     onClick={() => onClickItem(e.id)}
                     title="Ouvrir"
                   >
-                    <div className="eh-item-top">
-                      <span className={pill}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={pillCls}>
                         {safeStr(e.urgency).toUpperCase() || "—"}
                       </span>
-                      <span className="eh-date">
+                      <span className="text-xs text-ink-tertiary">
                         {formatDateShort(e)}
                       </span>
                     </div>
 
-                                        <div className="eh-meta">
-                      <span className="eh-from">
+                    <div className="flex items-center gap-1.5 text-xs text-ink-secondary flex-wrap">
+                      <span className="truncate font-medium">
                         {e.from || e.from_email || e.sender_email || "—"}
                       </span>
-                      <span className="eh-dot">•</span>
-                      <span className="eh-cat">
+                      <span className="text-ink-tertiary">•</span>
+                      <span className="flex items-center gap-1">
                         <span
-                          className="eh-cat-dot"
+                          className="w-2 h-2 rounded-full inline-block flex-shrink-0"
                           style={{ backgroundColor: getCategoryColor(e.category) }}
                         />
                         {e.category || "—"}
@@ -739,8 +745,8 @@ export default function EmailHistory() {
 
                       {e.tenant_file_id && (
                         <>
-                          <span className="eh-dot">•</span>
-                          <span className="eh-tenant-link">
+                          <span className="text-ink-tertiary">•</span>
+                          <span className="text-primary-600 font-medium">
                             Dossier #{e.tenant_file_id}
                           </span>
                         </>
@@ -754,23 +760,23 @@ export default function EmailHistory() {
           </div>
 
           {/* PREVIEW */}
-          <div className="card eh-panel">
-            <div className="card-header">
-              <h2 className="card-title">Prévisualisation</h2>
+          <div className="bg-white border border-surface-border rounded-xl shadow-card overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border flex-wrap gap-2">
+              <h2 className="text-sm font-semibold text-ink">Prévisualisation</h2>
 
               {!!selectedId && (
-                <div className="row">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
-                    className="btn btn-ghost"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:bg-surface-muted transition-colors"
                     onClick={() => setShowRaw((v) => !v)}
-                    title="Afficher/Masquer l'email brut"
+                    title="Afficher/Masquer l’email brut"
                   >
                     {showRaw ? "Masquer le brut" : "Afficher le brut"}
                   </button>
 
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-muted text-ink hover:bg-surface-border transition-colors border border-surface-border disabled:opacity-50"
                     onClick={handleOpenTenantFile}
                     disabled={linkingTenant || deleting || sending}
                     title="Créer / ouvrir le dossier locataire pour cet email"
@@ -779,7 +785,7 @@ export default function EmailHistory() {
                   </button>
 
                   <button
-                    className="btn btn-ghost"
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:bg-surface-muted transition-colors"
                     onClick={() => {
                       setEmailIdInUrl(null);
                       setSelectedId(null);
@@ -796,53 +802,50 @@ export default function EmailHistory() {
 
             {/* Alertes */}
             {actionSuccess && (
-              <div className="alert alert-success">{actionSuccess}</div>
+              <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700">
+                {actionSuccess}
+              </div>
             )}
             {actionError && (
-              <div className="alert alert-error">{actionError}</div>
+              <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                {actionError}
+              </div>
             )}
 
             {!selectedId ? (
-              <div className="eh-empty">
-                <div className="eh-empty-title">Sélectionne un email</div>
-                <div className="muted">
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="text-sm font-semibold text-ink mb-1">Sélectionne un email</div>
+                <div className="text-sm text-ink-secondary">
                   Clique à gauche pour afficher le contenu ici.
                 </div>
               </div>
             ) : detailLoading ? (
-              <div className="eh-empty">
-                <div className="muted">Chargement de l’email…</div>
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="text-sm text-ink-secondary">Chargement de l’email…</div>
               </div>
             ) : (
               <>
-                <div className="eh-preview-header">
-                  <div className="eh-preview-title">
+                <div className="px-4 py-3 border-b border-surface-border">
+                  <div className="text-base font-semibold text-ink mb-1">
                     {titleLabel}
                   </div>
 
-                  <div className="eh-preview-sub muted">
+                  <div className="flex items-center gap-2 text-sm text-ink-secondary flex-wrap">
                     <span>{fromLabel}</span>
-                    <span className="eh-dot">•</span>
-                    <span className="eh-cat">
+                    <span className="text-ink-tertiary">•</span>
+                    <span className="flex items-center gap-1">
                       <span
-                        className="eh-cat-dot"
-                        style={{
-                          backgroundColor: getCategoryColor(
-                            categoryLabel
-                          ),
-                        }}
+                        className="w-2 h-2 rounded-full inline-block flex-shrink-0"
+                        style={{ backgroundColor: getCategoryColor(categoryLabel) }}
                       />
                       {categoryLabel}
                     </span>
-                    <span className="eh-dot">•</span>
+                    <span className="text-ink-tertiary">•</span>
                     <span>{receivedLabel}</span>
                   </div>
 
                   {hasReplied && (
-                    <span
-                      className="badge badge-success"
-                      style={{ marginTop: 8 }}
-                    >
+                    <span className="inline-flex mt-2 text-xs px-2 py-0.5 rounded-full font-semibold bg-green-50 text-green-700 border border-green-200">
                       Réponse envoyée
                     </span>
                   )}
@@ -850,34 +853,25 @@ export default function EmailHistory() {
 
                 {/* Résumé IA */}
                 {summary && (
-                  <div
-                    className="card"
-                    style={{ marginBottom: 12, padding: 12 }}
-                  >
-                    <div className="card-header">
-                      <h3 className="card-title">Résumé IA</h3>
+                  <div className="mx-4 mt-4 border border-surface-border rounded-xl overflow-hidden">
+                    <div className="flex items-center px-4 py-3 border-b border-surface-border">
+                      <h3 className="text-sm font-semibold text-ink">Résumé IA</h3>
                     </div>
-                    <div
-                      className="muted"
-                      style={{ whiteSpace: "pre-wrap" }}
-                    >
+                    <div className="px-4 py-3 text-sm text-ink-secondary" style={{ whiteSpace: "pre-wrap" }}>
                       {summary}
                     </div>
                   </div>
                 )}
 
                 {/* Réponse proposée */}
-                <div
-                  className="card"
-                  style={{ marginBottom: 12, padding: 12 }}
-                >
-                  <div className="card-header">
-                    <h3 className="card-title">Réponse proposée</h3>
-                    <div className="row">
+                <div className="mx-4 mt-4 mb-4 border border-surface-border rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border flex-wrap gap-2">
+                    <h3 className="text-sm font-semibold text-ink">Réponse proposée</h3>
+                    <div className="flex items-center gap-2 flex-wrap">
                       {suggestedResponse && (
                         <button
                           type="button"
-                          className="btn btn-primary"
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-50"
                           onClick={handleSendSuggestedResponse}
                           disabled={sending || deleting || hasReplied}
                         >
@@ -891,7 +885,7 @@ export default function EmailHistory() {
 
                       <button
                         type="button"
-                        className="btn btn-ghost"
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:bg-surface-muted transition-colors disabled:opacity-50"
                         onClick={handleDeleteEmail}
                         disabled={sending || deleting}
                       >
@@ -900,7 +894,7 @@ export default function EmailHistory() {
 
                       <button
                         type="button"
-                        className="btn btn-ghost"
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:bg-surface-muted transition-colors disabled:opacity-50"
                         onClick={() => handleBlacklist(
                           selected?.sender_email || selected?.from_email || selected?.from ||
                           selectedFromList?.sender_email || selectedFromList?.from_email || selectedFromList?.from || ""
@@ -913,7 +907,7 @@ export default function EmailHistory() {
 
                       <button
                         type="button"
-                        className="btn btn-ghost"
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:bg-surface-muted transition-colors disabled:opacity-50"
                         onClick={() => setReportModal({ emailId: selectedId })}
                         disabled={sending || deleting}
                         title="Signaler une erreur de traitement"
@@ -924,11 +918,11 @@ export default function EmailHistory() {
                   </div>
 
                   {suggestedResponse ? (
-                    <pre className="email-body">
+                    <pre className="font-mono text-xs text-ink-secondary whitespace-pre-wrap bg-surface-bg p-4 overflow-auto max-h-64">
                       {suggestedResponse}
                     </pre>
                   ) : (
-                    <div className="muted" style={{ padding: "8px 0" }}>
+                    <div className="px-4 py-3 text-sm text-ink-secondary">
                       Aucune réponse IA générée pour cet email.
                     </div>
                   )}
@@ -936,13 +930,13 @@ export default function EmailHistory() {
 
                 {/* Email brut */}
                 {showRaw && (
-                  <div className="eh-preview-body">
+                  <div className="px-4 pb-4">
                     {selected?.bodyText ? (
-                      <pre className="email-body">
+                      <pre className="font-mono text-xs text-ink-secondary whitespace-pre-wrap bg-surface-bg rounded-lg p-3 overflow-auto max-h-64">
                         {selected.bodyText}
                       </pre>
                     ) : (
-                      <div className="muted">
+                      <div className="text-sm text-ink-secondary">
                         Pas de contenu texte
                       </div>
                     )}

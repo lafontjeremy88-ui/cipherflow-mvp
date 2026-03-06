@@ -7,7 +7,7 @@ import {
   Palette, Bot, Filter, ShieldOff, Zap
 } from 'lucide-react';
 
-const API_BASE = "https://cipherflow-mvp-production.up.railway.app";
+import { API_URL as API_BASE } from '../services/api';
 
 /* ── Composants partagés ──────────────────────────────────────────────────── */
 
