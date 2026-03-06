@@ -41,6 +41,8 @@ class EmailHistoryItem(BaseModel):
     reply_sent: bool = False
     reply_sent_at: Optional[datetime] = None
     tenant_file_id: Optional[int] = None
+    tenant_name: Optional[str] = None
+    tenant_email: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -157,8 +159,19 @@ async def get_history(
         if link.email_analysis_id not in email_to_tenant:
             email_to_tenant[link.email_analysis_id] = link.tenant_file_id
 
+    # Charger les infos des dossiers liés (nom + email candidat)
+    tenant_file_ids = list(set(email_to_tenant.values()))
+    tenant_map = {}
+    if tenant_file_ids:
+        tfs = db.query(TenantFile).filter(TenantFile.id.in_(tenant_file_ids)).all()
+        tenant_map = {tf.id: tf for tf in tfs}
+
     for e in emails:
-        setattr(e, "tenant_file_id", email_to_tenant.get(e.id))
+        tf_id = email_to_tenant.get(e.id)
+        tf = tenant_map.get(tf_id) if tf_id else None
+        setattr(e, "tenant_file_id", tf_id)
+        setattr(e, "tenant_name", tf.candidate_name if tf else None)
+        setattr(e, "tenant_email", tf.candidate_email if tf else None)
 
     return emails
 

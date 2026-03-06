@@ -772,7 +772,7 @@ export default function EmailHistory() {
                         <>
                           <span className="text-ink-tertiary">•</span>
                           <span className="text-primary-600 font-medium">
-                            Dossier #{e.tenant_file_id}
+                            {e.tenant_name || e.tenant_email || `Dossier #${e.tenant_file_id}`}
                           </span>
                         </>
                       )}
