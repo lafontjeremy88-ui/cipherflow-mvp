@@ -15,6 +15,7 @@ import email
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -79,7 +80,7 @@ if not BACKEND_URL:        missing.append("BACKEND_URL")
 if not WATCHER_SECRET:     missing.append("WATCHER_SECRET")
 if not GOOGLE_CLIENT_ID:   missing.append("GOOGLE_OAUTH_CLIENT_ID")
 if not GOOGLE_CLIENT_SECRET: missing.append("GOOGLE_OAUTH_CLIENT_SECRET")
-if missing:
+if missing and "--test-bypass" not in sys.argv:
     raise RuntimeError(f"Variables manquantes: {', '.join(missing)}")
 
 WEBHOOK_URL              = f"{BACKEND_URL}/webhook/email"
@@ -137,6 +138,49 @@ def mistral_is_real_estate_email(from_email: str, subject: str, body: str) -> bo
     except Exception as e:
         log.warning(f"⚠️ MISTRAL_ERROR — fail open : {e}")
         return True
+
+
+def is_obvious_tenant_document(attachments: list) -> bool:
+    """
+    Détecte les documents locataires évidents via le nom des pièces jointes.
+    Si True → bypass Mistral (plus rapide, RGPD-safe car 0 donnée envoyée à l'extérieur).
+    """
+    BYPASS_KEYWORDS = [
+        "cni", "carte_identite", "carte_national", "identite",
+        "passeport", "passport",
+        "fiche_paie", "fiche_de_paie", "bulletin_salaire", "bulletin_paie",
+        "salaire", "revenus",
+        "rib", "releve_identite_bancaire",
+        "kbis",
+        "avis_imposition", "avis_impots",
+        "quittance", "quittance_loyer",
+        "contrat_travail", "contrat_de_travail",
+        "titre_sejour", "visa",
+        "bail", "contrat_location",
+    ]
+
+    if not attachments:
+        return False
+
+    for att in attachments:
+        # Compatibilité objet ou dict
+        filename = (
+            getattr(att, 'filename', None)
+            or (att.get('filename') if isinstance(att, dict) else None)
+            or ""
+        )
+
+        # Normaliser : minuscules + remplacer séparateurs par underscore
+        normalized = filename.lower()
+        normalized = re.sub(r'[\s\-\.]', '_', normalized)
+        # Version sans extension pour la comparaison
+        normalized_no_ext = re.sub(r'_[a-z0-9]{2,4}$', '', normalized)
+
+        for keyword in BYPASS_KEYWORDS:
+            if keyword in normalized or keyword in normalized_no_ext:
+                return True
+
+    return False
 
 
 # ============================================================
@@ -477,6 +521,45 @@ def process_one_message(service, message_id: str, agency_id: int, gmail_email: s
         _mark_as_read(service, message_id)
         return
 
+    # ── BYPASS rule-based — avant l'appel Mistral ──────────────────────────────
+    if attachments and is_obvious_tenant_document(attachments):
+        filenames = [
+            a.get('filename', '?') if isinstance(a, dict) else getattr(a, 'filename', '?')
+            for a in attachments
+        ]
+        log.info(
+            f"✅ BYPASS Mistral (nom PJ évident) — "
+            f"fichiers={filenames} | agency={agency_id}"
+        )
+        _, sender_email = parseaddr(sender)
+        webhook_payload = {
+            "from_email":      sender_email or sender,
+            "to_email":        gmail_email,
+            "subject":         subject,
+            "content":         body,
+            "send_email":      AUTO_SEND,
+            "attachments":     attachments,
+            "agency_id":       agency_id,
+            "filter_decision": decision.value,
+            "filter_reasons":  reasons,
+        }
+        try:
+            resp = requests.post(
+                WEBHOOK_URL,
+                json=webhook_payload,
+                headers={"x-watcher-secret": WATCHER_SECRET},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                log.info(f"✅ BYPASS transmis au backend agency={agency_id}")
+                _mark_as_read(service, message_id)
+            else:
+                log.warning(f"⚠️ BYPASS — Backend {resp.status_code} — {resp.text[:200]}")
+        except Exception as e:
+            log.error(f"❌ BYPASS — Erreur envoi backend : {e}")
+            _capture(e)
+        return
+
     # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
     if not mistral_is_real_estate_email(sender, subject, body):
         log.info(f"❌ IGNORE (Mistral IA) — {subject[:50]}")
@@ -775,6 +858,44 @@ def process_one_outlook_message(
         _mark_outlook_read(message_id, access_token)
         return
 
+    # ── BYPASS rule-based — avant l'appel Mistral ──────────────────────────────
+    if attachments and is_obvious_tenant_document(attachments):
+        filenames = [
+            a.get('filename', '?') if isinstance(a, dict) else getattr(a, 'filename', '?')
+            for a in attachments
+        ]
+        log.info(
+            f"✅ BYPASS Mistral (nom PJ évident) Outlook — "
+            f"fichiers={filenames} | agency={agency_id}"
+        )
+        webhook_payload = {
+            "from_email":      sender_email or sender,
+            "to_email":        outlook_email,
+            "subject":         subject,
+            "content":         body,
+            "send_email":      AUTO_SEND,
+            "attachments":     attachments,
+            "agency_id":       agency_id,
+            "filter_decision": decision.value,
+            "filter_reasons":  reasons,
+        }
+        try:
+            resp = requests.post(
+                WEBHOOK_URL,
+                json=webhook_payload,
+                headers={"x-watcher-secret": WATCHER_SECRET},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                log.info(f"✅ BYPASS Outlook transmis au backend agency={agency_id}")
+                _mark_outlook_read(message_id, access_token)
+            else:
+                log.warning(f"⚠️ BYPASS Outlook — Backend {resp.status_code} — {resp.text[:200]}")
+        except Exception as e:
+            log.error(f"❌ BYPASS Outlook — Erreur envoi backend : {e}")
+            _capture(e)
+        return
+
     # ── CLASSIFICATION IA (Mistral) ────────────────────────────────────────────
     if not mistral_is_real_estate_email(sender, subject, body):
         log.info(f"❌ IGNORE (Mistral IA) Outlook — {subject[:50]}")
@@ -1054,4 +1175,31 @@ def run_multi_tenant_watcher():
 
 
 if __name__ == "__main__":
-    run_multi_tenant_watcher()
+    if "--test-bypass" in sys.argv:
+        # ── Validation de la logique is_obvious_tenant_document ────────────────
+        class FakeAtt:
+            def __init__(self, f): self.filename = f
+
+        tests = [
+            ([FakeAtt("cni1.bin.pdf")],          True),   # ✅ doit bypasser
+            ([FakeAtt("fiche_paie_2024.pdf")],   True),   # ✅ doit bypasser
+            ([FakeAtt("passeport_scan.jpg")],    True),   # ✅ doit bypasser
+            ([FakeAtt("1000062244.jpg")],         False),  # ❌ image générique → Mistral
+            ([FakeAtt("facture_edf.pdf")],        False),  # ❌ pas un doc locataire
+            ([],                                  False),  # ❌ pas de PJ
+        ]
+
+        print("=== Test bypass is_obvious_tenant_document ===")
+        all_ok = True
+        for atts, expected in tests:
+            result = is_obvious_tenant_document(atts)
+            ok = result == expected
+            icon = "[OK]" if ok else "[ERREUR]"
+            names = [a.filename for a in atts] or ["(vide)"]
+            print(f"  {icon} {names} -> bypass={result} (attendu={expected})")
+            if not ok:
+                all_ok = False
+
+        print(f"\n{'[OK] Tous les tests OK' if all_ok else '[ERREUR] Des tests ont echoue'}")
+    else:
+        run_multi_tenant_watcher()
