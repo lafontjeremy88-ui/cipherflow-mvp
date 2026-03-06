@@ -173,6 +173,9 @@ function AppInner() {
         }
       />
 
+      {/* Racine → dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
       {/* Shell protégé */}
       <Route
         path="/*"
