@@ -78,7 +78,7 @@ function buildDonut(dist) {
   } else if (dist && typeof dist === "object") {
     arr = Object.entries(dist).map(([name, value]) => ({ name, value: Number(value) || 0 })).filter((d) => d.name && d.value > 0);
   }
-  const total = arr.reduce((s, x) => s + x.value, 0) || 1;
+  const total = arr.reduce((s, x) => s + x.value, 0);
   arr.sort((a, b) => b.value - a.value);
   return { total, data: arr.map((x) => ({ ...x, pct: (x.value / total) * 100 })) };
 }
