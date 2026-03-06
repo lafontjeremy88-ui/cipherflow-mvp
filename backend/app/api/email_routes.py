@@ -92,8 +92,7 @@ async def get_stats(
     total = db.query(EmailAnalysis).filter(EmailAnalysis.agency_id == aid).count()
     high = db.query(EmailAnalysis).filter(
         EmailAnalysis.agency_id == aid,
-        (func.lower(EmailAnalysis.urgency).contains("haut")) |
-        (func.lower(EmailAnalysis.urgency).contains("urg")),
+        func.lower(EmailAnalysis.urgency).contains("urg"),
     ).count()
 
     from app.database.models import TenantFile, TenantFileStatus
