@@ -181,6 +181,10 @@ export default function EmailHistory() {
   const [actionSuccess, setActionSuccess] = useState("");
   const [reportModal, setReportModal] = useState(null); // { emailId } | null
 
+  const [editedReply, setEditedReply] = useState(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenError, setRegenError] = useState(null);
+
   const urlEmailId = searchParams.get("emailId");
   const urlCategory = searchParams.get("category");
 
@@ -256,6 +260,8 @@ export default function EmailHistory() {
     setShowRaw(true);
     setActionError("");
     setActionSuccess("");
+    setEditedReply(null);
+    setRegenError(null);
   }
 
   // premier chargement
@@ -380,7 +386,8 @@ export default function EmailHistory() {
      ========================== */
 
   async function handleSendSuggestedResponse() {
-    if (!selectedId || !suggestedResponse) return;
+    const replyToSend = editedReply ?? suggestedResponse;
+    if (!selectedId || !replyToSend) return;
 
     const target = selected || selectedFromList;
     if (!target) return;
@@ -400,7 +407,7 @@ export default function EmailHistory() {
         body: JSON.stringify({
           to_email: toEmail,
           subject,
-          body: suggestedResponse,
+          body: replyToSend,
           email_id: Number(selectedId),
         }),
       });
@@ -527,6 +534,24 @@ export default function EmailHistory() {
       setActionSuccess("");
     } finally {
       setLinkingTenant(false);
+    }
+  }
+
+  async function handleRegenerateReply() {
+    if (!selectedId) return;
+    setIsRegenerating(true);
+    setRegenError(null);
+    try {
+      const res = await authFetch(`/email/${selectedId}/regenerate-reply`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      const data = await res.json();
+      setEditedReply(data.suggested_reply);
+    } catch {
+      setRegenError("Impossible de régénérer la réponse. Réessaie.");
+    } finally {
+      setIsRegenerating(false);
     }
   }
 
@@ -868,7 +893,7 @@ export default function EmailHistory() {
                   <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border flex-wrap gap-2">
                     <h3 className="text-sm font-semibold text-ink">Réponse proposée</h3>
                     <div className="flex items-center gap-2 flex-wrap">
-                      {suggestedResponse && (
+                      {(suggestedResponse || editedReply !== null) && (
                         <button
                           type="button"
                           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-50"
@@ -882,6 +907,32 @@ export default function EmailHistory() {
                             : "Envoyer la réponse"}
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-primary-600 border border-primary-600/30 hover:bg-primary-50 transition-colors disabled:opacity-50"
+                        onClick={handleRegenerateReply}
+                        disabled={isRegenerating || sending}
+                        title="Régénérer la réponse IA"
+                      >
+                        {isRegenerating ? (
+                          <>
+                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                            </svg>
+                            Génération…
+                          </>
+                        ) : (
+                          <>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M1 4v6h6M23 20v-6h-6"/>
+                              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                            </svg>
+                            Régénérer
+                          </>
+                        )}
+                      </button>
 
                       <button
                         type="button"
@@ -917,10 +968,27 @@ export default function EmailHistory() {
                     </div>
                   </div>
 
-                  {suggestedResponse ? (
-                    <pre className="font-mono text-xs text-ink-secondary whitespace-pre-wrap bg-surface-bg p-4 overflow-auto max-h-64">
-                      {suggestedResponse}
-                    </pre>
+                  {regenError && (
+                    <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
+                      {regenError}
+                    </div>
+                  )}
+
+                  {(suggestedResponse || editedReply !== null) ? (
+                    <div className="px-4 pb-4 pt-3">
+                      <textarea
+                        value={editedReply ?? suggestedResponse}
+                        onChange={(e) => setEditedReply(e.target.value)}
+                        rows={8}
+                        className="w-full px-3 py-2.5 bg-surface-bg border border-surface-border rounded-lg text-xs text-ink-secondary leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary-600/20 focus:border-primary-600 focus:bg-white transition-all duration-200 resize-y"
+                        placeholder="La réponse IA apparaîtra ici…"
+                      />
+                      {editedReply !== null && editedReply !== suggestedResponse && (
+                        <p className="mt-1 text-xs text-ink-tertiary">
+                          Réponse modifiée — sera envoyée telle quelle
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <div className="px-4 py-3 text-sm text-ink-secondary">
                       Aucune réponse IA générée pour cet email.

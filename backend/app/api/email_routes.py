@@ -19,7 +19,7 @@ from app.core.security_utils import send_email_via_resend
 from app.database.database import get_db
 from app.database.models import (
     AppSettings, EmailAnalysis, FileAnalysis,
-    TenantEmailLink, User,
+    TenantEmailLink, TenantFile, User,
 )
 
 router = APIRouter(tags=["Emails"])
@@ -176,6 +176,72 @@ async def get_email_detail(
     if not email:
         raise HTTPException(404, "Email introuvable")
     return email
+
+
+@router.post("/email/{email_id}/regenerate-reply")
+async def regenerate_reply(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_db),
+):
+    """Régénère une nouvelle réponse IA pour un email existant."""
+    from app.services.email_service import generate_reply
+
+    email = db.query(EmailAnalysis).filter(
+        EmailAnalysis.id == email_id,
+        EmailAnalysis.agency_id == current_user.agency_id,
+    ).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email introuvable")
+
+    agency_settings = db.query(AppSettings).filter(
+        AppSettings.agency_id == current_user.agency_id
+    ).first()
+    company_name = getattr(agency_settings, "company_name", None) or "Agence"
+    tone = getattr(agency_settings, "tone", None) or "pro"
+    signature = getattr(agency_settings, "signature", None) or "L'équipe"
+
+    # Récupérer la checklist du dossier locataire lié si disponible
+    received_docs, missing_docs = [], []
+    payslip_required, payslip_received = 3, 0
+
+    link = db.query(TenantEmailLink).filter(
+        TenantEmailLink.email_analysis_id == email_id
+    ).first()
+    if link:
+        tf = db.query(TenantFile).filter(TenantFile.id == link.tenant_file_id).first()
+        if tf and tf.checklist_json:
+            try:
+                checklist = json.loads(tf.checklist_json)
+                received_docs = checklist.get("received", [])
+                missing_docs = checklist.get("missing", [])
+                payslip_required = checklist.get("payslip_required", 3)
+                payslip_received = checklist.get("payslip_received", 0)
+            except Exception:
+                pass
+
+    reply_result = await generate_reply(
+        from_email=email.sender_email or "",
+        subject=email.subject or "",
+        content=email.summary or "",  # meilleure approximation (corps non stocké)
+        summary=email.summary or "",
+        category=email.category or "",
+        urgency=email.urgency or "",
+        company_name=company_name,
+        tone=tone,
+        signature=signature,
+        received_docs=received_docs,
+        missing_docs=missing_docs,
+        payslip_required=payslip_required,
+        payslip_received=payslip_received,
+    )
+
+    email.suggested_response_text = reply_result.reply
+    db.commit()
+    log.info(
+        f"[email_routes] Réponse régénérée email_id={email_id} agency={current_user.agency_id}"
+    )
+    return {"email_id": email_id, "suggested_reply": reply_result.reply}
 
 
 @router.delete("/email/history/{email_id}")
