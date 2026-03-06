@@ -1,6 +1,50 @@
+# CLAUDE CODE — REMPLACEMENT PAGE POLITIQUE DE CONFIDENTIALITÉ
+
+> Colle ce prompt dans Claude Code depuis la racine du projet frontend.
+
+---
+
+## RÈGLES ABSOLUES
+
+❌ Ne modifie JAMAIS les fichiers backend
+❌ Ne modifie JAMAIS les appels API existants
+❌ Ne modifie JAMAIS l'authentification Google OAuth
+✅ Modifie uniquement les fichiers frontend liés à la page privacy/confidentialité
+
+---
+
+## ÉTAPE 1 — LOCALISE LA PAGE ACTUELLE
+
+Cherche le fichier de la page politique de confidentialité dans ces emplacements :
+
+```
+src/pages/Privacy.jsx
+src/pages/Confidentialite.jsx
+src/pages/PrivacyPolicy.jsx
+public/privacy.html
+src/components/Privacy.jsx
+```
+
+Lance cette commande pour trouver le bon fichier :
+```bash
+grep -r "confidentialité\|privacy\|politique" src/ --include="*.jsx" --include="*.tsx" -l
+grep -r "confidentialité\|privacy\|politique" public/ -l 2>/dev/null
+```
+
+---
+
+## ÉTAPE 2 — REMPLACE LE CONTENU
+
+Selon ce que tu trouves :
+
+### CAS A — C'est un fichier `.jsx` / `.tsx` (composant React)
+
+Remplace **tout le contenu** du fichier par ce composant React :
+
+```jsx
 import { useEffect } from 'react'
 
-export default function PrivacyPolicy() {
+export default function Privacy() {
 
   useEffect(() => {
     document.title = 'Politique de confidentialité — CipherFlow'
@@ -71,13 +115,13 @@ export default function PrivacyPolicy() {
 
       {/* HERO */}
       <div className="priv-hero">
-        <div className="priv-tag">Document légal</div>
+        <div className="priv-tag">📄 Document légal</div>
         <h1>Politique de confidentialité</h1>
         <p>Comment CipherFlow collecte, traite et protège vos données personnelles, conformément au RGPD.</p>
         <div className="priv-meta">
-          <span className="priv-meta-item">Dernière mise à jour : 1 février 2026</span>
-          <span className="priv-meta-item">Données chiffrées &amp; isolées par agence</span>
-          <span className="priv-meta-item">13 articles</span>
+          <span className="priv-meta-item">📅 Dernière mise à jour : 1 février 2026</span>
+          <span className="priv-meta-item">🔒 Données chiffrées & isolées par agence</span>
+          <span className="priv-meta-item">📋 13 articles</span>
         </div>
       </div>
 
@@ -107,7 +151,7 @@ export default function PrivacyPolicy() {
           <div className="priv-section" id="s1">
             <div className="priv-section-header">
               <div className="priv-section-icon" style={{background:'#EFF6FF'}}>🏢</div>
-              <div><div className="priv-section-title">1. Qui sommes-nous ?</div><div className="priv-section-sub">Responsable de traitement &amp; sous-traitant</div></div>
+              <div><div className="priv-section-title">1. Qui sommes-nous ?</div><div className="priv-section-sub">Responsable de traitement & sous-traitant</div></div>
             </div>
             <div className="priv-body">
               <p>CipherFlow est une solution SaaS d'automatisation et d'assistance à la gestion administrative et locative, destinée aux syndics de copropriété, agences immobilières et gestionnaires de biens.</p>
@@ -124,15 +168,15 @@ export default function PrivacyPolicy() {
             </div>
             <div className="priv-body">
               <p>CipherFlow ne collecte ni n'introduit de données de sa propre initiative. Toutes les données proviennent d'actions explicites des utilisateurs.</p>
-              <p className="section-label">Utilisateurs professionnels</p>
+              <p className="section-label">👤 Utilisateurs professionnels</p>
               <div className="priv-tags">
                 {['Email professionnel','Nom / Prénom (optionnels)','Paramètres de compte','Préférences d\'interface','Journaux de connexion'].map(t => <span key={t} className="tag tag-blue">{t}</span>)}
               </div>
-              <p className="section-label">Gestion locative</p>
+              <p className="section-label">🏠 Gestion locative</p>
               <div className="priv-tags">
                 {['Emails reçus & envoyés','Bulletins de paie','Avis d\'imposition','Pièces d\'identité','Quittances & factures','Données extraites des documents'].map(t => <span key={t} className="tag tag-teal">{t}</span>)}
               </div>
-              <p className="section-label">Données techniques</p>
+              <p className="section-label">⚙️ Données techniques</p>
               <div className="priv-tags">
                 {['Identifiants internes','Horodatages','Journaux techniques'].map(t => <span key={t} className="tag tag-gray">{t}</span>)}
               </div>
@@ -148,16 +192,7 @@ export default function PrivacyPolicy() {
             </div>
             <div className="priv-body">
               <ul className="priv-list">
-                {[
-                  'Automatisation du traitement et de la priorisation des emails entrants',
-                  'Analyse et classification des documents liés à la gestion locative',
-                  'Constitution, suivi et mise à jour des dossiers locataires',
-                  'Génération de réponses assistées et propositions de messages',
-                  'Génération de factures, quittances et documents administratifs',
-                  'Sécurisation des échanges et traçabilité administrative',
-                  'Gestion des comptes utilisateurs et authentification',
-                  'Support et amélioration continue du service',
-                ].map(item => (
+                {['Automatisation du traitement et de la priorisation des emails entrants','Analyse et classification des documents liés à la gestion locative','Constitution, suivi et mise à jour des dossiers locataires','Génération de réponses assistées et propositions de messages','Génération de factures, quittances et documents administratifs','Sécurisation des échanges et traçabilité administrative','Gestion des comptes utilisateurs et authentification','Support et amélioration continue du service'].map(item => (
                   <li key={item}><span className="list-check">✓</span>{item}</li>
                 ))}
               </ul>
@@ -187,7 +222,7 @@ export default function PrivacyPolicy() {
               <div><div className="priv-section-title">5. Intelligence artificielle</div><div className="priv-section-sub">Utilisation de l'IA dans le traitement des données</div></div>
             </div>
             <div className="priv-body">
-              <p>CipherFlow utilise des services d'intelligence artificielle afin d'analyser le contenu des emails, extraire des informations depuis des documents et assister la rédaction de réponses.</p>
+              <p>CipherFlow utilise des services d'intelligence artificielle (ex. : Google Gemini) afin d'analyser le contenu des emails, extraire des informations depuis des documents et assister la rédaction de réponses.</p>
               <ul className="priv-list">
                 <li><span className="list-check">✓</span>Données transmises à l'IA uniquement dans la mesure nécessaire à la demande</li>
                 <li><span className="list-check">✓</span>CipherFlow n'utilise pas ces données pour entraîner ses propres modèles d'IA</li>
@@ -205,16 +240,7 @@ export default function PrivacyPolicy() {
             </div>
             <div className="priv-body">
               <div className="security-grid">
-                {[
-                  ['🔐','Chiffrement des fichiers stockés sur disque'],
-                  ['🌐','Communications HTTPS/TLS chiffrées'],
-                  ['🎫','Tokens JWT courte durée + cookies HttpOnly'],
-                  ['🏢','Isolation stricte des données par agence'],
-                  ['🗑️','Suppression des fichiers temporaires en clair'],
-                  ['👥','Contrôle d\'accès par rôle (RBAC)'],
-                  ['📋','Journalisation des actions sensibles'],
-                  ['🔄','Mise à jour régulière des dépendances'],
-                ].map(([icon, text]) => (
+                {[['🔐','Chiffrement des fichiers stockés sur disque'],['🌐','Communications HTTPS/TLS chiffrées'],['🎫','Tokens JWT courte durée + cookies HttpOnly'],['🏢','Isolation stricte des données par agence'],['🗑️','Suppression des fichiers temporaires en clair'],['👥','Contrôle d\'accès par rôle (RBAC)'],['📋','Journalisation des actions sensibles'],['🔄','Mise à jour régulière des dépendances']].map(([icon, text]) => (
                   <div key={text} className="security-item"><span style={{fontSize:'18px'}}>{icon}</span><span>{text}</span></div>
                 ))}
               </div>
@@ -231,12 +257,7 @@ export default function PrivacyPolicy() {
               <table className="retention-table">
                 <thead><tr><th>Type de donnée</th><th>Durée par défaut</th><th>Traitement</th></tr></thead>
                 <tbody>
-                  {[
-                    ['Emails analysés','12 mois','Supprimés à expiration'],
-                    ['Pièces jointes & analyses','12 mois','Fichiers et analyses supprimés'],
-                    ['Dossiers locataires clôturés','5 ans max','Anonymisation après clôture'],
-                    ['Comptes utilisateurs','Durée du contrat','Suppression ou anonymisation à résiliation'],
-                  ].map(([type, duree, traitement]) => (
+                  {[['Emails analysés','12 mois','Supprimés à expiration'],['Pièces jointes & analyses','12 mois','Fichiers et analyses supprimés'],['Dossiers locataires clôturés','5 ans max','Anonymisation après clôture'],['Comptes utilisateurs','Durée du contrat','Suppression ou anonymisation à résiliation']].map(([type, duree, traitement]) => (
                     <tr key={type}><td>{type}</td><td><span className="duration-badge">{duree}</span></td><td>{traitement}</td></tr>
                   ))}
                 </tbody>
@@ -252,14 +273,7 @@ export default function PrivacyPolicy() {
             </div>
             <div className="priv-body">
               <div className="rights-grid">
-                {[
-                  ['👁️','Droit d\'accès','Obtenir une copie de vos données traitées'],
-                  ['✏️','Droit de rectification','Corriger des données inexactes ou incomplètes'],
-                  ['🗑️','Droit à l\'effacement','Demander la suppression de vos données'],
-                  ['⏸️','Droit à la limitation','Limiter temporairement le traitement'],
-                  ['🚫','Droit d\'opposition','Vous opposer à certains traitements'],
-                  ['📦','Droit à la portabilité','Récupérer vos données dans un format structuré'],
-                ].map(([icon, title, desc]) => (
+                {[['👁️','Droit d\'accès','Obtenir une copie de vos données traitées'],['✏️','Droit de rectification','Corriger des données inexactes ou incomplètes'],['🗑️','Droit à l\'effacement','Demander la suppression de vos données'],['⏸️','Droit à la limitation','Limiter temporairement le traitement'],['🚫','Droit d\'opposition','Vous opposer à certains traitements'],['📦','Droit à la portabilité','Récupérer vos données dans un format structuré']].map(([icon, title, desc]) => (
                   <div key={title} className="right-card"><div className="right-card-title">{icon} {title}</div><div className="right-card-desc">{desc}</div></div>
                 ))}
               </div>
@@ -271,7 +285,7 @@ export default function PrivacyPolicy() {
           <div className="priv-section" id="s9">
             <div className="priv-section-header">
               <div className="priv-section-icon" style={{background:'#FEF2F2'}}>🗑️</div>
-              <div><div className="priv-section-title">9. Suppression &amp; droit à l'oubli</div><div className="priv-section-sub">Effacement complet et irréversible</div></div>
+              <div><div className="priv-section-title">9. Suppression & droit à l'oubli</div><div className="priv-section-sub">Effacement complet et irréversible</div></div>
             </div>
             <div className="priv-body">
               <p>CipherFlow permet la suppression complète d'un utilisateur et, lorsque les conditions sont réunies, la purge intégrale d'une agence (dossiers, emails analysés, documents chiffrés, factures, liens associés).</p>
@@ -283,7 +297,7 @@ export default function PrivacyPolicy() {
           <div className="priv-section" id="s10">
             <div className="priv-section-header">
               <div className="priv-section-icon" style={{background:'#F5F3FF'}}>🔗</div>
-              <div><div className="priv-section-title">10. Sous-traitants &amp; hébergement</div><div className="priv-section-sub">Prestataires techniques encadrés contractuellement</div></div>
+              <div><div className="priv-section-title">10. Sous-traitants & hébergement</div><div className="priv-section-sub">Prestataires techniques encadrés contractuellement</div></div>
             </div>
             <div className="priv-body">
               <p>Pour fournir le service, CipherFlow peut faire appel à des prestataires techniques (hébergeurs, services d'envoi d'emails, fournisseurs d'outils d'IA, etc.).</p>
@@ -353,3 +367,48 @@ export default function PrivacyPolicy() {
     </div>
   )
 }
+```
+
+---
+
+### CAS B — C'est un fichier `.html` dans `public/`
+
+Remplace **tout le contenu** du fichier par le contenu du fichier `privacy.html` fourni dans le projet (ou copie-le depuis le fichier `CIPHERFLOW_REDESIGN_PROMPT.md` si disponible).
+
+---
+
+## ÉTAPE 3 — VÉRIFIE QUE LA ROUTE EXISTE
+
+Cherche dans `src/App.jsx` (ou le router) si la route `/privacy` est déclarée :
+
+```bash
+grep -r "privacy\|confidential" src/App.jsx src/router* 2>/dev/null
+```
+
+Si la route n'existe pas, **ajoute-la** dans le router existant sans rien modifier d'autre :
+
+```jsx
+import Privacy from './pages/Privacy'  // adapte le chemin selon ce que tu as trouvé
+
+// Dans le Switch/Routes existant :
+<Route path="/privacy" element={<Privacy />} />
+```
+
+---
+
+## ÉTAPE 4 — VÉRIFICATION FINALE
+
+Lance l'app et navigue vers `/privacy` pour confirmer que la page s'affiche correctement.
+
+```bash
+npm run dev
+```
+
+Vérifie :
+- [ ] La page s'affiche sans erreur console
+- [ ] Le sommaire latéral est visible sur desktop
+- [ ] Les 13 sections sont présentes
+- [ ] Les couleurs sont en light mode (fond blanc/gris clair)
+- [ ] Le footer affiche "© 2026 CipherFlow"
+
+**RAPPEL : Ne jamais modifier le backend, les API calls, ni l'authentification OAuth.**
